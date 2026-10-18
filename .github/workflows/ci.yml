@@ -50,7 +50,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build \
+          sudo apt-get install -y --no-install-recommends cmake ninja-build gettext \
             qt6-base-dev qt6-declarative-dev libkf6kirigami2-dev libkf6i18n-dev \
             libkf6dbusaddons-dev kf6-kstatusnotifieritem-dev \
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
@@ -65,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install flatpak-builder
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream desktop-file-utils
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils appstream desktop-file-utils
       - name: Validate metadata
         run: |
           appstreamcli validate --no-net linux/packaging/com.kysecurity.drive.metainfo.xml
