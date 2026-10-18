@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Busnes-app/kydrive-desktop/core/api"
 )
@@ -249,6 +250,73 @@ func TestConflictKeepsBoth(t *testing.T) {
 		v.sync()
 		checkBoth(t, v)
 	})
+}
+
+// within fails the test if f has not returned in 10s: a retry loop must not hang the engine.
+func within(t *testing.T, f func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); f() }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("did not return within 10s")
+	}
+}
+
+// TestConflictLongName: a conflict on a maximum-length name keeps both versions under a name
+// that still fits the filesystem and the server, and the engine keeps working.
+func TestConflictLongName(t *testing.T) {
+	long := strings.Repeat("n", 251) + ".txt" // 255 bytes, the longest valid name
+	v := setup(t, map[string]string{long: "v1"})
+	v.r.Put(t, v.ws, long, []byte("theirs"))
+	v.write(long, "mine")
+	within(t, func() { v.e.Sync(context.Background()) })
+	within(t, func() { v.e.Sync(context.Background()) })
+	if v.read(long) != "theirs" || v.remote(long) != "theirs" {
+		t.Fatalf("server version lost: %v", tree(t, v.path("")))
+	}
+	var copy string
+	for _, p := range tree(t, v.path("")) {
+		if p != long {
+			copy = p
+		}
+	}
+	if copy == "" || len(copy) > 255 || !strings.Contains(copy, "(conflict from laptop 2026-10-18)") || !strings.HasSuffix(copy, ".txt") {
+		t.Fatalf("conflict copy %q (%d bytes)", copy, len(copy))
+	}
+	if v.read(copy) != "mine" || v.remote(copy) != "mine" {
+		t.Fatal("local edit lost")
+	}
+	v.r.Put(t, v.ws, "after.txt", []byte("still syncing"))
+	v.sync()
+	if v.read("after.txt") != "still syncing" {
+		t.Fatal("engine stopped syncing after the conflict")
+	}
+}
+
+func TestFreePathFailsFast(t *testing.T) {
+	var err error
+	within(t, func() { _, err = freePath(filepath.Join(t.TempDir(), strings.Repeat("x", 300))) })
+	if err == nil {
+		t.Fatal("an unusable path was returned as free")
+	}
+}
+
+func TestFitName(t *testing.T) {
+	for _, c := range []struct{ stem, suffix, ext string }{
+		{strings.Repeat("n", 251), " (2)", ".txt"},
+		{strings.Repeat("é", 125), " (conflict from laptop 2026-10-18)", ".docx"}, // 2-byte runes
+		{"a", " (2)", "." + strings.Repeat("e", 254)},                             // extension alone too long
+	} {
+		got := fitName(c.stem, c.suffix, c.ext)
+		if len(got) > 255 || !utf8.ValidString(got) || !strings.Contains(got, c.suffix) {
+			t.Errorf("fitName(%d-byte stem, %q, %d-byte ext) = %d bytes, valid=%v", len(c.stem), c.suffix, len(c.ext), len(got), utf8.ValidString(got))
+		}
+	}
+	if got := fitName("short", " (2)", ".txt"); got != "short (2).txt" {
+		t.Errorf("short name changed: %q", got)
+	}
 }
 
 func checkBoth(t *testing.T, v *env) {

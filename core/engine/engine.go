@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Busnes-app/kydrive-desktop/core/api"
 )
@@ -285,8 +286,11 @@ func (e *Engine) evict(w Workspace, rel string) error {
 		if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && !e.changed(*it, p, fi) {
 			return os.Remove(p)
 		}
-		dst := freePath(filepath.Join(e.Root, Unsynced, w.Dir, filepath.FromSlash(r)))
+		dst := filepath.Join(e.Root, Unsynced, w.Dir, filepath.FromSlash(r))
 		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		if dst, err = freePath(dst); err != nil {
 			return err
 		}
 		if err := os.Rename(p, dst); err != nil {
@@ -309,37 +313,62 @@ func (e *Engine) changed(it Item, p string, fi fs.FileInfo) bool {
 	return it.State != "synced" || fi.Size() != it.LocalSize || fi.ModTime().UnixNano() != it.LocalMtime || inode(p, fi) != it.LocalInode
 }
 
-// freePath returns p, or p with " (2)", " (3)"… before its extension if p exists.
-func freePath(p string) string {
-	dir, name := filepath.Split(p)
-	ext := filepath.Ext(name)
-	stem := strings.TrimSuffix(name, ext)
-	if stem == "" {
-		stem, ext = name, ""
+// maxName is the longest file name in bytes: the limit on Linux and macOS and the server's, and
+// within Windows' 255 UTF-16 units.
+const maxName = 255
+
+// splitName splits name into stem and extension; a dotfile is all stem.
+func splitName(name string) (stem, ext string) {
+	ext = filepath.Ext(name)
+	if stem = strings.TrimSuffix(name, ext); stem == "" {
+		return name, ""
 	}
+	return stem, ext
+}
+
+// fitName joins stem, suffix and ext, shortening stem (at a rune boundary) so the result fits
+// maxName. An extension too long to keep becomes part of the stem.
+func fitName(stem, suffix, ext string) string {
+	if len(suffix)+len(ext) >= maxName {
+		stem, ext = stem+ext, ""
+	}
+	for len(stem)+len(suffix)+len(ext) > maxName {
+		_, n := utf8.DecodeLastRuneInString(stem)
+		stem = stem[:len(stem)-n]
+	}
+	return stem + suffix + ext
+}
+
+// freePath returns p, or p with " (2)", " (3)"… before its extension if p exists. Any error
+// other than not-existing (a name too long, no permission) is returned, never retried.
+func freePath(p string) (string, error) {
+	dir, name := filepath.Split(p)
+	stem, ext := splitName(name)
 	for i := 2; ; i++ {
-		if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
-			return p
+		_, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			return p, nil
 		}
-		p = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", stem, i, ext))
+		if err != nil {
+			return "", err
+		}
+		p = filepath.Join(dir, fitName(stem, fmt.Sprintf(" (%d)", i), ext))
 	}
 }
 
 // conflict renames the local file at rel to a conflict copy, which the next push uploads as
 // a new file, and lists it.
 func (e *Engine) conflict(w Workspace, rel string) error {
-	name := path.Base(rel)
-	ext := path.Ext(name)
-	base := strings.TrimSuffix(name, ext)
-	if base == "" {
-		base, ext = name, ""
-	}
-	name = fmt.Sprintf("%s (conflict from %s %s)%s", base, e.Device, e.Now().Format("2006-01-02"), ext)
+	stem, ext := splitName(path.Base(rel))
+	name := fitName(stem, fmt.Sprintf(" (conflict from %s %s)", e.Device, e.Now().Format("2006-01-02")), ext)
 	src, err := e.abs(w, rel)
 	if err != nil {
 		return err
 	}
-	dst := freePath(filepath.Join(filepath.Dir(src), name))
+	dst, err := freePath(filepath.Join(filepath.Dir(src), name))
+	if err != nil {
+		return err
+	}
 	if err := os.Rename(src, dst); err != nil {
 		return err
 	}
