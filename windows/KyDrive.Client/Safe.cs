@@ -4,15 +4,15 @@ namespace KyDrive;
 
 public static class Paths
 {
-    // The core's socket: filepath.Join(os.UserConfigDir(), "kydrive", "sync.sock"), where Go's
-    // UserConfigDir on Windows is the %AppData% variable, not the known-folder API. Never a
+    // The core's socket: filepath.Join(os.UserCacheDir(), "kydrive", "sync.sock"), where Go's
+    // UserCacheDir on Windows is the %LocalAppData% variable, not the known-folder API. Never a
     // relative path, which would resolve against the working directory.
     public static string SocketPath(Func<string, string?>? env = null)
     {
-        var appData = (env ?? Environment.GetEnvironmentVariable)("APPDATA");
-        if (string.IsNullOrEmpty(appData) || !Path.IsPathFullyQualified(appData))
-            throw new InvalidOperationException("%APPDATA% is not an absolute path");
-        return Path.GetFullPath(Path.Join(appData, "kydrive", "sync.sock"));
+        var local = (env ?? Environment.GetEnvironmentVariable)("LOCALAPPDATA");
+        if (string.IsNullOrEmpty(local) || !Path.IsPathFullyQualified(local))
+            throw new InvalidOperationException("%LOCALAPPDATA% is not an absolute path");
+        return Path.GetFullPath(Path.Join(local, "kydrive", "sync.sock"));
     }
 }
 
