@@ -1,7 +1,0 @@
-<!-- The busnes.app KyDrive icon (Busnes.app-site/kydrive-icon.svg) without its page background. scripts/icons.sh renders every app icon from this file. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="927" height="928" viewBox="163 162 927 928">
-  <rect x="163" y="162" width="927" height="928" rx="155" fill="#182326"/>
-  <path d="M300 395 a55 55 0 0 1 55 -55 h185 a55 55 0 0 1 45 24 l45 66 h260 a55 55 0 0 1 55 55 v365 a55 55 0 0 1 -55 55 h-535 a55 55 0 0 1 -55 -55 z" fill="#f2efe8"/>
-  <rect x="300" y="500" width="654" height="34" fill="#182326"/>
-  <path d="M627 585 l135 140 h-80 v120 h-110 v-120 h-80 z" fill="#e2562a" stroke="#e2562a" stroke-width="24" stroke-linejoin="round"/>
-</svg>

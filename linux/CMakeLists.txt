@@ -35,7 +35,6 @@ install(TARGETS kydrive-desktop RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/com.kysecurity.drive.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES packaging/com.kysecurity.drive.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES packaging/icons/hicolor/256x256/apps/com.kysecurity.drive.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
-install(FILES packaging/icons/hicolor/scalable/apps/com.kysecurity.drive.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 configure_file(packaging/kydrive-sync.service.in kydrive-sync.service @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/kydrive-sync.service DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/user)
 

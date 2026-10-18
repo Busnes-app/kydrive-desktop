@@ -34,8 +34,5 @@ done
 for s in 16 24 32 48 64 256; do png "$tmp/full.svg" "$s" "$tmp/ico-$s.png"; done
 magick "$tmp"/ico-{16,24,32,48,64,256}.png "$a/kydrive.ico"
 
-# Linux: hicolor PNG plus the scalable SVG.
-h=$root/linux/packaging/icons/hicolor
-png "$tmp/full.svg" 256 "$h/256x256/apps/com.kysecurity.drive.png"
-mkdir -p "$h/scalable/apps"
-cp "$tmp/full.svg" "$h/scalable/apps/com.kysecurity.drive.svg"
+# Linux: the hicolor PNG. No scalable SVG: the Flatpak SDK's appstreamcli compose fails to read it.
+png "$tmp/full.svg" 256 "$root/linux/packaging/icons/hicolor/256x256/apps/com.kysecurity.drive.png"
