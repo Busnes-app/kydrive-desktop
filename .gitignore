@@ -2,3 +2,5 @@
 /linux/build/
 /linux/.flatpak-builder/
 /linux/build-flatpak/
+/linux/**/core
+core.[0-9]*

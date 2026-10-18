@@ -33,3 +33,48 @@ jobs:
         shell: bash
         # The race detector needs cgo, which the Windows runner lacks by default.
         run: if [ "$RUNNER_OS" = Windows ]; then go test ./...; else go test -race ./...; fi
+
+  linux-shell:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add KDE neon apt archive (KF6/Qt6 for noble)
+        run: |
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://archive.neon.kde.org/public.key | sudo gpg --dearmor -o /etc/apt/keyrings/neon-archive.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/neon-archive.gpg] https://archive.neon.kde.org/user noble main" \
+            | sudo tee /etc/apt/sources.list.d/neon.list
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build gettext \
+            qt6-base-dev qt6-declarative-dev libkf6kirigami2-dev libkf6i18n-dev \
+            libkf6dbusaddons-dev kf6-kstatusnotifieritem-dev \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+            qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-workerscript \
+            qml6-module-org-kde-kirigami
+      - run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+
+  flatpak:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install flatpak-builder
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils appstream desktop-file-utils
+      - name: Validate metadata
+        run: |
+          appstreamcli validate --no-net linux/packaging/com.kysecurity.drive.metainfo.xml
+          desktop-file-validate linux/packaging/com.kysecurity.drive.desktop
+      - name: Install runtime and SDK
+        run: |
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak --user install -y --noninteractive flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 org.freedesktop.Sdk.Extension.golang//25.08
+      - name: Build
+        run: flatpak-builder --user --force-clean --disable-rofiles-fuse build-flatpak linux/packaging/flatpak/com.kysecurity.drive.yml
+      - name: Both binaries are in the bundle
+        run: test -x build-flatpak/files/bin/kydrive-sync && test -x build-flatpak/files/bin/kydrive-desktop
