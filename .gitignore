@@ -1,0 +1,4 @@
+.claude/
+/linux/build/
+/linux/.flatpak-builder/
+/linux/build-flatpak/
