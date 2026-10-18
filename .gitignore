@@ -4,3 +4,10 @@
 /linux/build-flatpak/
 /linux/**/core
 core.[0-9]*
+/macos/build/
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+*.crash
+*.ips
