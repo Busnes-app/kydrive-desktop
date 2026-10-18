@@ -99,7 +99,7 @@ public struct MenuContent: View {
 struct ErrorBanner: View {
     let text: String
     var body: some View {
-        Text(LocalizedStringKey(text)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: text).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -107,14 +107,14 @@ struct WorkspaceRow: View {
     let choice: Choice
     @Binding var isOn: Bool
     var body: some View {
-        Toggle(isOn: $isOn) { Text(LocalizedStringKey(choice.name)) }
+        Toggle(isOn: $isOn) { Text(verbatim: choice.name) }
     }
 }
 
 struct ConflictRow: View {
     let issue: Issue
     var body: some View {
-        Text(LocalizedStringKey(issue.path + " — " + issue.detail)).fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: issue.path + " — " + issue.detail).fixedSize(horizontal: false, vertical: true)
     }
 }
 

@@ -10,7 +10,7 @@ public enum SocketPath {
     /// answered by another user in the core's place.
     public static func `default`(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> String {
         guard let home = environment["HOME"], !home.isEmpty else { throw CoreError.message("$HOME is not set") }
-        return NSTemporaryDirectory() + "kydrive/sync.sock"
+        return (home as NSString).appendingPathComponent("Library/Application Support/kydrive/sync.sock")
     }
 }
 
@@ -107,7 +107,7 @@ func unixAddress(_ path: String) throws -> sockaddr_un {
     var addr = sockaddr_un()
     let bytes = Array(path.utf8)
     if bytes.isEmpty { throw CoreError.message("$HOME is not set") }
-    guard bytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else { throw CoreError.pathTooLong(path) }
+    guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { throw CoreError.pathTooLong(path) }
     addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
     addr.sun_family = sa_family_t(AF_UNIX)
     withUnsafeMutableBytes(of: &addr.sun_path) { $0.copyBytes(from: bytes) }

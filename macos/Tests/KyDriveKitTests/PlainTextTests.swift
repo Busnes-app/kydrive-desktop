@@ -53,7 +53,7 @@ final class PlainTextTests: XCTestCase {
             return size(MenuContent(model: model)).height
         }
         let plain = try await menuHeight(hostile), markdown = try await menuHeight(rendered)
-        XCTAssertGreaterThan(plain - markdown, 40, "hostile markup was interpreted in the menu")
+        XCTAssertGreaterThan(plain - markdown, 100, "hostile markup was interpreted in the menu")
     }
 
     func testNotificationBodyIsTheMessageVerbatim() {

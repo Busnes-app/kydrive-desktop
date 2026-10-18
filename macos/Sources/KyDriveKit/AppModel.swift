@@ -88,7 +88,7 @@ public final class AppModel: ObservableObject {
     }
     func choose(_ ids: [String]) async {
         await act("Choose", ["IDs": ids])
-        await loadWorkspaces()
+        if actionError.isEmpty { await loadWorkspaces() }
     }
 
     private func act(_ method: String, _ params: [String: Any]) async {
@@ -113,7 +113,9 @@ public final class AppModel: ObservableObject {
 
 /// url only if it is http or https with a host; anything else could run an app or a script.
 public func webURL(_ s: String) -> URL? {
-    URL(string: s)
+    guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+          let host = url.host, !host.isEmpty else { return nil }
+    return url
 }
 
 /// A notification for a core warning. Its body is plain text; nothing in it is interpreted.
