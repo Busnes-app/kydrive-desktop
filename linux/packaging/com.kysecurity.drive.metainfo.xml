@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.kysecurity.drive</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>KyDrive</name>
+  <summary>Keep KyDrive workspaces in a folder on this computer</summary>
+  <description>
+    <p>KyDrive keeps the workspaces you choose from your KyDrive server in ~/KyDrive, works offline, and syncs edits both ways. A stale edit becomes a conflict copy, never a silent overwrite, and edits that never uploaded are kept when access ends.</p>
+  </description>
+  <launchable type="desktop-id">com.kysecurity.drive.desktop</launchable>
+  <url type="homepage">https://github.com/Busnes-app/kydrive-desktop</url>
+  <developer id="app.busnes">
+    <name>Busnes.app</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-18"/>
+  </releases>
+</component>

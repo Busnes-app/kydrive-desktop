@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=KyDrive
+Comment=Keep KyDrive workspaces in a folder on this computer
+Exec=kydrive-desktop
+Icon=com.kysecurity.drive
+Categories=Network;FileTransfer;Qt;KDE;
+X-GNOME-Autostart-enabled=true
