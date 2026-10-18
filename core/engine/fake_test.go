@@ -59,6 +59,7 @@ func newFake(t *testing.T) *fake {
 	mux.HandleFunc("GET /api/drive/files/{id}/download", f.download)
 	mux.HandleFunc("POST /api/drive/workspaces/{id}/folders", f.addFolder)
 	mux.HandleFunc("POST /api/drive/workspaces/{id}/upload-sessions", f.startUpload)
+	mux.HandleFunc("GET /api/drive/upload-sessions/{sid}", f.uploadStatus)
 	mux.HandleFunc("PUT /api/drive/upload-sessions/{sid}", f.appendUpload)
 	mux.HandleFunc("POST /api/drive/upload-sessions/{sid}/complete", f.completeUpload)
 	mux.HandleFunc("PUT /api/drive/files/{id}/location", f.moveFile)
@@ -270,6 +271,15 @@ func (f *fake) startUpload(w http.ResponseWriter, r *http.Request) {
 	sid := f.id()
 	f.sessions[sid] = &fsession{ws: ws, parent: in.Parent, name: in.Name, file: in.File, rev: in.Revision, size: in.Size, mtime: in.Mtime}
 	reply(w, 201, map[string]any{"id": sid, "size": in.Size, "received": 0})
+}
+
+func (f *fake) uploadStatus(w http.ResponseWriter, r *http.Request) {
+	s := f.sessions[r.PathValue("sid")]
+	if s == nil {
+		reply(w, 404, map[string]string{"error": "Not found"})
+		return
+	}
+	reply(w, 200, map[string]any{"id": r.PathValue("sid"), "size": s.size, "received": len(s.data)})
 }
 
 func (f *fake) appendUpload(w http.ResponseWriter, r *http.Request) {

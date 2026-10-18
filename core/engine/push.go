@@ -99,6 +99,7 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		case it != nil && it.Kind != "file":
 		case it != nil && !e.changed(*it, n.p, n.fi):
 		case time.Since(n.fi.ModTime()) < e.Settle:
+			e.Unsettled = true
 		default:
 			err = e.upload(ctx, w, n, it)
 		}

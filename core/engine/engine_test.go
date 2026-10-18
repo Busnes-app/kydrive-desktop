@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,7 +35,8 @@ type remote interface {
 	Revoke(t *testing.T, wipe bool)
 }
 
-// newRemote is replaced by e2e_test.go's real-server harness when KYDRIVE_SERVER_BIN is set.
+// newRemote is the real-server harness (e2e_test.go) when KYDRIVE_SERVER_BIN is set. Tests that
+// need fake-only controls use newFake directly.
 var newRemote = func(t *testing.T) remote { return newFake(t) }
 
 type env struct {
@@ -45,7 +51,11 @@ var today = time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 
 func setup(t *testing.T, files map[string]string) *env {
 	t.Helper()
-	r := newRemote(t)
+	return setupOn(t, newRemote(t), files)
+}
+
+func setupOn(t *testing.T, r remote, files map[string]string) *env {
+	t.Helper()
 	ws := r.NewWorkspace(t, "Docs")
 	for p, data := range files {
 		r.Put(t, ws, p, []byte(data))
@@ -137,10 +147,8 @@ func TestInitialSync(t *testing.T) {
 
 func TestDownloadRejectsWrongDigest(t *testing.T) {
 	f := newFake(t)
-	newRemote = func(*testing.T) remote { return f }
-	defer func() { newRemote = func(t *testing.T) remote { return newFake(t) } }()
 	f.corrupt = true
-	v := setup(t, nil)
+	v := setupOn(t, f, nil)
 	v.r.Put(t, v.ws, "x.txt", []byte("hello"))
 	v.e.Sync(context.Background())
 	if got := tree(t, v.root); len(got) != 0 {
@@ -407,9 +415,7 @@ func TestNameHazards(t *testing.T) {
 
 func TestResnapshotAfterGone(t *testing.T) {
 	f := newFake(t)
-	newRemote = func(*testing.T) remote { return f }
-	defer func() { newRemote = func(t *testing.T) remote { return newFake(t) } }()
-	v := setup(t, map[string]string{"a.txt": "a", "b.txt": "b"})
+	v := setupOn(t, f, map[string]string{"a.txt": "a", "b.txt": "b"})
 	v.r.Put(t, v.ws, "c.txt", []byte("c"))
 	v.r.Remove(t, v.ws, "a.txt")
 	f.floor = int64(len(f.log))
@@ -453,5 +459,34 @@ func TestUnchooseKeepsEdits(t *testing.T) {
 	}
 	if !strings.Contains(fmt.Sprint(v.r.Paths(t, v.ws)), "s.txt") {
 		t.Fatal("unchoose touched the server")
+	}
+}
+
+// TestUploadSurvivesDroppedConnection cuts the connection in the middle of the second chunk;
+// the upload resumes from the server's offset.
+func TestUploadSurvivesDroppedConnection(t *testing.T) {
+	v := setup(t, nil)
+	target, _ := url.Parse(v.r.URL())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var puts atomic.Int32
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/api/drive/upload-sessions/") {
+			if puts.Add(1) == 2 {
+				io.CopyN(io.Discard, r.Body, 1<<20)
+				panic(http.ErrAbortHandler)
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	v.e.API.Base = front.URL
+	data := strings.Repeat("0123456789abcdef", 20<<16) // 20 MiB: three chunks
+	v.write("big.bin", data)
+	v.sync()
+	if n := puts.Load(); n < 4 {
+		t.Fatalf("%d chunk requests; the drop did not happen", n)
+	}
+	if v.remote("big.bin") != data {
+		t.Fatal("server content differs")
 	}
 }

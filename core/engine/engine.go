@@ -39,6 +39,9 @@ type Engine struct {
 	CaseFold bool          // the file system ignores case (Windows, macOS)
 	WinNames bool          // skip names Windows cannot hold
 	Now      func() time.Time
+
+	// Unsettled is set by a pass that skipped a file still being written.
+	Unsettled bool
 }
 
 func (e *Engine) abs(w Workspace, rel string) string {
@@ -122,15 +125,13 @@ func (e *Engine) ConfirmDeletes(workspace string, allow bool) error {
 	return fmt.Errorf("workspace %s is not synced", workspace)
 }
 
-// Sync runs one pass over every chosen workspace.
-func (e *Engine) Sync(ctx context.Context) error {
-	if err := e.sync(ctx); err != nil {
-		return e.fail(err)
-	}
-	return nil
-}
+// Sync runs one full pass over every chosen workspace: pull, then a scan and push.
+func (e *Engine) Sync(ctx context.Context) error { return e.fail(e.sync(ctx, true)) }
 
-func (e *Engine) sync(ctx context.Context) error {
+// Poll pulls server changes only.
+func (e *Engine) Poll(ctx context.Context) error { return e.fail(e.sync(ctx, false)) }
+
+func (e *Engine) sync(ctx context.Context, local bool) error {
 	list, err := e.API.Workspaces(ctx)
 	if err != nil {
 		return err
@@ -164,8 +165,8 @@ func (e *Engine) sync(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if list[i].Role == "reader" {
-			continue // nothing local can be sent
+		if !local || list[i].Role == "reader" {
+			continue // a reader has nothing to send
 		}
 		if i := slices.IndexFunc(ws, func(x Workspace) bool { return x.ID == w.ID }); i >= 0 {
 			if err := e.push(ctx, ws[i]); err != nil {
@@ -179,6 +180,9 @@ func (e *Engine) sync(ctx context.Context) error {
 // fail turns a revoked or refused credential into ErrRevoked or ErrSignedOut, wiping first
 // when the server says so.
 func (e *Engine) fail(err error) error {
+	if err == nil {
+		return nil
+	}
 	var ae *api.Error
 	if !errors.As(err, &ae) || ae.Status != 401 {
 		return err
