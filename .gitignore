@@ -4,3 +4,10 @@
 /linux/build-flatpak/
 /linux/**/core
 core.[0-9]*
+/windows/build/
+/windows/**/bin/
+/windows/**/obj/
+/windows/**/AppPackages/
+/windows/**/.vs/
+/windows/**/*.user
+/windows/**/*.dmp

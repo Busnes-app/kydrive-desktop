@@ -78,3 +78,57 @@ jobs:
         run: flatpak-builder --user --force-clean --disable-rofiles-fuse build-flatpak linux/packaging/flatpak/com.kysecurity.drive.yml
       - name: Both binaries are in the bundle
         run: test -x build-flatpak/files/bin/kydrive-sync && test -x build-flatpak/files/bin/kydrive-desktop
+
+  windows-shell:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Build the core for x64 and arm64
+        shell: bash
+        working-directory: core
+        run: |
+          GOOS=windows GOARCH=amd64 go build -trimpath -o ../windows/build/core/x64/kydrive-sync.exe ./cmd/kydrive-sync
+          GOOS=windows GOARCH=arm64 go build -trimpath -o ../windows/build/core/ARM64/kydrive-sync.exe ./cmd/kydrive-sync
+      - name: Unit, IPC and real-core tests
+        env:
+          KYDRIVE_SYNC_EXE: ${{ github.workspace }}\windows\build\core\x64\kydrive-sync.exe
+        run: dotnet test KyDrive.Tests --logger "console;verbosity=normal"
+      # Evidence for the socket's access control: the core in the runner's real %APPDATA%,
+      # its directory ACL, and another local user trying to call it.
+      - name: Socket ACL and another user
+        run: |
+          $exe = Resolve-Path build\core\x64\kydrive-sync.exe
+          $sock = Join-Path $env:APPDATA 'kydrive\sync.sock'
+          $core = Start-Process $exe -PassThru -WindowStyle Hidden
+          for ($i = 0; $i -lt 50 -and -not (Test-Path $sock); $i++) { Start-Sleep -Milliseconds 200 }
+          & $exe ctl Status
+          if ($LASTEXITCODE) { throw 'the owner cannot call the core' }
+          icacls (Split-Path $sock)
+          icacls $sock
+          $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          $ids = (Get-Acl (Split-Path $sock)).Access | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique
+          "directory ACL identities: $($ids -join ', ')"
+          $broad = $ids | Where-Object { $_ -notin @($me, 'NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators') }
+          $plain = 'Kyd-' + [guid]::NewGuid() + '-a1!'
+          net user kydother $plain /add | Out-Null
+          $cred = [pscredential]::new('kydother', (ConvertTo-SecureString $plain -AsPlainText -Force))
+          $out = 'C:\Users\Public\kyd-other.txt'
+          $cmd = "`$env:APPDATA = '$env:APPDATA'; & '$exe' ctl Status *> '$out'; exit `$LASTEXITCODE"
+          $p = Start-Process pwsh -Credential $cred -LoadUserProfile -Wait -PassThru -ArgumentList '-NoProfile', '-Command', $cmd
+          "kydother exit $($p.ExitCode):"
+          Get-Content $out
+          Stop-Process $core
+          net user kydother /delete | Out-Null
+          if ($broad) { throw "the socket directory grants $broad" }
+          if ($p.ExitCode -eq 0 -or -not (Select-String -Quiet 'not running' $out)) { throw 'another user reached the socket, or the check did not run' }
