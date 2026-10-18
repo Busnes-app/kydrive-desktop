@@ -25,7 +25,13 @@ func start(t *testing.T, srv *httptest.Server) (*daemon, func(method string, par
 	t.Helper()
 	keyring.MockInit()
 	dir := t.TempDir()
-	d, err := newDaemon(filepath.Join(dir, "config"), filepath.Join(dir, "KyDrive"), filepath.Join(dir, "run", "sync.sock"))
+	// macOS caps socket paths at 104 bytes; t.TempDir names can exceed that.
+	run, err := os.MkdirTemp("", "kyd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(run) })
+	d, err := newDaemon(filepath.Join(dir, "config"), filepath.Join(dir, "KyDrive"), filepath.Join(run, "run", "sync.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
