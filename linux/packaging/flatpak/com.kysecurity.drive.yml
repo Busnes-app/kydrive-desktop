@@ -1,0 +1,44 @@
+app-id: com.kysecurity.drive
+runtime: org.kde.Platform
+runtime-version: "6.11"
+sdk: org.kde.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.golang
+command: kydrive-desktop
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --share=network
+  - --device=dri
+  - --filesystem=~/KyDrive:create
+  # go-keyring speaks the Secret Service D-Bus API itself, so it needs the service, not the
+  # Secret portal (which only hands out an app key for a local store).
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=com.kysecurity.drive
+modules:
+  - name: kydrive-sync
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/golang/bin
+      env:
+        CGO_ENABLED: "0"
+      # Go modules are fetched at build time; a Flathub build would need them vendored.
+      build-args:
+        - --share=network
+    build-commands:
+      - cd core && GOPATH=$PWD/.go GOCACHE=$PWD/.cache go build -trimpath -o /app/bin/kydrive-sync ./cmd/kydrive-sync
+    sources:
+      - type: dir
+        path: ../../..
+  - name: kydrive-desktop
+    buildsystem: cmake-ninja
+    subdir: linux
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: dir
+        path: ../../..
