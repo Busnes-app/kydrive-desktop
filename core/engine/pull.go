@@ -207,9 +207,6 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		dir = p.Path
 	}
 	rel = path.Join(dir, name)
-	if _, err := e.abs(w, rel); err != nil {
-		return refused, true, fmt.Sprintf("%s would be written outside the workspace folder", rel), nil
-	}
 	switch {
 	case ignored(name):
 		return rel, true, "", nil
@@ -223,6 +220,9 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		if slices.ContainsFunc(sib, func(s Item) bool { return s.ID != id && s.State != "skipped" && strings.EqualFold(s.Name, name) }) {
 			return rel, true, "another item here differs only in case", nil
 		}
+	}
+	if _, err := e.abs(w, rel); err != nil {
+		return refused, true, fmt.Sprintf("%s would be written outside the workspace folder", rel), nil
 	}
 	return rel, false, "", nil
 }
