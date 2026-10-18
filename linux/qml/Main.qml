@@ -11,6 +11,12 @@ Kirigami.ApplicationWindow {
     width: Kirigami.Units.gridUnit * 30
     height: Kirigami.Units.gridUnit * 36
     readonly property bool linked: Core.status.Linked === true
+
+    // InlineMessage renders rich text it cannot be told otherwise: escape server text and wrap
+    // it so the escapes are decoded, never interpreted.
+    function rich(s) {
+        return "<span>" + String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") + "</span>"
+    }
     onLinkedChanged: if (linked) Core.loadWorkspaces()
 
     Theme { id: theme }
@@ -54,9 +60,10 @@ Kirigami.ApplicationWindow {
 
             Kirigami.InlineMessage {
                 Layout.fillWidth: true
-                visible: text !== ""
                 type: Kirigami.MessageType.Error
-                text: Core.error !== "" ? Core.error : (Core.status.Error || "")
+                readonly property string raw: Core.error !== "" ? Core.error : (Core.status.Error || "")
+                visible: raw !== ""
+                text: root.rich(raw)
             }
 
             // Not linked: the browser does the sign-in and approval.
@@ -85,6 +92,7 @@ Kirigami.ApplicationWindow {
             Controls.Label {
                 visible: root.linked
                 text: i18n("Status: %1", Core.status.State || "")
+                textFormat: Text.PlainText
                 color: theme.inkStrong
             }
 
@@ -96,7 +104,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     visible: modelData.HeldDeletes > 0
                     type: Kirigami.MessageType.Warning
-                    text: i18n("%1 items were deleted from %2 on this computer.", modelData.HeldDeletes, modelData.Name)
+                    text: root.rich(i18n("%1 items were deleted from %2 on this computer.", modelData.HeldDeletes, modelData.Name))
                     actions: [
                         Kirigami.Action {
                             text: i18n("Delete from KyDrive too")
@@ -119,10 +127,19 @@ Kirigami.ApplicationWindow {
             Repeater {
                 id: choices
                 model: root.linked ? Core.workspaces : []
-                delegate: Controls.CheckBox {
+                // The name sits in its own plain-text label; a CheckBox's text may render markup.
+                delegate: RowLayout {
                     required property var modelData
-                    text: modelData.Name
-                    checked: modelData.Chosen
+                    property alias checked: box.checked
+                    Controls.CheckBox {
+                        id: box
+                        checked: modelData.Chosen
+                    }
+                    Controls.Label {
+                        text: modelData.Name
+                        textFormat: Text.PlainText
+                        color: theme.inkStrong
+                    }
                 }
             }
             Controls.Label {
@@ -163,6 +180,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: theme.ink
+                    textFormat: Text.PlainText
                     text: modelData.Path + " — " + modelData.Detail
                 }
             }
