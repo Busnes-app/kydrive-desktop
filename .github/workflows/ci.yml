@@ -120,8 +120,9 @@ jobs:
           $ids = (Get-Acl (Split-Path $sock)).Access | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique
           "directory ACL identities: $($ids -join ', ')"
           $broad = $ids | Where-Object { $_ -notin @($me, 'NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators') }
-          $plain = 'Kyd-' + [guid]::NewGuid() + '-a1!'
-          net user kydother $plain /add | Out-Null
+          $plain = 'Kd!' + [guid]::NewGuid().ToString('N').Substring(0, 8) + 'a1' # net user prompts above 14 characters
+          net user kydother $plain /add
+          if ($LASTEXITCODE) { throw "could not create the test user" }
           $cred = [pscredential]::new('kydother', (ConvertTo-SecureString $plain -AsPlainText -Force))
           $out = 'C:\Users\Public\kyd-other.txt'
           $cmd = "`$env:APPDATA = '$env:APPDATA'; & '$exe' ctl Status *> '$out'; exit `$LASTEXITCODE"
