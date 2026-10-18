@@ -36,7 +36,7 @@ sealed class MainWindow : Window
     readonly Button pauseButton = new();
     readonly StackPanel held = new() { Spacing = 8 };
     readonly StackPanel choices = new();
-    readonly TextBlock conflictsHeading = Heading("Conflicts and kept files");
+    readonly TextBlock conflictsHeading = Heading("Conflicts and kept files", Visibility.Collapsed);
     readonly StackPanel conflicts = new() { Spacing = 4 };
 
     public MainWindow(bool notifications)
@@ -345,7 +345,8 @@ sealed class MainWindow : Window
 
     static TextBlock Plain(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap };
 
-    static TextBlock Heading(string text) => new() { Text = text, Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] };
+    static TextBlock Heading(string text, Visibility visibility = Visibility.Visible) =>
+        new() { Text = text, Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"], Visibility = visibility };
 
     static Button Act(string label, Action click)
     {
