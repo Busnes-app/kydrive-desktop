@@ -28,7 +28,7 @@ modules:
       build-args:
         - --share=network
     build-commands:
-      - cd core && GOPATH=$PWD/.go GOCACHE=$PWD/.cache go build -trimpath -o /app/bin/kydrive-sync ./cmd/kydrive-sync
+      - cd core && GOPATH=$PWD/.go GOCACHE=$PWD/.cache go build -trimpath -modcacherw -o /app/bin/kydrive-sync ./cmd/kydrive-sync
     sources:
       - type: dir
         path: ../../..
