@@ -150,58 +150,29 @@ jobs:
             foreach ($f in 'KyDrive.exe', 'kydrive-sync.exe', 'AppxManifest.xml') { if ($f -notin $names) { throw "$($m.Name) lacks $f" } }
           }
           foreach ($p in 'x64', 'ARM64') { foreach ($f in 'KyDrive.exe', 'kydrive-sync.exe') { if (-not (Test-Path "out\KyDrive-$p\$f")) { throw "zip $p lacks $f" } } }
-      # The unpackaged app on the runner's desktop: it must stay up, start the bundled core on
-      # the socket path it computed, and show its window (screenshot artifact).
-      - name: Launch the app
+      # Each build on the runner's desktop must start its bundled core on the contract socket path
+      # and render the link form, which needs the core's answer (screenshots are artifacts).
+      - name: Launch the zip build
         run: |
           $env:APPDATA = Join-Path $env:RUNNER_TEMP 'smoke\Roaming'
           New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
-          $sock = Join-Path $env:APPDATA 'kydrive\sync.sock'
-          $app = Start-Process out\KyDrive-x64\KyDrive.exe -PassThru
-          for ($i = 0; $i -lt 100 -and -not (Test-Path $sock); $i++) { Start-Sleep -Milliseconds 200 }
-          Start-Sleep -Seconds 8
-          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bmp = [Drawing.Bitmap]::new($b.Width, $b.Height)
-          [Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
-          $bmp.Save("$pwd\out\screenshot.png")
-          Get-Process kydrive-sync -ErrorAction SilentlyContinue | Format-Table Id, Path -AutoSize
-          & out\KyDrive-x64\kydrive-sync.exe ctl Status
-          if ($app.HasExited) {
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue |
-              Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error' } | Format-List Message
-            throw "KyDrive exited with $($app.ExitCode)"
-          }
-          Stop-Process $app
-          Get-Process kydrive-sync | Stop-Process
-          if (-not (Test-Path $sock)) { throw 'the app did not start the core' }
-      # Evidence, not yet a gate: does the unsigned MSIX install, and where does the packaged
-      # core put its socket under MSIX AppData virtualization?
+          .\launch-check.ps1 -Target out\KyDrive-x64\KyDrive.exe -Socket (Join-Path $env:APPDATA 'kydrive\sync.sock') -Shot "$pwd\out\screenshot-zip.png"
+          Get-Process KyDrive, kydrive-sync | Stop-Process -Force
       - name: Install and launch the MSIX
-        continue-on-error: true
         run: |
           Remove-Item -Recurse -Force (Join-Path $env:APPDATA kydrive) -ErrorAction SilentlyContinue
           $msix = Get-ChildItem -Recurse out\msix -Filter *_x64.msix | Select-Object -First 1
           Add-AppxPackage -Path $msix.FullName -AllowUnsigned
           $pkg = Get-AppxPackage com.kysecurity.drive
           $pkg | Format-List Name, PackageFamilyName, InstallLocation, SignatureKind
-          Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
-          $real = Join-Path $env:APPDATA 'kydrive\sync.sock'
-          $virt = Join-Path $env:LOCALAPPDATA "Packages\$($pkg.PackageFamilyName)\LocalCache\Roaming\kydrive\sync.sock"
-          for ($i = 0; $i -lt 100 -and -not (Test-Path $real) -and -not (Test-Path $virt); $i++) { Start-Sleep -Milliseconds 200 }
-          Start-Sleep -Seconds 8
-          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bmp = [Drawing.Bitmap]::new($b.Width, $b.Height)
-          [Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
-          $bmp.Save("$pwd\out\screenshot-msix.png")
-          Get-Process KyDrive, kydrive-sync -ErrorAction SilentlyContinue | Format-Table Id, Name, Path -AutoSize
-          "socket in the real %APPDATA%: $(Test-Path $real)"
-          "socket in the package's LocalCache: $(Test-Path $virt)"
+          $sock = Join-Path $env:APPDATA 'kydrive\sync.sock'
+          .\launch-check.ps1 -Target "shell:AppsFolder\$($pkg.PackageFamilyName)!App" -Socket $sock -Shot "$pwd\out\screenshot-msix.png"
+          # The packaged core is reachable from outside the package on the same path.
           & build\core\x64\kydrive-sync.exe ctl Status
-          "unpackaged ctl on the real path: exit $LASTEXITCODE"
-          Get-Process KyDrive, kydrive-sync -ErrorAction SilentlyContinue | Stop-Process -Force
+          $ok = $LASTEXITCODE -eq 0
+          Get-Process KyDrive, kydrive-sync | Stop-Process -Force
           Remove-AppxPackage $pkg.PackageFullName
+          if (-not $ok) { throw 'ctl could not reach the packaged core' }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kydrive-windows-msix-unsigned

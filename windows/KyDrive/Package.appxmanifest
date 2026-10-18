@@ -5,7 +5,8 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
-  IgnorableNamespaces="uap rescap com desktop">
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  IgnorableNamespaces="uap rescap com desktop desktop6">
 
   <!-- The OID marks an unsigned package (Add-AppxPackage -AllowUnsigned). Signing replaces
        Publisher with the certificate's subject; see windows/AGENTS.md. -->
@@ -15,10 +16,13 @@
     <DisplayName>KyDrive</DisplayName>
     <PublisherDisplayName>KySecurity</PublisherDisplayName>
     <Logo>Assets\logo50.png</Logo>
+    <!-- The core's socket and state live in the real %APPDATA%: under write virtualization its
+         bind() lands in the package's LocalCache, where connect() to the same path fails. -->
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
@@ -47,5 +51,6 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>
