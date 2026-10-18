@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 permissions:
@@ -78,6 +79,124 @@ jobs:
         run: flatpak-builder --user --force-clean --disable-rofiles-fuse build-flatpak linux/packaging/flatpak/com.kysecurity.drive.yml
       - name: Both binaries are in the bundle
         run: test -x build-flatpak/files/bin/kydrive-sync && test -x build-flatpak/files/bin/kydrive-desktop
+
+  macos-shell:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: Build the core
+        working-directory: core
+        run: go build -o "$RUNNER_TEMP/kydrive-sync" ./cmd/kydrive-sync
+      - name: Unit tests
+        working-directory: macos
+        run: KYDRIVE_SYNC_BIN="$RUNNER_TEMP/kydrive-sync" swift test
+      - name: Bundle
+        run: macos/scripts/bundle.sh
+      - name: Check the bundle
+        run: |
+          app=macos/build/KyDrive.app
+          agent=$app/Contents/Library/LaunchAgents/com.kysecurity.drive.sync.plist
+          plutil -lint "$app/Contents/Info.plist" "$agent"
+          test -x "$app/$(plutil -extract BundleProgram raw "$agent")"
+          lipo "$app/Contents/MacOS/KyDrive" -verify_arch arm64 x86_64
+          lipo "$app/Contents/MacOS/kydrive-sync" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict --verbose=2 "$app"
+      - name: Launch the app and reach its core
+        run: |
+          open macos/build/KyDrive.app
+          sock="$HOME/Library/Application Support/kydrive/sync.sock"
+          for _ in $(seq 60); do [ -S "$sock" ] && break; sleep 1; done
+          echo "launch agent:"
+          launchctl print "gui/$(id -u)/com.kysecurity.drive.sync" 2>&1 | grep -E '^[[:space:]]*(state|pid|program|last exit code) =' || echo "not loaded"
+          echo "running cores (ppid 1 = launchd):"
+          ps -axo pid,ppid,comm | grep '[k]ydrive-sync' || true
+          macos/build/KyDrive.app/Contents/MacOS/kydrive-sync ctl Status
+      - name: Zip the unsigned app
+        run: ditto -c -k --keepParent macos/build/KyDrive.app KyDrive-macos-unsigned.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: KyDrive-macos-unsigned
+          path: KyDrive-macos-unsigned.zip
+          if-no-files-found: error
+
+  # Developer ID signing and notarization: pushes to main and tags only, never pull requests,
+  # and only once the secrets in macos/AGENTS.md exist.
+  macos-sign:
+    needs: macos-shell
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: macos-latest
+    env:
+      HAVE_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12 != '' }}
+    steps:
+      - name: No signing secrets
+        if: env.HAVE_SIGNING != 'true'
+        run: echo "::notice::Apple signing secrets are not set; skipping. See macos/AGENTS.md."
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: env.HAVE_SIGNING == 'true'
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        if: env.HAVE_SIGNING == 'true'
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: Bundle
+        if: env.HAVE_SIGNING == 'true'
+        run: macos/scripts/bundle.sh
+      - name: Import the Developer ID certificate
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          kc=$RUNNER_TEMP/signing.keychain-db
+          kcpass=$(uuidgen)
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/id.p12"
+          security import "$RUNNER_TEMP/id.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/id.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$kc"
+          security list-keychains -d user -s "$kc"
+      - name: Sign
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          app=macos/build/KyDrive.app
+          for target in "$app/Contents/MacOS/kydrive-sync" "$app"; do
+            codesign --force --options runtime --timestamp --keychain "$RUNNER_TEMP/signing.keychain-db" \
+              --sign "Developer ID Application" "$target"
+          done
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -qx "TeamIdentifier=$TEAM_ID"
+      - name: Notarize
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          app=macos/build/KyDrive.app
+          printf '%s' "$KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --key "$RUNNER_TEMP/notary.p8" --key-id "$KEY_ID" --issuer "$ISSUER" --wait
+          rm "$RUNNER_TEMP/notary.p8"
+          xcrun stapler staple "$app"
+          spctl --assess --type execute --verbose "$app"
+          ditto -c -k --keepParent "$app" KyDrive-macos.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: env.HAVE_SIGNING == 'true'
+        with:
+          name: KyDrive-macos
+          path: KyDrive-macos.zip
+          if-no-files-found: error
+      - name: Remove the signing keychain
+        if: always() && env.HAVE_SIGNING == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   windows-shell:
     runs-on: windows-latest

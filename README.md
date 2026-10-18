@@ -20,6 +20,7 @@ Requires a KyDrive server with milestone M7 (change feed, client mtimes, linked 
 |---|---|
 | `core/` | Go sync core: `kydrive-sync`, one per user, driven over a local socket |
 | `linux/` | Qt6/Kirigami tray app (`kydrive-desktop`), systemd user unit, Flatpak |
+| `macos/` | SwiftUI menu bar app (`KyDrive.app`), the core as a bundled launch agent |
 | `windows/` | WinUI 3 tray app (`KyDrive.exe`), MSIX and zip |
 | `scripts/smoke.sh` | Drives a built `kydrive-sync` against a real server |
 
@@ -37,7 +38,8 @@ go build ./cmd/kydrive-sync
 
 `ctl` methods: `Status`, `Link`, `Unlink`, `Workspaces`, `Choose`, `Pause`, `Conflicts`,
 `Activity`, `ConfirmDeletes`. They are JSON-RPC 1.0 calls `Core.<Method>` on the socket at
-`$XDG_RUNTIME_DIR/kydrive/sync.sock` (Linux) or `<user config dir>/kydrive/sync.sock`.
+`$XDG_RUNTIME_DIR/kydrive/sync.sock` (Linux), `~/Library/Application Support/kydrive/sync.sock`
+(macOS) or `<user config dir>/kydrive/sync.sock`.
 
 ## Linux app
 
@@ -52,10 +54,21 @@ systemctl --user enable --now kydrive-sync      # optional: run the core at logi
 Needs Qt 6.5+, Kirigami, KI18n, KDBusAddons and KStatusNotifierItem (KF6). The Flatpak
 manifest is `linux/packaging/flatpak/com.kysecurity.drive.yml`.
 
+## macOS app
+
+```sh
+cd macos
+swift test
+scripts/bundle.sh && open build/KyDrive.app     # needs Xcode and Go
+```
+
+Needs macOS 13+. The app registers the bundled core as a login item; until CI signs it with a
+Developer ID, the built app is only ad-hoc signed.
+
 ## Windows app
 
 CI builds an unsigned MSIX and a zip for x64 and arm64 (artifacts `kydrive-windows-msix-unsigned`
-and `kydrive-windows-zip`). Until the MSIX is signed it installs only on Windows 11, from an
+and `kydrive-windows-zip`). Until the MSIX is signed it installs only on Windows 11 (or Server 2025), from an
 administrator PowerShell: `Add-AppxPackage -Path .\KyDrive_….msix -AllowUnsigned`. The zip runs
 unpacked: start `KyDrive.exe`, which starts `kydrive-sync.exe` beside it. Building needs Windows
 and the .NET 10 SDK; see `windows/AGENTS.md`.
