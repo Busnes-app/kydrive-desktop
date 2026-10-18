@@ -88,7 +88,9 @@ final class CoreClientTests: XCTestCase {
         XCTAssertEqual(fake.params("Core.Unlink").first?["RemoveFiles"] as? Bool, true)
     }
 
+    // A failed action's error stays up through the refresh that follows it.
     func testCoreErrorIsShown() async {
+        await model.refresh()
         fake.fail("Core.Choose", "workspace not found")
         await model.choose(["x"])
         XCTAssertEqual(model.shownError, "workspace not found")
