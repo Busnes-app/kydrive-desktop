@@ -19,6 +19,7 @@ Requires a KyDrive server with milestone M7 (change feed, client mtimes, linked 
 | Path | What |
 |---|---|
 | `core/` | Go sync core: `kydrive-sync`, one per user, driven over a local socket |
+| `linux/` | Qt6/Kirigami tray app (`kydrive-desktop`), systemd user unit, Flatpak |
 | `scripts/smoke.sh` | Drives a built `kydrive-sync` against a real server |
 
 ## Build and run the core
@@ -36,6 +37,19 @@ go build ./cmd/kydrive-sync
 `ctl` methods: `Status`, `Link`, `Unlink`, `Workspaces`, `Choose`, `Pause`, `Conflicts`,
 `Activity`, `ConfirmDeletes`. They are JSON-RPC 1.0 calls `Core.<Method>` on the socket at
 `$XDG_RUNTIME_DIR/kydrive/sync.sock` (Linux) or `<user config dir>/kydrive/sync.sock`.
+
+## Linux app
+
+```sh
+cd linux
+cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build && ctest --test-dir build
+sudo cmake --install build                      # with kydrive-sync in the same bin dir
+systemctl --user enable --now kydrive-sync      # optional: run the core at login
+```
+
+Needs Qt 6.5+, Kirigami, KI18n, KDBusAddons and KStatusNotifierItem (KF6). The Flatpak
+manifest is `linux/packaging/flatpak/com.kysecurity.drive.yml`.
 
 ## Dependencies
 
