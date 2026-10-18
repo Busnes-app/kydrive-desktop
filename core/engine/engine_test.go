@@ -490,3 +490,76 @@ func TestUploadSurvivesDroppedConnection(t *testing.T) {
 		t.Fatal("server content differs")
 	}
 }
+
+// TestServerNamesStayInside: a hostile or buggy server cannot make the engine write outside
+// the workspace folder with names holding separators or dot segments.
+func TestServerNamesStayInside(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, nil)
+	f.mu.Lock()
+	add := func(kind, parent, name string, data []byte) string {
+		it := &fitem{id: f.id(), ws: v.ws, kind: kind, parent: parent, name: name, rev: 1, data: data, mtime: "2026-01-02T03:04:05Z"}
+		f.items[it.id] = it
+		f.record(v.ws, kind, it.id)
+		return it.id
+	}
+	up := add("folder", "", "..", nil)
+	add("file", up, "evil.txt", []byte("evil"))
+	for _, n := range []string{"../evil.txt", `..\evil.txt`, "a/b", ".", "..", ""} {
+		add("file", "", n, []byte("evil"))
+	}
+	f.mu.Unlock()
+	v.sync()
+	v.sync()
+	outside := tree(t, filepath.Dir(v.root))
+	for _, p := range outside {
+		if strings.Contains(p, "evil") || !strings.HasPrefix(p, filepath.Base(v.root)+"/Docs/") && strings.Contains(p, filepath.Base(v.root)+"/") {
+			t.Errorf("written outside the workspace folder: %s", p)
+		}
+	}
+	issues, _ := v.e.DB.Issues()
+	skipped := 0
+	for _, i := range issues {
+		if i.Kind == "skipped" {
+			skipped++
+		}
+	}
+	if skipped < 7 {
+		t.Fatalf("%d skipped issues, want every refused name listed: %+v", skipped, issues)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, it := range f.items {
+		if it.trashed {
+			t.Errorf("%q was trashed on the server", it.name)
+		}
+	}
+}
+
+// TestSymlinkedParentRefused: a synced folder replaced locally by a symlink to elsewhere must
+// not let a download land outside the root.
+func TestSymlinkedParentRefused(t *testing.T) {
+	v := setupOn(t, newFake(t), map[string]string{"a/one.txt": "1"})
+	elsewhere := t.TempDir()
+	os.RemoveAll(v.path("a"))
+	if err := os.Symlink(elsewhere, v.path("a")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	v.r.Put(t, v.ws, "a/two.txt", []byte("2"))
+	v.e.Sync(context.Background())
+	if got := tree(t, elsewhere); len(got) != 0 {
+		t.Fatalf("written through the symlink: %v", got)
+	}
+}
+func TestAbsRefusesEscapes(t *testing.T) {
+	e := &Engine{Root: t.TempDir()}
+	w := Workspace{Dir: "Docs"}
+	for _, rel := range []string{"../x", "a/../../x", "/etc/passwd", `..\x`} {
+		if p, err := e.abs(w, rel); err == nil && !strings.HasPrefix(p, filepath.Join(e.Root, "Docs")+string(filepath.Separator)) {
+			t.Errorf("abs(%q) = %q", rel, p)
+		}
+	}
+	if p, err := e.abs(w, "a/b.txt"); err != nil || p != filepath.Join(e.Root, "Docs", "a", "b.txt") {
+		t.Errorf("abs(a/b.txt) = %q, %v", p, err)
+	}
+}

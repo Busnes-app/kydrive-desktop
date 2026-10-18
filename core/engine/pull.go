@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -104,7 +105,7 @@ func cmpErr(err, otherwise error) error {
 // snapshot enumerates the whole workspace, applies it, removes what is gone and continues
 // the feed from the snapshot's head.
 func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
-	if err := os.MkdirAll(e.abs(w, ""), 0o755); err != nil {
+	if err := os.MkdirAll(e.dir(w), 0o755); err != nil {
 		return err
 	}
 	var folders []api.Folder
@@ -132,7 +133,7 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 				later = append(later, f)
 				continue
 			}
-			if err := e.upsertFolder(w, f); err != nil {
+			if err := e.upsertFolder(w, f); err != nil && !errors.Is(err, errSnapshot) {
 				return err
 			}
 			seen[f.ID] = true
@@ -147,7 +148,7 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		if !seen[f.Parent] {
 			continue
 		}
-		if err := e.upsertFile(ctx, w, f); err != nil {
+		if err := e.upsertFile(ctx, w, f); err != nil && !errors.Is(err, errSnapshot) {
 			return err
 		}
 		seen[f.ID] = true
@@ -185,6 +186,12 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 // place resolves where an item named name under parent goes locally. It returns skip, with a
 // reason when the user should hear of it, if the item must not be synced here.
 func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip bool, why string, err error) {
+	// A name the server should never have sent gets a placeholder path that cannot touch
+	// disk or collide with a real item.
+	refused := ".kydrive-refused-" + id
+	if !serverName(name) {
+		return refused, true, fmt.Sprintf("the server sent the name %q, which is not a valid file name", name), nil
+	}
 	dir := ""
 	if parent != "" {
 		p, err := e.DB.Item(parent)
@@ -200,6 +207,9 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		dir = p.Path
 	}
 	rel = path.Join(dir, name)
+	if _, err := e.abs(w, rel); err != nil {
+		return refused, true, fmt.Sprintf("%s would be written outside the workspace folder", rel), nil
+	}
 	switch {
 	case ignored(name):
 		return rel, true, "", nil
@@ -234,7 +244,14 @@ func (e *Engine) skip(w Workspace, it Item, why string) error {
 // relocate moves the local copy of an item from one path to another. It refuses, leaving
 // everything in place, when something already occupies the destination.
 func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
-	src, dst := e.abs(w, from), e.abs(w, to)
+	src, err := e.abs(w, from)
+	if err != nil {
+		return false, err
+	}
+	dst, err := e.abs(w, to)
+	if err != nil {
+		return false, err
+	}
 	sfi, serr := os.Lstat(src)
 	// A case-only rename on a case-insensitive file system finds src at dst.
 	if dfi, err := os.Lstat(dst); err == nil && (serr != nil || !os.SameFile(sfi, dfi)) {
@@ -270,7 +287,10 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 			return err
 		}
 	}
-	p := e.abs(w, rel)
+	p, err := e.abs(w, rel)
+	if err != nil {
+		return e.skip(w, it, err.Error())
+	}
 	if err := os.MkdirAll(p, 0o755); err != nil {
 		return e.skip(w, it, "a local file has this name")
 	}
@@ -303,7 +323,10 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 		}
 		old.Path = rel
 	}
-	p := e.abs(w, rel)
+	p, err := e.abs(w, rel)
+	if err != nil {
+		return e.skip(w, fileItem(w, f, rel), err.Error())
+	}
 	fi, err := os.Lstat(p)
 	if err == nil {
 		switch {
@@ -347,7 +370,10 @@ func (e *Engine) record(w Workspace, f api.File, rel, p string) error {
 // server's digest, and renames it into place only if the destination is still free or still
 // the unchanged copy of f.
 func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel string) error {
-	p := e.abs(w, rel)
+	p, err := e.abs(w, rel)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}

@@ -44,8 +44,34 @@ type Engine struct {
 	Unsettled bool
 }
 
-func (e *Engine) abs(w Workspace, rel string) string {
-	return filepath.Join(e.Root, w.Dir, filepath.FromSlash(rel))
+// errOutside refuses a path that would leave the workspace folder.
+var errOutside = errors.New("path leaves the workspace folder")
+
+// dir is the workspace's folder under the root.
+func (e *Engine) dir(w Workspace) string { return filepath.Join(e.Root, w.Dir) }
+
+// abs resolves rel inside the workspace folder. It refuses a rel that is not local, and one
+// with an ancestor that is a symlink, so no server name or local link can lead outside.
+func (e *Engine) abs(w Workspace, rel string) (string, error) {
+	root := e.dir(w)
+	if rel == "" {
+		return root, nil
+	}
+	r := filepath.FromSlash(rel)
+	if !filepath.IsLocal(w.Dir) || !filepath.IsLocal(r) || strings.ContainsRune(rel, '\\') {
+		return "", errOutside
+	}
+	p := root
+	for _, part := range strings.Split(filepath.Dir(r), string(filepath.Separator)) {
+		if part == "." {
+			break
+		}
+		p = filepath.Join(p, part)
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+			return "", errOutside
+		}
+	}
+	return filepath.Join(root, r), nil
 }
 
 func (e *Engine) warn(format string, a ...any) { e.DB.Log("warn", fmt.Sprintf(format, a...)) }
@@ -230,9 +256,13 @@ func (e *Engine) lose(w Workspace) error {
 // evict removes rel and everything below it from disk, moving each file that is not a
 // synced, unchanged copy to Unsynced/<workspace folder>/rel.
 func (e *Engine) evict(w Workspace, rel string) error {
-	top := e.abs(w, rel)
+	top, err := e.abs(w, rel)
+	if err != nil {
+		e.warn("Kept %s on disk: %v", rel, err)
+		return e.DB.DropTree(w.ID, rel)
+	}
 	var dirs []string
-	err := filepath.WalkDir(top, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(top, func(p string, d fs.DirEntry, err error) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
@@ -243,7 +273,7 @@ func (e *Engine) evict(w Workspace, rel string) error {
 			dirs = append(dirs, p)
 			return nil
 		}
-		r, _ := filepath.Rel(e.abs(w, ""), p)
+		r, _ := filepath.Rel(e.dir(w), p)
 		r = filepath.ToSlash(r)
 		fi, err := os.Lstat(p)
 		if err != nil {
@@ -305,11 +335,15 @@ func (e *Engine) conflict(w Workspace, rel string) error {
 		base, ext = name, ""
 	}
 	name = fmt.Sprintf("%s (conflict from %s %s)%s", base, e.Device, e.Now().Format("2006-01-02"), ext)
-	dst := freePath(filepath.Join(filepath.Dir(e.abs(w, rel)), name))
-	if err := os.Rename(e.abs(w, rel), dst); err != nil {
+	src, err := e.abs(w, rel)
+	if err != nil {
 		return err
 	}
-	r, _ := filepath.Rel(e.abs(w, ""), dst)
+	dst := freePath(filepath.Join(filepath.Dir(src), name))
+	if err := os.Rename(src, dst); err != nil {
+		return err
+	}
+	r, _ := filepath.Rel(e.dir(w), dst)
 	e.warn("%s was edited here and on the server; your copy is %s", rel, filepath.Base(dst))
 	return e.DB.AddIssue(w.ID, filepath.ToSlash(r), "conflict", "edited here and on the server; both kept")
 }

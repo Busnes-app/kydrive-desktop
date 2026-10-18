@@ -27,7 +27,7 @@ func (n entry) dir() bool { return n.fi.IsDir() }
 // scan lists the workspace folder's folders and regular files, parents first, skipping
 // ignored names and symlinks.
 func (e *Engine) scan(w Workspace) ([]entry, error) {
-	root := e.abs(w, "")
+	root := e.dir(w)
 	var out []entry
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -59,7 +59,7 @@ func (e *Engine) scan(w Workspace) ([]entry, error) {
 // push sends local changes, parents first: moves, new folders, new files and versions, then
 // deletes.
 func (e *Engine) push(ctx context.Context, w Workspace) error {
-	if _, err := os.Lstat(e.abs(w, "")); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(e.dir(w)); errors.Is(err, fs.ErrNotExist) {
 		return e.deletes(ctx, w, nil, true)
 	}
 	entries, err := e.scan(w)
