@@ -7,7 +7,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Windows.AppNotifications;
 using Windows.Graphics;
-using Windows.System;
 
 namespace KyDrive;
 
@@ -310,7 +309,7 @@ sealed class MainWindow : Window
     async void OpenInBrowser()
     {
         if (Safe.WebUri(status?.Server) is { } uri)
-            await Launcher.LaunchUriAsync(uri);
+            await Windows.System.Launcher.LaunchUriAsync(uri);
     }
 
     // The core ships beside the app and runs per user, in the background, after the app quits.
