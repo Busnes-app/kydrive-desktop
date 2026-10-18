@@ -4,12 +4,14 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"log"
 	"net"
 	"net/url"
 	"os"
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -136,12 +138,19 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	return nil
 }
 
-// Unlink forgets the credential. Local files stay unless RemoveFiles, which still keeps
-// unuploaded edits in Unsynced/. The server-side device stays until revoked on DevicesURL.
+// Unlink revokes this device on the server (best effort) and forgets the credential. Local
+// files stay unless RemoveFiles, which still keeps unuploaded edits in Unsynced/.
 func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	d := c.d
 	d.work.Lock()
 	defer d.work.Unlock()
+	if e := d.engine(); e.API.Token != "" {
+		ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
+		if err := e.API.RevokeSelf(ctx); err != nil {
+			log.Printf("unlink: the server did not revoke this computer: %v", err)
+		}
+		cancel()
+	}
 	ws, err := d.db.Workspaces()
 	if err != nil {
 		return err

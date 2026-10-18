@@ -256,6 +256,17 @@ func (c *Client) TrashFolder(ctx context.Context, id string) error {
 	return c.call(ctx, "PUT", "/api/drive/folders/"+url.PathEscape(id)+"/trash", map[string]bool{"trashed": true}, nil)
 }
 
+// RevokeSelf revokes this device on the server without a wipe. An already revoked device
+// counts as done.
+func (c *Client) RevokeSelf(ctx context.Context) error {
+	err := c.call(ctx, "DELETE", "/api/devices/self", nil, nil)
+	var e *Error
+	if errors.As(err, &e) && e.Revoked() {
+		return nil
+	}
+	return err
+}
+
 // Redeem exchanges a link code and its PKCE verifier for a device token.
 func (c *Client) Redeem(ctx context.Context, code, verifier string) (Token, error) {
 	form := url.Values{"code": {code}, "verifier": {verifier}}

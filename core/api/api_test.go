@@ -157,3 +157,25 @@ func TestRedeem(t *testing.T) {
 		t.Fatalf("got %+v, %v", tok, err)
 	}
 }
+
+func TestRevokeSelf(t *testing.T) {
+	calls := 0
+	c := client(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" || r.URL.Path != "/api/devices/self" || r.Header.Get("Authorization") != "Bearer kyd_secret" {
+			http.Error(w, "bad", 400)
+			return
+		}
+		if calls++; calls == 1 {
+			w.WriteHeader(204)
+			return
+		}
+		w.WriteHeader(401)
+		io.WriteString(w, `{"error":"device_revoked","wipe":false}`)
+	})
+	// A second call finds the device already revoked, which is the same outcome.
+	for range 2 {
+		if err := c.RevokeSelf(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

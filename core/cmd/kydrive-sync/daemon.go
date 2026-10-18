@@ -127,9 +127,13 @@ func (d *daemon) trigger(local bool) {
 	}
 }
 
+// engine builds an engine for one operation. The caller must not hold d.mu.
 func (d *daemon) engine() *engine.Engine {
+	d.mu.Lock()
+	token := d.token
+	d.mu.Unlock()
 	return &engine.Engine{Root: d.root, Device: d.db.Get("device"), DB: d.db, Settle: settle, Now: time.Now,
-		API:      &api.Client{Base: d.db.Get("server"), Token: d.token, HTTP: d.http},
+		API:      &api.Client{Base: d.db.Get("server"), Token: token, HTTP: d.http},
 		CaseFold: runtime.GOOS == "windows" || runtime.GOOS == "darwin", WinNames: runtime.GOOS == "windows"}
 }
 

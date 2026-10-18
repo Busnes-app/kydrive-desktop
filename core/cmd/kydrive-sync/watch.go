@@ -39,6 +39,7 @@ func (d *daemon) watch(ctx context.Context) {
 	for {
 		if _, err := os.Stat(d.root); err == nil && len(w.WatchList()) == 0 {
 			add(d.root)
+			d.trigger(true) // whatever changed while unwatched
 		}
 		select {
 		case <-ctx.Done():
@@ -57,8 +58,8 @@ func (d *daemon) watch(ctx context.Context) {
 			log.Printf("watch: %v", err)
 		case <-quiet.C:
 			d.trigger(true)
-		case <-time.After(time.Minute):
-			// Picks up a root created after start.
+		case <-time.After(5 * time.Second):
+			// Picks up a root created after start, or deleted and created again.
 		}
 	}
 }

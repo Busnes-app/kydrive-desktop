@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -51,7 +52,10 @@ func start(t *testing.T, srv *httptest.Server) (*daemon, func(method string, par
 	}
 }
 
-// server answers the token exchange and an empty workspace list.
+// selfRevoked counts DELETE /api/devices/self calls.
+var selfRevoked atomic.Int32
+
+// server answers the token exchange, self-revocation and a one-workspace list.
 func server(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -62,6 +66,13 @@ func server(t *testing.T) *httptest.Server {
 				return
 			}
 			io.WriteString(w, `{"token":"kyd_SECRETTOKEN","devices_url":"`+"http://"+r.Host+`/account"}`)
+		case "/api/devices/self":
+			if r.Method != "DELETE" || r.Header.Get("Authorization") != "Bearer kyd_SECRETTOKEN" {
+				http.Error(w, "{}", 401)
+				return
+			}
+			selfRevoked.Add(1)
+			w.WriteHeader(204)
 		case "/api/drive/workspaces":
 			if r.Header.Get("Authorization") != "Bearer kyd_SECRETTOKEN" {
 				http.Error(w, `{"error":"Authentication required"}`, 401)
@@ -131,6 +142,7 @@ func TestLinkRefusesPlainHTTP(t *testing.T) {
 }
 
 func TestUnlinkDeletesKeyringItem(t *testing.T) {
+	selfRevoked.Store(0)
 	srv := server(t)
 	_, ctl := start(t, srv)
 	var out struct{}
@@ -142,6 +154,9 @@ func TestUnlinkDeletesKeyringItem(t *testing.T) {
 	}
 	if _, err := keyring.Get(keyringService, srv.URL); err != keyring.ErrNotFound {
 		t.Fatalf("keyring item survived unlink: %v", err)
+	}
+	if selfRevoked.Load() != 1 {
+		t.Fatalf("unlink revoked the device %d times", selfRevoked.Load())
 	}
 	var st Status
 	ctl("Status", struct{}{}, &st)
