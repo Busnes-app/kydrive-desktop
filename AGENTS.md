@@ -9,7 +9,7 @@
 KyDrive desktop sync: a linked Windows, macOS or Linux computer keeps chosen KyDrive workspaces in `~/KyDrive`, working offline, syncing both ways. Milestone M7 of KyDrive-server; the plan is `docs/superpowers/plans/2026-10-18-m7-desktop-sync.md` in that repo (Decisions 1-12, Part B).
 
 ## Ownership
-Root owns the repo layout, CI, licence and dependency list. One Go core per user (`core/`) does all syncing; a thin native shell per OS drives it over local JSON-RPC. One repo so core and shells version together.
+Root owns the repo layout, CI, licence, dependency list and the app icon: `assets/kydrive-icon.svg` (the busnes.app site icon without its page background) is the only source, and `scripts/icons.sh` renders every platform's icon files from it; never edit those by hand. One Go core per user (`core/`) does all syncing; a thin native shell per OS drives it over local JSON-RPC. One repo so core and shells version together.
 
 ## Local Contracts
 - **User work is never deleted.** No path deletes a local edit that never uploaded: stale edits become conflict copies uploaded beside the server version; lost access, unchoosing a workspace, a server-side removal and a revoke with wipe move such files to `~/KyDrive/Unsynced/`.

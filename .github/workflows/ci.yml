@@ -105,6 +105,9 @@ jobs:
           lipo "$app/Contents/MacOS/KyDrive" -verify_arch arm64 x86_64
           lipo "$app/Contents/MacOS/kydrive-sync" -verify_arch arm64 x86_64
           codesign --verify --deep --strict --verbose=2 "$app"
+          test "$(plutil -extract CFBundleIconFile raw "$app/Contents/Info.plist")" = AppIcon
+          iconutil -c iconset -o "$RUNNER_TEMP/round.iconset" "$app/Contents/Resources/AppIcon.icns"
+          n=$(ls "$RUNNER_TEMP/round.iconset" | wc -l); echo "AppIcon.icns holds $n images"; test "$n" -eq 10
       - name: Launch the app and reach its core
         run: |
           open macos/build/KyDrive.app
@@ -266,7 +269,7 @@ jobs:
           foreach ($m in Get-ChildItem -Recurse out\msix -Filter *.msix) {
             $names = [IO.Compression.ZipFile]::OpenRead($m.FullName).Entries.FullName
             "$($m.Name): $($names.Count) files"
-            foreach ($f in 'KyDrive.exe', 'kydrive-sync.exe', 'AppxManifest.xml') { if ($f -notin $names) { throw "$($m.Name) lacks $f" } }
+            foreach ($f in 'KyDrive.exe', 'kydrive-sync.exe', 'AppxManifest.xml', 'Assets/logo44.targetsize-32_altform-unplated.png') { if ($f -notin $names) { throw "$($m.Name) lacks $f" } }
           }
           foreach ($p in 'x64', 'ARM64') { foreach ($f in 'KyDrive.exe', 'kydrive-sync.exe') { if (-not (Test-Path "out\KyDrive-$p\$f")) { throw "zip $p lacks $f" } } }
       # Each build on the runner's desktop must start its bundled core on the contract socket path
