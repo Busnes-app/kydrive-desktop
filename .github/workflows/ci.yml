@@ -223,12 +223,12 @@ jobs:
         env:
           KYDRIVE_SYNC_EXE: ${{ github.workspace }}\windows\build\core\x64\kydrive-sync.exe
         run: dotnet test KyDrive.Tests --logger "console;verbosity=normal"
-      # Evidence for the socket's access control: the core in the runner's real %APPDATA%,
+      # Evidence for the socket's access control: the core in the runner's real %LOCALAPPDATA%,
       # its directory ACL, and another local user trying to call it.
       - name: Socket ACL and another user
         run: |
           $exe = Resolve-Path build\core\x64\kydrive-sync.exe
-          $sock = Join-Path $env:APPDATA 'kydrive\sync.sock'
+          $sock = Join-Path $env:LOCALAPPDATA 'kydrive\sync.sock'
           $core = Start-Process $exe -PassThru -WindowStyle Hidden
           for ($i = 0; $i -lt 50 -and -not (Test-Path $sock); $i++) { Start-Sleep -Milliseconds 200 }
           & $exe ctl Status
@@ -244,7 +244,7 @@ jobs:
           if ($LASTEXITCODE) { throw "could not create the test user" }
           $cred = [pscredential]::new('kydother', (ConvertTo-SecureString $plain -AsPlainText -Force))
           $out = 'C:\Users\Public\kyd-other.txt'
-          $cmd = "`$env:APPDATA = '$env:APPDATA'; & '$exe' ctl Status *> '$out'; exit `$LASTEXITCODE"
+          $cmd = "`$env:LOCALAPPDATA = '$env:LOCALAPPDATA'; & '$exe' ctl Status *> '$out'; exit `$LASTEXITCODE"
           $p = Start-Process pwsh -Credential $cred -LoadUserProfile -Wait -PassThru -ArgumentList '-NoProfile', '-Command', $cmd
           "kydother exit $($p.ExitCode):"
           Get-Content $out
@@ -273,18 +273,18 @@ jobs:
       # and render the link form, which needs the core's answer (screenshots are artifacts).
       - name: Launch the zip build
         run: |
-          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'smoke\Roaming'
-          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
-          .\launch-check.ps1 -Target out\KyDrive-x64\KyDrive.exe -Socket (Join-Path $env:APPDATA 'kydrive\sync.sock') -Shot "$pwd\out\screenshot-zip.png"
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'smoke\Local'
+          New-Item -ItemType Directory -Force $env:LOCALAPPDATA | Out-Null
+          .\launch-check.ps1 -Target out\KyDrive-x64\KyDrive.exe -Socket (Join-Path $env:LOCALAPPDATA 'kydrive\sync.sock') -Shot "$pwd\out\screenshot-zip.png"
           Get-Process KyDrive, kydrive-sync | Stop-Process -Force
       - name: Install and launch the MSIX
         run: |
-          Remove-Item -Recurse -Force (Join-Path $env:APPDATA kydrive) -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force (Join-Path $env:LOCALAPPDATA kydrive) -ErrorAction SilentlyContinue
           $msix = Get-ChildItem -Recurse out\msix -Filter *_x64.msix | Select-Object -First 1
           Add-AppxPackage -Path $msix.FullName -AllowUnsigned
           $pkg = Get-AppxPackage com.kysecurity.drive
           $pkg | Format-List Name, PackageFamilyName, InstallLocation, SignatureKind
-          $sock = Join-Path $env:APPDATA 'kydrive\sync.sock'
+          $sock = Join-Path $env:LOCALAPPDATA 'kydrive\sync.sock'
           .\launch-check.ps1 -Target "shell:AppsFolder\$($pkg.PackageFamilyName)!App" -Socket $sock -Shot "$pwd\out\screenshot-msix.png"
           # The packaged core is reachable from outside the package on the same path.
           & build\core\x64\kydrive-sync.exe ctl Status
