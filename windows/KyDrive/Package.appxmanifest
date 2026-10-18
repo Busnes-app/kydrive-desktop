@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  IgnorableNamespaces="uap rescap com desktop desktop6">
+
+  <!-- The OID marks an unsigned package (Add-AppxPackage -AllowUnsigned). Signing replaces
+       Publisher with the certificate's subject; see windows/AGENTS.md. -->
+  <Identity Name="com.kysecurity.drive" Publisher="CN=KySecurity, OID.2.25.311729368913984317654407730594956997722=1" Version="0.1.0.0" />
+
+  <Properties>
+    <DisplayName>KyDrive</DisplayName>
+    <PublisherDisplayName>KySecurity</PublisherDisplayName>
+    <Logo>Assets\logo50.png</Logo>
+    <!-- The core's socket and state live in the real %APPDATA%: under write virtualization its
+         bind() lands in the package's LocalCache, where connect() to the same path fails. -->
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements DisplayName="KyDrive" Description="KyDrive desktop sync" BackgroundColor="transparent"
+        Square150x150Logo="Assets\logo150.png" Square44x44Logo="Assets\logo44.png" />
+      <Extensions>
+        <!-- Toast activation for AppNotificationManager. -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="KyDrive.exe" Arguments="----AppNotificationActivated:" DisplayName="KyDrive">
+              <com:Class Id="FB82D9DF-731A-4723-A134-E977567D6CAF" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="FB82D9DF-731A-4723-A134-E977567D6CAF" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+</Package>

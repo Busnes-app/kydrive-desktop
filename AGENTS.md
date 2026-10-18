@@ -26,9 +26,11 @@ Root owns the repo layout, CI, licence and dependency list. One Go core per user
 
 ## Verification
 - `.github/workflows/ci.yml` runs the core tests on Ubuntu, Windows and macOS, builds and tests the Linux shell, builds the Flatpak, builds, tests and launches the macOS app, and signs and notarizes it on `main` and tags once the secrets exist.
+- `windows-shell` builds and tests the Windows shell against a fake and the real core, and builds the MSIX and zip.
 - Real-server checks are in `core/AGENTS.md`.
 
 ## Child DOX Index
 - `core/` — Go sync core: `kydrive-sync` daemon and `ctl`, REST client, linking, sync engine.
 - `linux/` — Qt6/Kirigami tray shell, systemd user unit and Flatpak.
 - `macos/` — SwiftUI menu bar shell, the core as a bundled launch agent, signing.
+- `windows/` — WinUI 3 tray shell, unsigned MSIX and zip.
