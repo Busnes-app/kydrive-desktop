@@ -8,6 +8,8 @@
 	<string>KyDrive</string>
 	<key>CFBundleDisplayName</key>
 	<string>KyDrive</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleExecutable</key>
 	<string>KyDrive</string>
 	<key>CFBundlePackageType</key>

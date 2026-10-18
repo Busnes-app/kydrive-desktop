@@ -6,7 +6,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 out=$here/build
 app=$out/KyDrive.app
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Library/LaunchAgents"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchAgents"
 
 cd "$here"
 swift build -c release --arch arm64 --arch x86_64 --product KyDrive
@@ -18,6 +18,7 @@ done
 lipo -create "$out/kydrive-sync-arm64" "$out/kydrive-sync-amd64" -output "$app/Contents/MacOS/kydrive-sync"
 
 cp packaging/Info.plist "$app/Contents/"
+iconutil -c icns packaging/AppIcon.iconset -o "$app/Contents/Resources/AppIcon.icns" # from scripts/icons.sh
 cp packaging/com.kysecurity.drive.sync.plist "$app/Contents/Library/LaunchAgents/"
 codesign --force --sign - "$app/Contents/MacOS/kydrive-sync"
 codesign --force --sign - "$app"
