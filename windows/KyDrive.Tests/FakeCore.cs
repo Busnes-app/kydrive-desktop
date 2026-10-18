@@ -10,7 +10,7 @@ namespace KyDrive.Tests;
 sealed class FakeCore : IDisposable
 {
     readonly Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-    readonly string dir = Path.Combine(Path.GetTempPath(), "kyd-" + Guid.NewGuid().ToString("N")[..8]);
+    readonly string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kyd-" + Guid.NewGuid().ToString("N")[..8]);
     readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public string Path { get; }
