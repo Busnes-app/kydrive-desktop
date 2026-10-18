@@ -1,11 +1,11 @@
 #include "CoreClient.h"
 
 #include <QDesktopServices>
-#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QUrl>
 
 CoreClient::CoreClient(const QString& socketPath, const QString& corePath, QObject* parent)
@@ -43,9 +43,14 @@ CoreClient::~CoreClient()
     m_socket.disconnect(this);
 }
 
+// The core's own choice (core/cmd/kydrive-sync/main.go): the runtime dir, else the config dir.
+// Never a shared temp dir, where another user could answer in the core's place.
 QString CoreClient::defaultSocketPath()
 {
-    return qEnvironmentVariable("XDG_RUNTIME_DIR", QDir::tempPath()) + QStringLiteral("/kydrive/sync.sock");
+    QString dir = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (dir.isEmpty())
+        dir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    return dir + QStringLiteral("/kydrive/sync.sock");
 }
 
 void CoreClient::call(const QString& method, const QVariantMap& params, Reply done)
@@ -136,7 +141,7 @@ void CoreClient::refresh()
                  if (id <= m_lastActivity)
                      continue;
                  if (!baseline && a[QStringLiteral("Level")].toString() == QStringLiteral("warn"))
-                     emit warning(a[QStringLiteral("Message")].toString());
+                     emit warning(a[QStringLiteral("Message")].toString().toHtmlEscaped());
                  m_lastActivity = id;
              }
              m_lastActivity = qMax<qint64>(m_lastActivity, 0);

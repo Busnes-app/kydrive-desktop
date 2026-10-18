@@ -24,6 +24,7 @@ public:
     }
     QList<QString> methods;
     qint64 activityId = 7;
+    QString activityMessage = QStringLiteral("Lost access to Docs");
     QJsonObject status{{QStringLiteral("Linked"), true}, {QStringLiteral("State"), QStringLiteral("idle")}};
     QJsonArray workspaces;
     QJsonArray conflicts{QJsonObject{{QStringLiteral("Path"), QStringLiteral("a (conflict).txt")}}};
@@ -41,7 +42,7 @@ private:
         else if (method == QStringLiteral("Core.Workspaces"))
             result = workspaces;
         else if (method == QStringLiteral("Core.Activity"))
-            result = QJsonArray{QJsonObject{{QStringLiteral("ID"), activityId}, {QStringLiteral("Level"), QStringLiteral("warn")}, {QStringLiteral("Message"), QStringLiteral("Lost access to Docs")}}};
+            result = QJsonArray{QJsonObject{{QStringLiteral("ID"), activityId}, {QStringLiteral("Level"), QStringLiteral("warn")}, {QStringLiteral("Message"), activityMessage}}};
         else if (method == QStringLiteral("Core.Link")) {
             m_held = QJsonObject{{QStringLiteral("id"), req[QStringLiteral("id")]}, {QStringLiteral("result"), QJsonObject{}}, {QStringLiteral("error"), QJsonValue::Null}};
             return;

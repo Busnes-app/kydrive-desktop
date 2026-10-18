@@ -57,7 +57,7 @@ signals:
     void connectedChanged();
     void linkingChanged();
     void errorChanged();
-    void warning(const QString& message);
+    void warning(const QString& message); // HTML-escaped, for notification bodies
 
 private:
     void flush();

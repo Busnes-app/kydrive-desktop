@@ -1,7 +1,9 @@
 #include "CoreClient.h"
 #include "FakeCore.h"
 
+#include <QDir>
 #include <QJsonArray>
+#include <QStandardPaths>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalServer>
@@ -58,6 +60,37 @@ private slots:
         client.refresh();
         QTRY_COMPARE(warning.count(), 1);
         QCOMPARE(warning.first().first().toString(), QStringLiteral("Lost access to Docs"));
+    }
+
+    // The core falls back to its config dir, never a shared temp dir (core/cmd/kydrive-sync/main.go).
+    void socketPathMatchesCore()
+    {
+        const QByteArray saved = qgetenv("XDG_RUNTIME_DIR");
+        qputenv("XDG_RUNTIME_DIR", "/run/user/4242");
+        QCOMPARE(CoreClient::defaultSocketPath(), QStringLiteral("/run/user/4242/kydrive/sync.sock"));
+        qunsetenv("XDG_RUNTIME_DIR");
+        const QString path = CoreClient::defaultSocketPath();
+        qputenv("XDG_RUNTIME_DIR", saved);
+        QVERIFY2(!path.startsWith(QDir::tempPath()), qPrintable(path));
+        QCOMPARE(path, QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/kydrive/sync.sock"));
+    }
+
+    // Notification bodies take markup, so core text reaches them escaped.
+    void warningIsEscaped()
+    {
+        QTemporaryDir dir;
+        FakeCore core(dir.filePath(QStringLiteral("sync.sock")));
+        core.activityMessage = QStringLiteral("Lost access to <img src=\"http://x/\">");
+        CoreClient client(dir.filePath(QStringLiteral("sync.sock")), QString());
+        QSignalSpy warning(&client, &CoreClient::warning);
+        QSignalSpy status(&client, &CoreClient::statusChanged);
+        client.refresh();
+        QVERIFY(status.wait());
+        QTest::qWait(100);
+        core.activityId = 8;
+        client.refresh();
+        QTRY_COMPARE(warning.count(), 1);
+        QCOMPARE(warning.first().first().toString(), QStringLiteral("Lost access to &lt;img src=&quot;http://x/&quot;&gt;"));
     }
 
     void missingCoreReportsError()
