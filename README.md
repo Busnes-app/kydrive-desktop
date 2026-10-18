@@ -20,6 +20,7 @@ Requires a KyDrive server with milestone M7 (change feed, client mtimes, linked 
 |---|---|
 | `core/` | Go sync core: `kydrive-sync`, one per user, driven over a local socket |
 | `linux/` | Qt6/Kirigami tray app (`kydrive-desktop`), systemd user unit, Flatpak |
+| `windows/` | WinUI 3 tray app (`KyDrive.exe`), MSIX and zip |
 | `scripts/smoke.sh` | Drives a built `kydrive-sync` against a real server |
 
 ## Build and run the core
@@ -51,6 +52,14 @@ systemctl --user enable --now kydrive-sync      # optional: run the core at logi
 Needs Qt 6.5+, Kirigami, KI18n, KDBusAddons and KStatusNotifierItem (KF6). The Flatpak
 manifest is `linux/packaging/flatpak/com.kysecurity.drive.yml`.
 
+## Windows app
+
+CI builds an unsigned MSIX and a zip for x64 and arm64 (artifacts `kydrive-windows-msix-unsigned`
+and `kydrive-windows-zip`). Until the MSIX is signed it installs only on Windows 11, from an
+administrator PowerShell: `Add-AppxPackage -Path .\KyDrive_….msix -AllowUnsigned`. The zip runs
+unpacked: start `KyDrive.exe`, which starts `kydrive-sync.exe` beside it. Building needs Windows
+and the .NET 10 SDK; see `windows/AGENTS.md`.
+
 ## Dependencies
 
 | Module | Licence | Why |
@@ -64,6 +73,16 @@ Indirect: `modernc.org/libc`, `modernc.org/mathutil`, `modernc.org/memory`,
 (BSD-3-Clause); `github.com/godbus/dbus/v5` (BSD-2-Clause); `github.com/danieljoos/wincred`,
 `github.com/dustin/go-humanize`, `github.com/mattn/go-isatty`, `github.com/ncruces/go-strftime`
 (MIT).
+
+Windows app (NuGet):
+
+| Package | Licence | Why |
+|---|---|---|
+| `Microsoft.WindowsAppSDK` | Microsoft Software License Terms (redistributable) | WinUI 3, app lifecycle, toasts; bundled in the MSIX and zip |
+| `H.NotifyIcon.WinUI` | MIT | tray icon and its menu |
+
+Indirect: `H.NotifyIcon`, `H.GeneratedIcons.System.Drawing`, `System.Drawing.Common` (MIT).
+Tests only: `xunit`, `xunit.runner.visualstudio` (Apache-2.0); `Microsoft.NET.Test.Sdk` (MIT).
 
 ## Licence
 

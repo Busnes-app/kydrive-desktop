@@ -5,6 +5,7 @@
 /linux/**/core
 core.[0-9]*
 /windows/build/
+/windows/out/
 /windows/**/bin/
 /windows/**/obj/
 /windows/**/AppPackages/

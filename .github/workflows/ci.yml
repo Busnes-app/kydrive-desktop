@@ -132,3 +132,60 @@ jobs:
           net user kydother /delete | Out-Null
           if ($broad) { throw "the socket directory grants $broad" }
           if ($p.ExitCode -eq 0 -or -not (Select-String -Quiet 'not running' $out)) { throw 'another user reached the socket, or the check did not run' }
+      # Unsigned: there is no Windows certificate yet (windows/AGENTS.md).
+      - name: Build the app, MSIX and zip for x64 and arm64
+        run: |
+          foreach ($p in 'x64', 'ARM64') {
+            dotnet build KyDrive -c Release -p:Platform=$p -p:GenerateAppxPackageOnBuild=true -p:AppxPackageSigningEnabled=false -p:AppxBundle=Never -p:AppxPackageDir="$pwd\out\msix\"
+            if ($LASTEXITCODE) { exit 1 }
+            dotnet publish KyDrive -c Release -p:Platform=$p -p:WindowsPackageType=None -o "out\KyDrive-$p"
+            if ($LASTEXITCODE) { exit 1 }
+            Compress-Archive -Path "out\KyDrive-$p\*" -DestinationPath "out\KyDrive-windows-$($p.ToLower()).zip"
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          foreach ($m in Get-ChildItem -Recurse out\msix -Filter *.msix) {
+            $names = [IO.Compression.ZipFile]::OpenRead($m.FullName).Entries.FullName
+            "$($m.Name): $($names.Count) files"
+            foreach ($f in 'KyDrive.exe', 'kydrive-sync.exe', 'AppxManifest.xml') { if ($f -notin $names) { throw "$($m.Name) lacks $f" } }
+          }
+          foreach ($p in 'x64', 'ARM64') { foreach ($f in 'KyDrive.exe', 'kydrive-sync.exe') { if (-not (Test-Path "out\KyDrive-$p\$f")) { throw "zip $p lacks $f" } } }
+      # The unpackaged app on the runner's desktop: it must stay up, start the bundled core on
+      # the socket path it computed, and show its window (screenshot artifact).
+      - name: Launch the app
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'smoke\Roaming'
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          $sock = Join-Path $env:APPDATA 'kydrive\sync.sock'
+          $app = Start-Process out\KyDrive-x64\KyDrive.exe -PassThru
+          for ($i = 0; $i -lt 100 -and -not (Test-Path $sock); $i++) { Start-Sleep -Milliseconds 200 }
+          Start-Sleep -Seconds 8
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = [Drawing.Bitmap]::new($b.Width, $b.Height)
+          [Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$pwd\out\screenshot.png")
+          Get-Process kydrive-sync -ErrorAction SilentlyContinue | Format-Table Id, Path -AutoSize
+          & out\KyDrive-x64\kydrive-sync.exe ctl Status
+          if ($app.HasExited) {
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error' } | Format-List Message
+            throw "KyDrive exited with $($app.ExitCode)"
+          }
+          Stop-Process $app
+          Get-Process kydrive-sync | Stop-Process
+          if (-not (Test-Path $sock)) { throw 'the app did not start the core' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kydrive-windows-msix-unsigned
+          path: windows/out/msix/**/*.msix
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kydrive-windows-zip
+          path: windows/out/*.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: windows-launch-screenshot
+          path: windows/out/screenshot.png

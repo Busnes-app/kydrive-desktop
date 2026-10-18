@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>KyDrive</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\kydrive.ico</ApplicationIcon>
+    <Platforms>x64;ARM64</Platforms>
+    <Platform Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU'">x64</Platform>
+    <RuntimeIdentifier>win-$(Platform.ToLowerInvariant())</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- Bundle .NET and the Windows App SDK: the MSIX and the zip need no runtime installed. -->
+    <SelfContained>true</SelfContained>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <KydriveSync>$(MSBuildThisFileDirectory)..\build\core\$(Platform)\kydrive-sync.exe</KydriveSync>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="$(KydriveSync)" Link="kydrive-sync.exe" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+    <ProjectReference Include="..\KyDrive.Client\KyDrive.Client.csproj" />
+  </ItemGroup>
+
+  <Target Name="RequireCore" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(KydriveSync)')" Text="Build the core first, in core/: GOOS=windows go build -o ../windows/build/core/$(Platform)/kydrive-sync.exe ./cmd/kydrive-sync" />
+  </Target>
+
+</Project>
