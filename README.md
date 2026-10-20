@@ -4,15 +4,36 @@ KyDrive desktop sync client for Windows, macOS and Linux. A linked computer keep
 workspaces you choose in `~/KyDrive`, works offline, and syncs edits both ways with your
 KyDrive server.
 
-- **Edits are never lost.** A stale edit becomes a conflict copy beside the server's version.
+- **Conflict handling.** A stale edit becomes a conflict copy beside the server's version.
   Losing access to a workspace, or a revoke that asks for a wipe, removes the synced copies
   but first moves anything that never uploaded to `~/KyDrive/Unsynced/`.
 - **Credentials stay in the OS keyring** (Windows Credential Manager, macOS Keychain, the
-  Secret Service on Linux), never on disk.
+  Secret Service on Linux), rather than plaintext client configuration. The keyring may persist encrypted data on disk; its protection depends on the OS and keyring setup.
 - **Linking happens in your browser:** you sign in to KyDrive as usual and approve the
   computer. Revoke it any time from your KyDrive account page.
 
 Requires a KyDrive server with milestone M7 (change feed, client mtimes, linked computers).
+
+## Install and link to your server
+
+Install [KyDrive Server](https://github.com/Busnes-app/kydrive-server) first, provision an
+everyday account through KyIdentity and grant it workspace access. This client is a sync
+companion, not a standalone file server. Your server must implement M7 linked-computer and
+change-feed APIs; an older published server image may not include them.
+
+No GitHub application release is published as of 2026-10-20. Use the platform build path
+below, or the explicitly named CI artifacts for Windows. Linux needs a working Secret
+Service keyring; macOS uses Keychain and Windows uses Credential Manager.
+
+1. Start the native app and link it to your own HTTPS drive origin.
+2. Complete sign-in in the browser and approve the computer. Choose workspaces to sync.
+3. Create a disposable file locally and confirm it appears on the server; edit it on the server and confirm the local update. Test offline/reconnect and a deliberate conflict before relying on synchronization.
+4. Review conflicts and `~/KyDrive/Unsynced/`. It preserves pending uploads in the handled revocation/access-loss paths, but it is not an independent backup or protection from disk loss.
+
+Preserve your profile/state, chosen local folders and OS keyring during upgrades. Revoking
+a computer or unlinking has deliberate local-copy behavior; review pending edits first.
+The real-server script `scripts/smoke.sh` requires an actual compatible test server and
+disposable account/data. Unit tests and fake-core shell tests are separate from this gate.
 
 ## Layout
 
@@ -25,6 +46,9 @@ Requires a KyDrive server with milestone M7 (change feed, client mtimes, linked 
 | `scripts/smoke.sh` | Drives a built `kydrive-sync` against a real server |
 
 ## Build and run the core
+
+Use Go matching `core/go.mod`; clone the repository and start from its root. On Linux,
+macOS and Windows, run only one core per user. A running desktop app may already own it.
 
 ```sh
 cd core
@@ -43,15 +67,24 @@ go build ./cmd/kydrive-sync
 
 ## Linux app
 
+From the repository root (build and install both the sync core and shell):
+
 ```sh
-cd linux
-cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build && ctest --test-dir build
-sudo cmake --install build                      # with kydrive-sync in the same bin dir
-systemctl --user enable --now kydrive-sync      # optional: run the core at login
+(cd core && go build -o kydrive-sync ./cmd/kydrive-sync)
+cmake -B linux/build -S linux -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build linux/build
+ctest --test-dir linux/build --output-on-failure
+sudo install -m 755 core/kydrive-sync /usr/local/bin/kydrive-sync
+sudo cmake --install linux/build
+# Optional login startup after installing the generated unit:
+systemctl --user daemon-reload
+systemctl --user enable --now kydrive-sync
+# Launch the tray app after installation:
+kydrive-desktop
 ```
 
-Needs Qt 6.5+, Kirigami, KI18n, KDBusAddons and KStatusNotifierItem (KF6). The Flatpak
+Needs CMake 3.21+, Ninja, a C++20 compiler, Qt 6.5+, Kirigami, KI18n, KDBusAddons and KStatusNotifierItem (KF6). The Flatpak
 manifest is `linux/packaging/flatpak/com.kysecurity.drive.yml`.
 
 ## macOS app
