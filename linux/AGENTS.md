@@ -19,7 +19,7 @@ The Linux shell: a Qt6/Kirigami tray app (`kydrive-desktop`, app id `com.kysecur
 
 ## Verification
 - `cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build && ctest --test-dir build --output-on-failure`. `tst_qml` fails on any QML warning; set `KYDRIVE_SHOT_DIR` to save screenshots.
-- CI also builds the Flatpak and validates the desktop file and metainfo.
+- CI also builds the Flatpak, validates the desktop file and metainfo, and uploads the single-file bundle `KyDrive-linux.flatpak` (artifact `kydrive-linux-flatpak`).
 
 ## Child DOX Index
 None.
