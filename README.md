@@ -21,8 +21,8 @@ everyday account through KyIdentity and grant it workspace access. This client i
 companion, not a standalone file server. Your server must implement M7 linked-computer and
 change-feed APIs; an older published server image may not include them.
 
-No GitHub application release is published as of 2026-10-20. Use the platform build path
-below, or the explicitly named CI artifacts for Windows. Linux needs a working Secret
+Download the packages from [GitHub Releases](https://github.com/Busnes-app/kydrive-desktop/releases)
+(see [Releases](#releases)), or build one with the platform steps below. Linux needs a working Secret
 Service keyring; macOS uses Keychain and Windows uses Credential Manager.
 
 1. Start the native app and link it to your own HTTPS drive origin.
@@ -85,7 +85,8 @@ kydrive-desktop
 ```
 
 Needs CMake 3.21+, Ninja, a C++20 compiler, Qt 6.5+, Kirigami, KI18n, KDBusAddons and KStatusNotifierItem (KF6). The Flatpak
-manifest is `linux/packaging/flatpak/com.kysecurity.drive.yml`.
+manifest is `linux/packaging/flatpak/com.kysecurity.drive.yml`. Install the released bundle with
+`flatpak install --user KyDrive-linux.flatpak`; the KDE runtime comes from Flathub.
 
 ## macOS app
 
@@ -105,6 +106,21 @@ and `kydrive-windows-zip`). Until the MSIX is signed it installs only on Windows
 administrator PowerShell: `Add-AppxPackage -Path .\KyDrive_….msix -AllowUnsigned`. The zip runs
 unpacked: start `KyDrive.exe`, which starts `kydrive-sync.exe` beside it. Building needs Windows
 and the .NET 10 SDK; see `windows/AGENTS.md`.
+
+## Releases
+
+Pushing a `v*` tag builds every package in CI and, once all jobs pass, publishes them to a GitHub
+Release: `KyDrive-linux.flatpak`, the macOS zip (`KyDrive-macos.zip` when Developer ID signed,
+otherwise `KyDrive-macos-unsigned.zip`), and the Windows MSIX and zip for x64 and arm64. A tag
+with a suffix such as `v0.2.0-rc1` becomes a pre-release. First bump the version in
+`linux/CMakeLists.txt`, the newest `<release>` in `linux/packaging/com.kysecurity.drive.metainfo.xml`,
+`CFBundleShortVersionString` in `macos/packaging/Info.plist` and `Identity Version` (with a
+trailing `.0`) in `windows/KyDrive/Package.appxmanifest`. The release job refuses a tag that
+does not match all four.
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
 
 ## Dependencies
 
