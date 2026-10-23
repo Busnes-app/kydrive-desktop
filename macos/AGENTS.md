@@ -18,7 +18,7 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
 
 ## Work Guidance
 - Builds and tests need macOS and Xcode; on Linux, push and read the `macos-shell` CI job.
-- Sparkle auto-update and an app icon are not done yet.
+- Sparkle auto-update is not done yet.
 - Signing (`macos-sign` job) runs only on pushes to `main` and `v*` tags, only when `APPLE_DEVELOPER_ID_P12` is set. Repository secrets it needs:
   - `APPLE_DEVELOPER_ID_P12` — base64 of the Developer ID Application certificate and private key (`.p12`).
   - `APPLE_DEVELOPER_ID_P12_PASSWORD` — that `.p12`'s password.
