@@ -32,6 +32,9 @@ Service keyring; macOS uses Keychain and Windows uses Credential Manager.
 
 Preserve your profile/state, chosen local folders and OS keyring during upgrades. Revoking
 a computer or unlinking has deliberate local-copy behavior; review pending edits first.
+Files kept when unlinking stay separate: newly selected workspaces use fresh folders, adding
+` (2)` or another number when a name is already on disk. Retained files are never automatically
+uploaded to the newly linked account.
 The real-server script `scripts/smoke.sh` requires an actual compatible test server and
 disposable account/data. Unit tests and fake-core shell tests are separate from this gate.
 
