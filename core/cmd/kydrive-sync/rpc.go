@@ -120,6 +120,18 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	if err != nil {
 		return err
 	}
+	// An approved link starts a new connection; retained files keep no old sync binding.
+	d.work.Lock()
+	defer d.work.Unlock()
+	previous, err := d.db.Workspaces()
+	if err != nil {
+		return err
+	}
+	for _, w := range previous {
+		if err := d.db.DropWorkspace(w.ID); err != nil {
+			return err
+		}
+	}
 	if err := keyring.Set(keyringService, server, tok.Token); err != nil {
 		return errors.New("could not store the credential in the OS keyring: " + err.Error())
 	}

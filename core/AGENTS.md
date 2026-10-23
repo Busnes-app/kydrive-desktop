@@ -17,8 +17,8 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
 - **Revoke:** `401 device_revoked` stops syncing, deletes the keyring item, and wipes only when `wipe` is true. A plain 401 stops without deleting. Unlink calls `DELETE /api/devices/self` (best effort) then deletes the keyring item.
 - **Large-delete guard:** a push that would delete more than half of a workspace and more than 20 items, or whose workspace folder is missing, waits for `ConfirmDeletes`; refusing re-snapshots and restores the files.
 - **Skipped (listed, never synced):** ignored names (`~$*`, `.~lock.*`, `*.tmp`, `.DS_Store`, `Thumbs.db`, `desktop.ini`, both directions so ignoring never reads as a delete); case-only duplicates on Windows/macOS (first by feed order, snapshot sorted by name); Windows-invalid names on Windows; names the server refuses.
-- Workspace folders are named after the workspace; duplicates get ` (2)`; `Unsynced` is reserved. Reader workspaces only pull.
-- Linking accepts `https` servers, or `http` on loopback for development. Platform names are `windows`, `macos`, `linux`.
+- New workspace folders use names absent from both current bindings and the sync root, including retained files/directories from an unlinked account; collisions get ` (2)` and existing paths are never implicitly adopted. `Unsynced` is reserved. Reader workspaces only pull.
+- Linking accepts `https` servers, or `http` on loopback for development. Every approved link clears previous workspace bindings, cursors and item/retry records under the work lock before saving and activating new credentials; files remain untouched and workspaces must be selected afresh. A refused approval preserves existing bindings. Platform names are `windows`, `macos`, `linux`.
 
 ## Work Guidance
 - Engine tests use the `remote` interface: the in-process fake (`fake_test.go`) by default, the real server (`e2e_test.go`) when `KYDRIVE_SERVER_BIN` is set. A new engine test goes through `setup` so it runs on both; use `setupOn(t, newFake(t), …)` only for fake-only controls (corrupt bytes, pruned feed).

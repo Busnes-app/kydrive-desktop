@@ -101,6 +101,14 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 		}
 		taken = append(taken, w.Dir)
 	}
+	// Retained files may belong to a previous account; a new workspace gets a fresh folder.
+	entries, err := os.ReadDir(e.Root)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for _, entry := range entries {
+		taken = append(taken, entry.Name())
+	}
 	slices.SortFunc(list, func(a, b api.Workspace) int {
 		return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
 	})

@@ -132,6 +132,40 @@ func tree(t *testing.T, dir string) []string {
 	return out
 }
 
+// Unlink without removing files drops workspace records but keeps their directories. A new
+// account's same-named workspace must not upload those retained files.
+func TestChooseKeepsRetainedWorkspacePrivate(t *testing.T) {
+	v := setup(t, map[string]string{"payroll.txt": "private previous account"})
+	if err := v.e.DB.DropWorkspace(v.ws); err != nil { // Unlink(RemoveFiles: false)
+		t.Fatal(err)
+	}
+	next := newRemote(t)
+	ws := next.NewWorkspace(t, "Docs")
+	v.e.API = &api.Client{Base: next.URL(), Token: next.Token(), HTTP: http.DefaultClient}
+	if err := v.e.Choose(context.Background(), []string{ws}); err != nil {
+		t.Fatal(err)
+	}
+	v.sync()
+	if b, ok := next.Read(t, ws, "payroll.txt"); ok {
+		t.Fatalf("retained file uploaded to another account: %q", b)
+	}
+	if got := v.read("payroll.txt"); got != "private previous account" {
+		t.Fatalf("retained file changed: %q", got)
+	}
+	current, err := v.e.DB.Workspaces()
+	if err != nil || len(current) != 1 || current[0].Dir == "Docs" {
+		t.Fatalf("new workspace reused retained directory: %+v, %v", current, err)
+	}
+	p := filepath.Join(v.root, current[0].Dir, "new.txt")
+	if err := os.WriteFile(p, []byte("new account"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v.sync()
+	if b, ok := next.Read(t, ws, "new.txt"); !ok || string(b) != "new account" {
+		t.Fatalf("new workspace did not sync: %q, exists=%v", b, ok)
+	}
+}
+
 func TestInitialSync(t *testing.T) {
 	v := setup(t, map[string]string{"a/b.txt": "bee", "c.txt": "sea"})
 	if v.read("a/b.txt") != "bee" || v.read("c.txt") != "sea" {
@@ -495,7 +529,8 @@ func TestResnapshotAfterGone(t *testing.T) {
 
 func TestWorkspaceFolders(t *testing.T) {
 	v := setup(t, nil)
-	second := v.r.NewWorkspace(t, "Docs")
+	// Distinct server names can normalize to one local folder name.
+	second := v.r.NewWorkspace(t, "Docs.")
 	third := v.r.NewWorkspace(t, "Unsynced")
 	if err := v.e.Choose(context.Background(), []string{v.ws, second, third}); err != nil {
 		t.Fatal(err)
