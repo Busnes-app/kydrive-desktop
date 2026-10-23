@@ -12,18 +12,34 @@ KyDrive server.
 - **Linking happens in your browser:** you sign in to KyDrive as usual and approve the
   computer. Revoke it any time from your KyDrive account page.
 
-Requires a KyDrive server with milestone M7 (change feed, client mtimes, linked computers).
+Requires KyDrive Server 0.4.3 or later, the first release with linked computers and the change
+feed (milestone M7). Workspaces sync; files and folders shared with you individually (Shared with
+me) do not.
 
 ## Install and link to your server
 
 Install [KyDrive Server](https://github.com/Busnes-app/kydrive-server) first, provision an
 everyday account through KyIdentity and grant it workspace access. This client is a sync
-companion, not a standalone file server. Your server must implement M7 linked-computer and
-change-feed APIs; an older published server image may not include them.
+companion, not a standalone file server. The server must run KyDrive Server 0.4.3 or later;
+older versions lack the linked-computer and change-feed APIs.
 
-Download the packages from [GitHub Releases](https://github.com/Busnes-app/kydrive-desktop/releases)
+Download a package from [GitHub Releases](https://github.com/Busnes-app/kydrive-desktop/releases)
 (see [Releases](#releases)), or build one with the platform steps below. Linux needs a working Secret
 Service keyring; macOS uses Keychain and Windows uses Credential Manager.
+
+- **Linux:** `flatpak install --user KyDrive-linux.flatpak`; the KDE runtime comes from Flathub.
+  The bundle does not update itself: install the next release's bundle the same way.
+- **macOS 13+:** unzip `KyDrive-macos.zip`, move `KyDrive.app` to Applications and open it. A
+  release that ships `KyDrive-macos-unsigned.zip` instead is not Developer ID signed: macOS
+  blocks the first launch until you choose **Open Anyway** in System Settings → Privacy & Security.
+- **Windows (x64 or arm64):** extract `KyDrive-windows-<arch>.zip` and start `KyDrive.exe`. It is
+  unsigned, so SmartScreen asks first (**More info** → **Run anyway**). The unsigned MSIX installs
+  only on Windows 11 or Server 2025, from an administrator PowerShell:
+  `Add-AppxPackage -Path .\KyDrive_<version>_x64.msix -AllowUnsigned`.
+
+Check a download against the release's `SHA256SUMS` (`sha256sum -c SHA256SUMS --ignore-missing`;
+`shasum -a 256 -c` on macOS) and its build provenance with
+`gh attestation verify <file> -R Busnes-app/kydrive-desktop`.
 
 1. Start the native app and link it to your own HTTPS drive origin.
 2. Complete sign-in in the browser and approve the computer. Choose workspaces to sync.
@@ -114,9 +130,12 @@ and the .NET 10 SDK; see `windows/AGENTS.md`.
 
 Pushing a `v*` tag builds every package in CI and, once all jobs pass, publishes them to a GitHub
 Release: `KyDrive-linux.flatpak`, the macOS zip (`KyDrive-macos.zip` when Developer ID signed,
-otherwise `KyDrive-macos-unsigned.zip`), and the Windows MSIX and zip for x64 and arm64. A tag
-with a suffix such as `v0.2.0-rc1` becomes a pre-release. First bump the version in
-`linux/CMakeLists.txt`, the newest `<release>` in `linux/packaging/com.kysecurity.drive.metainfo.xml`,
+otherwise `KyDrive-macos-unsigned.zip`), the Windows MSIX and zip for x64 and arm64, and
+`SHA256SUMS`, each with a GitHub build provenance attestation. Asset names carry no version, so
+`https://github.com/Busnes-app/kydrive-desktop/releases/latest/download/<name>` always points at
+the newest release. A tag with a suffix such as `v0.2.0-rc1` becomes a pre-release and is checked
+against the version without its suffix. First bump the version in `linux/CMakeLists.txt`, the
+newest `<release>` (version and date) in `linux/packaging/com.kysecurity.drive.metainfo.xml`,
 `CFBundleShortVersionString` in `macos/packaging/Info.plist` and `Identity Version` (with a
 trailing `.0`) in `windows/KyDrive/Package.appxmanifest`. The release job refuses a tag that
 does not match all four.
