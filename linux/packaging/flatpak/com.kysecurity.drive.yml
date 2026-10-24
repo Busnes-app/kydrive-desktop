@@ -28,7 +28,8 @@ modules:
       build-args:
         - --share=network
     build-commands:
-      - cd core && GOPATH=$PWD/.go GOCACHE=$PWD/.cache go build -trimpath -modcacherw -o /app/bin/kydrive-sync ./cmd/kydrive-sync
+      # -trimpath and an empty build ID, as on the other platforms (docs/VERIFYING-RELEASES.md).
+      - cd core && GOPATH=$PWD/.go GOCACHE=$PWD/.cache go build -trimpath -ldflags=-buildid= -modcacherw -o /app/bin/kydrive-sync ./cmd/kydrive-sync
     sources:
       - type: dir
         path: ../../..

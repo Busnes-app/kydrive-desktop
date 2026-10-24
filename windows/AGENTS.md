@@ -18,7 +18,7 @@ The Windows shell: a WinUI 3 (Windows App SDK) tray app (`KyDrive.exe`, package 
 
 ## Work Guidance
 - Building needs Windows; on Linux only `dotnet test KyDrive.Tests` runs (no SDK on the dev machine: use CI). Run any local build in a capped scope (root `AGENTS.md`).
-- Build the core first, in `core/`: `GOOS=windows GOARCH=amd64 go build -trimpath -o ../windows/build/core/x64/kydrive-sync.exe ./cmd/kydrive-sync` (`arm64` into `ARM64/`).
+- Build the core first, in `core/`: `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags=-buildid= -o ../windows/build/core/x64/kydrive-sync.exe ./cmd/kydrive-sync` (`arm64` into `ARM64/`). Those flags are what make the release core repeatable; keep them.
 - **TODO: signing.** The MSIX is unsigned: `Publisher` carries the unsigned-package OID, and it installs only on Windows 11 (or Server 2025, as on CI) from an administrator PowerShell with `Add-AppxPackage -AllowUnsigned`. A signing job needs a code-signing identity (Azure Trusted Signing: account, certificate profile and a federated OIDC credential for the workflow; or a PFX in a repository secret with its password), `Publisher` set to that certificate's subject without the OID, then `signtool sign /fd SHA256 /tr <timestamp URL>` on the `.msix`. Run it only on tags or `main`, never on `pull_request`. App Installer auto-update comes after signing.
 
 ## Verification

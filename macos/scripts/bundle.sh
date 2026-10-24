@@ -12,8 +12,10 @@ cd "$here"
 swift build -c release --arch arm64 --arch x86_64 --product KyDrive
 cp "$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/KyDrive" "$app/Contents/MacOS/"
 
+# -trimpath and an empty build ID: the same commit and Go version give the same core on any
+# machine (docs/VERIFYING-RELEASES.md).
 for arch in arm64 amd64; do
-	(cd ../core && CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath -o "$out/kydrive-sync-$arch" ./cmd/kydrive-sync)
+	(cd ../core && CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath -ldflags=-buildid= -o "$out/kydrive-sync-$arch" ./cmd/kydrive-sync)
 done
 lipo -create "$out/kydrive-sync-arm64" "$out/kydrive-sync-amd64" -output "$app/Contents/MacOS/kydrive-sync"
 

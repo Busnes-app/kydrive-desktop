@@ -27,9 +27,11 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 ## Verification
 - `.github/workflows/ci.yml` runs the core tests on Ubuntu, Windows and macOS, builds and tests the Linux shell, builds the Flatpak, builds, tests and launches the macOS app, and signs and notarizes it on `main` and tags once the secrets exist. On a `v*` tag the `release` job checks the tag against the four version fields listed in the README and publishes every package, with `SHA256SUMS` and build provenance attestations, to a GitHub Release. A suffixed tag is a pre-release whose notes start with `.github/release-notes/prerelease.md`; keep that file true to what the packages are (it says they are unsigned).
 - `windows-shell` builds and tests the Windows shell against a fake and the real core, and builds the MSIX and zip.
+- Every release build of the core (Windows step, `macos/scripts/bundle.sh`, the Flatpak manifest) uses `CGO_ENABLED=0 -trimpath -ldflags=-buildid=`; the `core` job's `release core is repeatable` step builds all five targets from two directories and fails unless they match. Change the flags in all four places together. `docs/VERIFYING-RELEASES.md` tells users how to check a release; `docs/ASSURANCE-CASE.md` must change with any trust boundary.
 - Real-server checks are in `core/AGENTS.md`.
 
 ## Child DOX Index
+- `docs/` — `VERIFYING-RELEASES.md` and `ASSURANCE-CASE.md` (no AGENTS.md; root owns them). `CONTRIBUTING.md` holds the coding standard.
 - `core/` — Go sync core: `kydrive-sync` daemon and `ctl`, REST client, linking, sync engine.
 - `linux/` — Qt6/Kirigami tray shell, systemd user unit and Flatpak.
 - `macos/` — SwiftUI menu bar shell, the core as a bundled launch agent, signing.
