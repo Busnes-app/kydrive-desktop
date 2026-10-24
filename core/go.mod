@@ -1,6 +1,6 @@
 module github.com/Busnes-app/kydrive-desktop/core
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
