@@ -40,6 +40,8 @@ Service keyring; macOS uses Keychain and Windows uses Credential Manager.
 Check a download against the release's `SHA256SUMS` (`sha256sum -c SHA256SUMS --ignore-missing`;
 `shasum -a 256 -c` on macOS) and its build provenance with
 `gh attestation verify <file> -R Busnes-app/kydrive-desktop`.
+[docs/VERIFYING-RELEASES.md](docs/VERIFYING-RELEASES.md) has the full check, including that the
+attestation names the tagged commit, and how to rebuild the core and compare hashes.
 
 1. Start the native app and link it to your own HTTPS drive origin.
 2. Complete sign-in in the browser and approve the computer. Choose workspaces to sync.
@@ -169,6 +171,12 @@ Windows app (NuGet):
 
 Indirect: `H.NotifyIcon`, `H.GeneratedIcons.System.Drawing`, `System.Drawing.Common` (MIT).
 Tests only: `xunit`, `xunit.runner.visualstudio` (Apache-2.0); `Microsoft.NET.Test.Sdk` (MIT).
+
+## More documentation
+
+- [Contributing](CONTRIBUTING.md) — how changes land, the test policy and the coding standard.
+- [Verifying releases](docs/VERIFYING-RELEASES.md) — check a download's checksum and provenance, and rebuild the core to the same bytes.
+- [Assurance case](docs/ASSURANCE-CASE.md) — threat model, trust boundaries, and why the security requirements are met.
 
 ## Licence
 

@@ -30,6 +30,22 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go mod verify
       - run: go vet ./...
+      # The released core must not depend on where it is built: build every release target the
+      # way the release does (no cgo, -trimpath, empty build ID) from two directories and require
+      # identical bytes. docs/VERIFYING-RELEASES.md tells users how to repeat this.
+      - name: release core is repeatable
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          for d in "$RUNNER_TEMP/a" "$RUNNER_TEMP/elsewhere/b"; do
+            mkdir -p "$d/src"
+            git -C .. archive HEAD | tar -x -C "$d/src"
+            for t in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64; do
+              (cd "$d/src/core" && CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags=-buildid= -o "$d/kydrive-sync-${t/\//-}" ./cmd/kydrive-sync)
+            done
+          done
+          sha256sum "$RUNNER_TEMP"/a/kydrive-sync-* "$RUNNER_TEMP"/elsewhere/b/kydrive-sync-*
+          for f in "$RUNNER_TEMP"/a/kydrive-sync-*; do cmp "$f" "$RUNNER_TEMP/elsewhere/b/${f##*/}"; done
       - name: Test
         shell: bash
         # The race detector needs cgo, which the Windows runner lacks by default.
@@ -232,9 +248,11 @@ jobs:
       - name: Build the core for x64 and arm64
         shell: bash
         working-directory: core
+        # No cgo (the core needs none) and an empty build ID, so the same commit gives the same
+        # core on any machine, as the `core` job checks.
         run: |
-          GOOS=windows GOARCH=amd64 go build -trimpath -o ../windows/build/core/x64/kydrive-sync.exe ./cmd/kydrive-sync
-          GOOS=windows GOARCH=arm64 go build -trimpath -o ../windows/build/core/ARM64/kydrive-sync.exe ./cmd/kydrive-sync
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags=-buildid= -o ../windows/build/core/x64/kydrive-sync.exe ./cmd/kydrive-sync
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags=-buildid= -o ../windows/build/core/ARM64/kydrive-sync.exe ./cmd/kydrive-sync
       - name: Unit, IPC and real-core tests
         env:
           KYDRIVE_SYNC_EXE: ${{ github.workspace }}\windows\build\core\x64\kydrive-sync.exe
