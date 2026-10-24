@@ -34,6 +34,11 @@ jobs:
         shell: bash
         # The race detector needs cgo, which the Windows runner lacks by default.
         run: if [ "$RUNNER_OS" = Windows ]; then go test ./...; else go test -race ./...; fi
+      # Known vulnerabilities in the toolchain and dependencies the core links. The Go
+      # version comes from core/go.mod, so a stale go line fails here, not after a release.
+      - name: govulncheck
+        if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   linux-shell:
     runs-on: ubuntu-24.04
