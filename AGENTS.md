@@ -25,7 +25,7 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 - Run every Go build or test, and every CMake build, in a capped scope: `systemd-run --user --scope -q -p MemoryMax=6G -p MemorySwapMax=0 -- <cmd>`.
 
 ## Verification
-- `.github/workflows/ci.yml` runs the core tests on Ubuntu, Windows and macOS, builds and tests the Linux shell, builds the Flatpak, builds, tests and launches the macOS app, and signs and notarizes it on `main` and tags once the secrets exist. On a `v*` tag the `release` job checks the tag against the four version fields listed in the README and publishes every package, with `SHA256SUMS` and build provenance attestations, to a GitHub Release.
+- `.github/workflows/ci.yml` runs the core tests on Ubuntu, Windows and macOS, builds and tests the Linux shell, builds the Flatpak, builds, tests and launches the macOS app, and signs and notarizes it on `main` and tags once the secrets exist. On a `v*` tag the `release` job checks the tag against the four version fields listed in the README and publishes every package, with `SHA256SUMS` and build provenance attestations, to a GitHub Release. A suffixed tag is a pre-release whose notes start with `.github/release-notes/prerelease.md`; keep that file true to what the packages are (it says they are unsigned).
 - `windows-shell` builds and tests the Windows shell against a fake and the real core, and builds the MSIX and zip.
 - Real-server checks are in `core/AGENTS.md`.
 

@@ -20,8 +20,8 @@ jobs:
       run:
         working-directory: core
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
@@ -41,7 +41,7 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Add KDE neon apt archive (KF6/Qt6 for noble)
         run: |
           sudo install -d -m 0755 /etc/apt/keyrings
@@ -64,7 +64,7 @@ jobs:
   flatpak:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install flatpak-builder
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils appstream desktop-file-utils
       - name: Validate metadata
@@ -365,10 +365,12 @@ jobs:
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release/*
+      # A pre-release is a test build: its notes, prepended to the generated ones, say so and give
+      # install steps for the unsigned packages.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pre=(); [[ $GITHUB_REF_NAME == *-* ]] && pre=(--prerelease)
+          pre=(); [[ $GITHUB_REF_NAME == *-* ]] && pre=(--prerelease --notes-file .github/release-notes/prerelease.md)
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "KyDrive desktop $GITHUB_REF_NAME" \
             --generate-notes "${pre[@]}" release/*
