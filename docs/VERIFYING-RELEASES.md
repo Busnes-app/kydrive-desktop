@@ -5,8 +5,11 @@
 > **Untested against a real release.** No release has been published yet: the first
 > pre-release, `v0.4.0-test.1`, did not finish (its `release` job failed and the tag was removed).
 > The steps below follow the `release` job in `.github/workflows/ci.yml`. The rebuild in
-> [Rebuild the core](#rebuild-the-core-and-compare) was checked against CI artifacts of `main`,
-> not a release. Run this whole page against the first release and fix whatever it gets wrong.
+> [Rebuild the core](#rebuild-the-core-and-compare) was checked against CI artifacts, not a
+> release: the Windows x64 and arm64 cores that the Windows runner built for the pull request
+> that added this page are byte-identical to a Linux rebuild of the same commit. The checksum and
+> attestation commands have not been run. Run this whole page against the first release and fix
+> whatever it gets wrong.
 
 A release is a GitHub Release made by the `release` job when a `v*` tag is pushed. It holds six
 packages and a checksum file. Asset names carry no version.
