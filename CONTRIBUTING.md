@@ -1,34 +1,56 @@
-# Contributing
+# Contributing to kydrive-desktop
 
-[Overview](README.md) · [Verifying releases](docs/VERIFYING-RELEASES.md) · [Assurance case](docs/ASSURANCE-CASE.md)
+kydrive-desktop is the KyDrive sync client for Windows, macOS, and Linux: a linked computer keeps the workspace in sync. Contributions must keep account credentials and tokens protected on the device and keep sync conservative — never silently lose or overwrite a user's file.
 
-## How changes land
+## Before contributing
 
-- Open a pull request against `main`. `.github/workflows/ci.yml` must be green before merging.
-- Read [AGENTS.md](AGENTS.md) and every AGENTS.md on the path to the files you change. They are
-  binding: each lists the contracts for its subtree and the checks to run. Update the closest one
-  in the same change.
-- Report bugs and propose features in [GitHub issues](https://github.com/Busnes-app/kydrive-desktop/issues).
-  Report vulnerabilities privately, as the organisation's
-  [security policy](https://github.com/Busnes-app/.github/blob/main/SECURITY.md) explains.
+Read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md),
+the [README](README.md), and any AGENTS.md in the subtree you are about to
+touch. Open an issue before proposing a feature larger than a bug fix or
+documentation change.
 
-## Tests
+Keep changes small, reuse existing code, and fix the shared root cause rather
+than the reported symptom. New non-trivial logic ships with a runnable test or
+self-check.
 
-Write the failing test first and watch it fail (AGENTS.md, Work Guidance). A new engine test goes
-through `setup`, so it runs against both the fake and a real server (`core/AGENTS.md`). Each
-subtree's AGENTS.md names its test command; CI runs all of them.
+## Security requirements
 
-## Coding standard
+- Account credentials and sync tokens are stored with the OS keystore where available and never logged.
+- Sync conflicts fail closed and preserve both versions; never silently discard local or remote changes.
+- All traffic to KyDrive goes over HTTPS to the configured host only.
+- Do not add telemetry, phone-home, analytics, or unconfigured third-party
+  services.
+- Do not add silent security fallbacks; fail closed with a readable error and a
+  remediation step.
+- Name and document any security trade-off in [SECURITY.md](SECURITY.md) before
+  it merges.
 
-Each language follows its usual style guide. The right-hand column is what CI enforces; the rest
-is review.
+## Verification
 
-| Language | Style guide | Enforced by |
-|---|---|---|
-| Go (`core/`) | [Effective Go](https://go.dev/doc/effective_go) and the [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments) | `gofmt -l` must print nothing (Linux) and `go vet ./...` on all three OSes, in the `core` job |
-| C++20 and QML (`linux/`) | [KDE Frameworks coding style](https://community.kde.org/Policies/Frameworks_Coding_Style) | `-Wall -Wextra -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual` (`linux/CMakeLists.txt`), shown in the `linux-shell` job but not fatal; `tst_qml` fails on any QML warning |
-| Swift (`macos/`) | [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/) | `swift test` in `macos-shell`, including `PlainTextTests` |
-| C# (`windows/`) | [.NET coding conventions](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions) | Nullable reference types on in every project; `dotnet test` in `windows-shell`, including `SafetyTests` |
+Run the checks that apply to the files you changed, and the repository's
+full required checks before hand-off. Record the exact commands and their
+results in the pull request.
 
-Beyond what the tools check: YAGNI, minimal code, short comments that say why (AGENTS.md); Go
-dependencies stay within the list in AGENTS.md; shells contain no sync logic.
+## AI attribution
+
+AI-assisted contributions are welcome; undisclosed ones are not. Disclose
+material AI assistance in the pull request — the tool, what it changed, and what
+you personally ran, read, and verified — and add a commit trailer naming any
+tool that materially contributed. You are the author of the code you submit for
+every purpose, regardless of how it was produced.
+
+## Pull requests
+
+Branch off `main` with a focused name, and use a Conventional Commit subject
+(`fix:`, `feat:`, `docs:`, `refactor:`, `test:`, or `chore:`). The pull request
+explains why the change exists, the verification performed, the security impact,
+and any known limitations.
+
+Every pull request gets an adversarial review pass; see
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#hostile-reviews-are-about-code-never-people)
+for what that is and the boundary it keeps.
+
+## Licence
+
+kydrive-desktop is licensed under the MIT License. See [LICENSE.txt](LICENSE.txt).
+
