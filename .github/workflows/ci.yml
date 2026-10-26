@@ -42,6 +42,7 @@ jobs:
             git -C .. archive HEAD | tar -x -C "$d/src"
             for t in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64; do
               (cd "$d/src/core" && CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags=-buildid= -o "$d/kydrive-sync-${t/\//-}" ./cmd/kydrive-sync)
+              go version -m "$d/kydrive-sync-${t/\//-}" | grep -Eq 'DefaultGODEBUG=([^,]*,)*fips140=on(,|$)'
             done
           done
           sha256sum "$RUNNER_TEMP"/a/kydrive-sync-* "$RUNNER_TEMP"/elsewhere/b/kydrive-sync-*
@@ -136,7 +137,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           test "$(plutil -extract CFBundleIconFile raw "$app/Contents/Info.plist")" = AppIcon
           iconutil -c iconset -o "$RUNNER_TEMP/round.iconset" "$app/Contents/Resources/AppIcon.icns"
-          n=$(ls "$RUNNER_TEMP/round.iconset" | wc -l); echo "AppIcon.icns holds $n images"; test "$n" -eq 10
+          n=$(find "$RUNNER_TEMP/round.iconset" -type f | wc -l); echo "AppIcon.icns holds $n images"; test "$n" -eq 10
       - name: Launch the app and reach its core
         run: |
           open macos/build/KyDrive.app
@@ -145,6 +146,7 @@ jobs:
           echo "launch agent:"
           launchctl print "gui/$(id -u)/com.kysecurity.drive.sync" 2>&1 | grep -E '^[[:space:]]*(state|pid|program|last exit code) =' || echo "not loaded"
           echo "running cores (ppid 1 = launchd):"
+          # shellcheck disable=SC2009 # Include the parent PID to diagnose launchd ownership.
           ps -axo pid,ppid,comm | grep '[k]ydrive-sync' || true
           macos/build/KyDrive.app/Contents/MacOS/kydrive-sync ctl Status
       - name: Zip the unsigned app

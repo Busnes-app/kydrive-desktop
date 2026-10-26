@@ -57,7 +57,11 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 		return nil, err
 	}
 	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, kick: make(chan bool, 1), state: "unlinked",
-		http: &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute}}}
+		http: &http.Client{
+			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute},
+			// Never send a token or link verifier to a redirected origin or HTTP downgrade.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}}
 	if server := db.Get("server"); server != "" {
 		tok, err := keyring.Get(keyringService, server)
 		if err != nil {

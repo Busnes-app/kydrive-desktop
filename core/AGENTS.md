@@ -18,6 +18,11 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
 - **Large-delete guard:** a push that would delete more than half of a workspace and more than 20 items, or whose workspace folder is missing, waits for `ConfirmDeletes`; refusing re-snapshots and restores the files.
 - **Skipped (listed, never synced):** ignored names (`~$*`, `.~lock.*`, `*.tmp`, `.DS_Store`, `Thumbs.db`, `desktop.ini`, both directions so ignoring never reads as a delete); case-only duplicates on Windows/macOS (first by feed order, snapshot sorted by name); Windows-invalid names on Windows; names the server refuses.
 - New workspace folders use names absent from both current bindings and the sync root, including retained files/directories from an unlinked account; collisions get ` (2)` and existing paths are never implicitly adopted. `Unsynced` is reserved. Reader workspaces only pull.
+- TLS policy is the `core/go.mod` default `godebug fips140=on`, shared across the
+  daemon's one HTTP client for linking, APIs and file transfers. Preserve normal
+  chain/hostname verification and reject all redirects. Never weaken the runtime
+  policy to repair an endpoint: correct its certificate chain. TLS failure must
+  preserve credentials, bindings and local work. README owns operator migration.
 - Linking accepts `https` servers, or `http` on loopback for development. Every approved link clears previous workspace bindings, cursors and item/retry records under the work lock before saving and activating new credentials; files remain untouched and workspaces must be selected afresh. A refused approval preserves existing bindings. Platform names are `windows`, `macos`, `linux`.
 
 ## Work Guidance
@@ -25,6 +30,10 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
 - Keep the fake's behaviour matched to the server code, not to the plan.
 
 ## Verification
+- `TestDaemonRejectsUndersizedTLSKeys` covers real workspace/redemption/download/upload/link
+  requests for weak leaf, intermediate and explicit-root keys, plus strong RSA/P-256/Ed25519
+  controls. Redirect refusal, untrusted/wrong-host certificates and preservation of
+  credentials/bindings/local edits after TLS failure are separate regressions.
 - `go vet ./... && go test -race ./...` (and `GOOS=windows go vet ./...`, `GOOS=darwin go vet ./...`).
 - Against a real server binary built from KyDrive-server: `KYDRIVE_SERVER_BIN=/path/kydrive-server go test -count=1 ./engine/`.
 - The built daemon: `scripts/smoke.sh /path/kydrive-server /path/kydrive-sync` (private D-Bus session and gnome-keyring; needs `curl`, `jq`, `secret-tool`, `dbus-run-session`, `gnome-keyring-daemon`).
