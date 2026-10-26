@@ -28,6 +28,8 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
 ## Work Guidance
 - Engine tests use the `remote` interface: the in-process fake (`fake_test.go`) by default, the real server (`e2e_test.go`) when `KYDRIVE_SERVER_BIN` is set. A new engine test goes through `setup` so it runs on both; use `setupOn(t, newFake(t), …)` only for fake-only controls (corrupt bytes, pruned feed).
 - Keep the fake's behaviour matched to the server code, not to the plan.
+- Real-server fixtures use short, private `kyd-` temporary roots under the caller's
+  normal TMPDIR; test-name paths can exceed the server's Unix setup-socket limit.
 
 ## Verification
 - `TestDaemonRejectsUndersizedTLSKeys` covers real workspace/redemption/download/upload/link
@@ -36,6 +38,8 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
   credentials/bindings/local edits after TLS failure are separate regressions.
 - `go vet ./... && go test -race ./...` (and `GOOS=windows go vet ./...`, `GOOS=darwin go vet ./...`).
 - Against a real server binary built from KyDrive-server: `KYDRIVE_SERVER_BIN=/path/kydrive-server go test -count=1 ./engine/`.
+  CI's `real-server` job builds the public commit pinned in `.github/workflows/ci.yml`
+  and runs the full engine suite with the race detector; keep fake-only controls separate.
 - The built daemon: `scripts/smoke.sh /path/kydrive-server /path/kydrive-sync` (private D-Bus session and gnome-keyring; needs `curl`, `jq`, `secret-tool`, `dbus-run-session`, `gnome-keyring-daemon`).
 
 ## Child DOX Index

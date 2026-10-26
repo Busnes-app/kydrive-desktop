@@ -101,8 +101,10 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 
 ## Evidence
 
-- **Tests:** the `core` job runs `go test -race` on Linux and macOS and `go test` on Windows. Engine
-  tests can also run against a real server (`core/AGENTS.md`). Each shell has unit tests against a
+- **Tests:** the `core` job runs `go test -race` on Linux and macOS and `go test` on Windows. The
+  `real-server` job builds an immutable public KyDrive server source pin and runs the full
+  engine race suite against it (`core/AGENTS.md`); publication waits for that job too.
+  Each shell has unit tests against a
   fake core; the macOS and Windows tests also run against the real core, and CI launches the
   built macOS app, Windows zip and MSIX until each reaches its core.
 - **TLS:** 40 real daemon-client key/operation cases cover weak RSA leaf/root/intermediate
