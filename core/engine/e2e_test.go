@@ -45,7 +45,17 @@ func startServer(t *testing.T, bin string) *real {
 	}
 	port := fmt.Sprint(ln.Addr().(*net.TCPAddr).Port)
 	ln.Close()
-	dir := t.TempDir()
+	// Test-name directories can exceed the server's Unix setup-socket path limit.
+	// Keep an isolated short name under the caller's normal temporary directory.
+	dir, err := os.MkdirTemp("", "kyd-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
 	logf, err := os.Create(filepath.Join(dir, "server.log"))
 	if err != nil {
 		t.Fatal(err)

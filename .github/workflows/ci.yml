@@ -57,6 +57,35 @@ jobs:
         if: runner.os == 'Linux'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+  real-server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Pinned public KyDrive server source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: Busnes-app/kydrive-server
+          ref: a949b9ac016090a604d2ecc2bd9631f921fffad4
+          path: .ci/kydrive-server
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: .ci/kydrive-server/go.mod
+          cache-dependency-path: |
+            .ci/kydrive-server/go.sum
+            core/go.sum
+      - name: Build the pinned server
+        working-directory: .ci/kydrive-server
+        run: go build -o "$RUNNER_TEMP/kydrive-server" ./cmd/server
+      - name: Full engine suite against the real server
+        working-directory: core
+        env:
+          KYDRIVE_SERVER_BIN: ${{ runner.temp }}/kydrive-server
+        run: go test -race -count=1 -timeout=10m ./engine/
+
   linux-shell:
     runs-on: ubuntu-24.04
     defaults:
@@ -347,7 +376,7 @@ jobs:
   # A v* tag publishes every package to a GitHub Release, once all jobs pass. The tag must
   # match the version in the CMake project, metainfo, Info.plist and MSIX manifest.
   release:
-    needs: [core, linux-shell, flatpak, macos-shell, macos-sign, windows-shell]
+    needs: [core, real-server, linux-shell, flatpak, macos-shell, macos-sign, windows-shell]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     # Two runs for one tag would race on `gh release create`; a half-finished publish is never cancelled.

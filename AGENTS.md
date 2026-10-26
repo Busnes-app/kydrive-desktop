@@ -34,6 +34,9 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 - `windows-shell` builds and tests the Windows shell against a fake and the real core, and builds the MSIX and zip.
 - Every release build of the core (Windows step, `macos/scripts/bundle.sh`, the Flatpak manifest) uses `CGO_ENABLED=0 -trimpath -ldflags=-buildid=`; the `core` job's `release core is repeatable` step builds all five targets from two directories and fails unless they match and embed `DefaultGODEBUG=fips140=on`. Change the flags in all four places together. `docs/VERIFYING-RELEASES.md` tells users how to check a release; `docs/ASSURANCE-CASE.md` must change with any trust boundary.
 - Real-server checks are in `core/AGENTS.md`.
+- CI's `real-server` job builds an immutable public KyDrive server source pin and exercises
+  the complete engine suite, supplementing the three-platform fake/core and native-shell jobs.
+  Release publication depends on this job too.
 
 ## Child DOX Index
 - `docs/` — `VERIFYING-RELEASES.md` and `ASSURANCE-CASE.md` (no AGENTS.md; root owns them). `CONTRIBUTING.md` holds the coding standard.
