@@ -2,6 +2,8 @@ module github.com/Busnes-app/kydrive-desktop/core
 
 go 1.26.10
 
+godebug fips140=on
+
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/zalando/go-keyring v0.2.8

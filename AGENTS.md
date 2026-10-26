@@ -15,6 +15,9 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 - **User work is never deleted.** No path deletes a local edit that never uploaded: stale edits become conflict copies uploaded beside the server version; lost access, unchoosing a workspace, a server-side removal and a revoke with wipe move such files to `~/KyDrive/Unsynced/`.
 - **Tokens live only in the OS keyring** (service `KyDrive`, user = server origin). Never on disk, in logs or in IPC answers.
 - **IPC is owner-only:** a Unix socket at 0600 inside a 0700 directory (Windows: the per-user profile's ACL).
+- **Strong TLS is the core default:** `core/go.mod` sets `godebug fips140=on` for
+  every packaged core; runtime overrides must retain it in the supported profile.
+  Shells contain no HTTPS client. README owns endpoint-key migration and profile limits.
 - **The server is the source of truth for wire shapes:** KyDrive-server `internal/api` (`drive_changes.go`, `drive_uploads.go`, `devices.go`).
 - Shells contain no sync logic: they call the core and render what it reports.
 - Go dependencies are limited to `modernc.org/sqlite`, `github.com/zalando/go-keyring`, `github.com/fsnotify/fsnotify`; any addition needs an MIT/BSD/Apache-compatible licence and a README entry.
@@ -29,7 +32,7 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 - Scorecard (`.github/workflows/scorecard.yml`) publishes public supply-chain security results on default-branch pushes, weekly and after branch-protection changes. Keep publishing restricted to the default branch, action pins immutable, checkout credentials disabled and OIDC/code-scanning writes scoped to the analysis job. README’s live Scorecard badge needs a successful published run.
 - `.github/workflows/ci.yml` runs the core tests on Ubuntu, Windows and macOS, builds and tests the Linux shell, builds the Flatpak, builds, tests and launches the macOS app, and signs and notarizes it on `main` and tags once the secrets exist. On a `v*` tag the `release` job checks the tag against the four version fields listed in the README and publishes every package, with `SHA256SUMS` and build provenance attestations, to a GitHub Release. A suffixed tag is a pre-release whose notes start with `.github/release-notes/prerelease.md`; keep that file true to what the packages are (it says they are unsigned).
 - `windows-shell` builds and tests the Windows shell against a fake and the real core, and builds the MSIX and zip.
-- Every release build of the core (Windows step, `macos/scripts/bundle.sh`, the Flatpak manifest) uses `CGO_ENABLED=0 -trimpath -ldflags=-buildid=`; the `core` job's `release core is repeatable` step builds all five targets from two directories and fails unless they match. Change the flags in all four places together. `docs/VERIFYING-RELEASES.md` tells users how to check a release; `docs/ASSURANCE-CASE.md` must change with any trust boundary.
+- Every release build of the core (Windows step, `macos/scripts/bundle.sh`, the Flatpak manifest) uses `CGO_ENABLED=0 -trimpath -ldflags=-buildid=`; the `core` job's `release core is repeatable` step builds all five targets from two directories and fails unless they match and embed `DefaultGODEBUG=fips140=on`. Change the flags in all four places together. `docs/VERIFYING-RELEASES.md` tells users how to check a release; `docs/ASSURANCE-CASE.md` must change with any trust boundary.
 - Real-server checks are in `core/AGENTS.md`.
 
 ## Child DOX Index

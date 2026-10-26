@@ -37,6 +37,9 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 ## Trust boundaries
 
 1. **Core → KyDrive server.** HTTPS only, except `http` on a loopback host for development.
+   `core/go.mod` enables Go's `fips140=on` verified-chain key policy by default,
+   including trusted roots/intermediates. The daemon's shared client refuses redirects;
+   trust/hostname verification remains required. See README's TLS migration requirements.
    Every server name and path is checked before it touches disk.
 2. **Shell → core**, over a local socket: on Unix a `0600` socket in a `0700` directory; on
    Windows the per-user `%LOCALAPPDATA%` profile's ACL. Shells contain no sync logic.
@@ -68,6 +71,8 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 | Symlink following out of the workspace (CWE-59) | `abs` refuses any ancestor that is a symlink (`os.Lstat`) | `core/engine/engine.go`, `TestSymlinkedParentRefused` |
 | Corrupted or substituted download | Size and SHA-256 must match the server's digest; a file with no digest is refused; content goes to a temp file and is renamed in only if the target is still free or unchanged | `core/api/api.go` (`Download`), `core/engine/pull.go`, `TestDownloadChecksDigest`, `TestDownloadRejectsWrongDigest` |
 | Credential exposure (CWE-522) | Token stored with `keyring.Set` and read with `keyring.Get`; `Status` answers carry `Linked`, not the token; unlink and revoke delete the keyring item | `core/cmd/kydrive-sync/rpc.go`, `core/cmd/kydrive-sync/daemon.go`, `TestTokenOnlyInKeyring`, `TestUnlinkDeletesKeyringItem` |
+| Weak TLS certificate keys | Go runtime policy refuses RSA below 2048 bits and unsupported EC certificate keys throughout the verified chain; strong controls retain access | `core/go.mod`, `TestDaemonRejectsUndersizedTLSKeys` |
+| Redirect to another origin or cleartext endpoint | Shared daemon HTTP client refuses redirects before forwarding tokens/verifiers; direct loopback HTTP remains development-only | `daemon.go`, `TestDaemonRefusesRedirects` |
 | Cleartext transport (CWE-319) | `serverOrigin` accepts `https`, or `http` only for `localhost`/loopback | `core/cmd/kydrive-sync/rpc.go` (`serverOrigin`), `TestLinkRefusesPlainHTTP` |
 | Authorization-code interception during linking | Loopback listener on `127.0.0.1` with a random port; PKCE S256 challenge; `state` compared in constant time; one code accepted; 10-minute limit | `core/link/link.go`, `TestLink`, `TestLinkTimesOut` |
 | Local privilege boundary (CWE-276) | Unix socket `0600` in a `0700` directory; a second core refuses to replace a live socket; on Windows CI proves another local user cannot call the core | `core/cmd/kydrive-sync/daemon.go` (`listen`), `TestSocketIsOwnerOnly`, `TestSecondDaemonRefused`, `windows-shell` step "Socket ACL and another user" |
@@ -82,13 +87,16 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 - **The packages are not code-signed.** Windows and macOS warn on first launch, and a user who
   skips the checks on [VERIFYING-RELEASES.md](VERIFYING-RELEASES.md) has nothing else to tell a
   genuine package from a substitute.
-- **The core is built with the Go named in `core/go.mod`'s `go` line**, currently 1.26.0, and CI
-  does not run `govulncheck`. Standard-library fixes reach users only when that line moves.
-- **The Linux core's Go version is not pinned**: the Flatpak uses the SDK extension's Go.
+- **The core is built with the Go named in `core/go.mod`'s `go` line**, currently 1.26.10; CI runs pinned `govulncheck`. Toolchain updates remain necessary for
+  future standard-library fixes.
+- **The Linux core uses the SDK extension's Go**, subject to the module minimum/toolchain selection; the bundled binary must still carry the strong TLS default.
 - **The keyring may persist the token on disk**, encrypted as the OS and keyring decide (README).
 - **The large-delete guard is a threshold**, not a guarantee: smaller deletes go through.
 - **No static analysis beyond `go vet`** runs in CI (no CodeQL or similar), and there are no fuzz
   targets.
+- **Runtime overrides can weaken compiled defaults.** The supported profile retains
+  `fips140=on` and normal TLS settings. A launch environment that turns it off is not
+  evidence of the strong profile; the external system browser has its own TLS policy.
 - No independent security audit has been done.
 
 ## Evidence
@@ -97,6 +105,10 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
   tests can also run against a real server (`core/AGENTS.md`). Each shell has unit tests against a
   fake core; the macOS and Windows tests also run against the real core, and CI launches the
   built macOS app, Windows zip and MSIX until each reaches its core.
+- **TLS:** 40 real daemon-client key/operation cases cover weak RSA leaf/root/intermediate
+  and P-224 root refusal, strong RSA/P-256/Ed25519 acceptance, with separate redirect and
+  normal trust/hostname controls. Requests include link redemption and file transfers;
+  a failed TLS operation retains the credential, workspace binding and local edit.
 - **Static analysis:** `go vet` and `gofmt` on the core; compiler warnings on the Linux shell;
   `tst_qml` fails on QML warnings.
 - **Releases:** checksums, attestations and a repeatable core ([VERIFYING-RELEASES.md](VERIFYING-RELEASES.md)).
