@@ -1,5 +1,8 @@
 # kydrive-desktop
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15938/badge)](https://www.bestpractices.dev/projects/15938)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Busnes-app/kydrive-desktop/badge)](https://scorecard.dev/viewer/?uri=github.com/Busnes-app/kydrive-desktop)
+
 KyDrive desktop sync client for Windows, macOS and Linux. A linked computer keeps the
 workspaces you choose in `~/KyDrive`, works offline, and syncs edits both ways with your
 KyDrive server.
