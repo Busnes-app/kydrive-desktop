@@ -85,6 +85,15 @@ jobs:
         env:
           KYDRIVE_SERVER_BIN: ${{ runner.temp }}/kydrive-server
         run: go test -race -count=1 -timeout=10m ./engine/
+      - name: Install private-keyring smoke dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dbus-daemon gnome-keyring libsecret-tools
+      - name: Build the real daemon
+        working-directory: core
+        run: go build -o "$RUNNER_TEMP/kydrive-sync" ./cmd/kydrive-sync
+      - name: Real daemon, keyring, watcher and revocation
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: timeout 120 bash scripts/smoke.sh "$RUNNER_TEMP/kydrive-server" "$RUNNER_TEMP/kydrive-sync"
 
   linux-shell:
     runs-on: ubuntu-24.04

@@ -58,8 +58,11 @@ Files kept when unlinking stay separate: newly selected workspaces use fresh fol
 uploaded to the newly linked account.
 The real-server script `scripts/smoke.sh` requires an actual compatible test server and
 disposable account/data. Unit tests and fake-core shell tests are separate from this gate.
-CI also runs the full engine suite against a pinned public KyDrive server build in its
-`real-server` job. Its short private fixture directories avoid Unix setup-socket path limits.
+CI runs the full engine suite and the built-daemon smoke test against a pinned public
+KyDrive server build in its `real-server` job. The smoke test uses a private D-Bus
+session/keyring and disposable data to check linking, file-watcher uploads, token
+custody, revocation/wipe, retained local edits and unlinking. Short private fixture
+directories avoid Unix setup-socket path limits.
 
 ## Layout
 
