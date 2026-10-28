@@ -1,0 +1,32 @@
+version: 2
+
+# Weekly and grouped, one PR per ecosystem. Three days of cooldown lets a yanked
+# release surface first; security updates are not delayed by it.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      github_actions:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /core
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      gomod:
+        patterns: ["*"]
+  - package-ecosystem: swift
+    directory: /macos
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      swift:
+        patterns: ["*"]
