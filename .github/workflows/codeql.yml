@@ -59,6 +59,7 @@ jobs:
   # hand. Builds follow ci.yml's, unsigned and one architecture: the source is arch-neutral.
   shells:
     name: Analyze (${{ matrix.language }})
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
