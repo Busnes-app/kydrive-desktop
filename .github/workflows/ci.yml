@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   core:
     strategy:
@@ -197,28 +201,35 @@ jobs:
 
   # Developer ID signing and notarization: pushes to main and tags only, never pull requests,
   # and only once the secrets in macos/AGENTS.md exist.
-  macos-sign:
-    needs: macos-shell
+  # Decided on Linux so an unsigned repo never holds a macOS runner for macos-sign.
+  signing:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: macos-latest
-    env:
-      HAVE_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12 != '' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
     steps:
-      - name: No signing secrets
-        if: env.HAVE_SIGNING != 'true'
-        run: echo "::notice::Apple signing secrets are not set; skipping. See macos/AGENTS.md."
+      - id: check
+        env:
+          HAVE_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12 != '' }}
+        run: |
+          echo "configured=$HAVE_SIGNING" >> "$GITHUB_OUTPUT"
+          if [ "$HAVE_SIGNING" != true ]; then
+            echo "::notice::Apple signing secrets are not set; skipping macos-sign. See macos/AGENTS.md."
+          fi
+
+  macos-sign:
+    needs: [macos-shell, signing]
+    if: needs.signing.outputs.configured == 'true'
+    runs-on: macos-latest
+    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: env.HAVE_SIGNING == 'true'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: env.HAVE_SIGNING == 'true'
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
       - name: Bundle
-        if: env.HAVE_SIGNING == 'true'
         run: macos/scripts/bundle.sh
       - name: Import the Developer ID certificate
-        if: env.HAVE_SIGNING == 'true'
         env:
           P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -234,7 +245,6 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$kc"
           security list-keychains -d user -s "$kc"
       - name: Sign
-        if: env.HAVE_SIGNING == 'true'
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -246,7 +256,6 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -dv "$app" 2>&1 | grep -qx "TeamIdentifier=$TEAM_ID"
       - name: Notarize
-        if: env.HAVE_SIGNING == 'true'
         env:
           KEY: ${{ secrets.APPLE_NOTARY_KEY }}
           KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
@@ -261,13 +270,12 @@ jobs:
           spctl --assess --type execute --verbose "$app"
           ditto -c -k --keepParent "$app" KyDrive-macos.zip
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: env.HAVE_SIGNING == 'true'
         with:
           name: KyDrive-macos
           path: KyDrive-macos.zip
           if-no-files-found: error
       - name: Remove the signing keychain
-        if: always() && env.HAVE_SIGNING == 'true'
+        if: always()
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   windows-shell:
@@ -386,7 +394,10 @@ jobs:
   # match the version in the CMake project, metainfo, Info.plist and MSIX manifest.
   release:
     needs: [core, real-server, linux-shell, flatpak, macos-shell, macos-sign, windows-shell]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # macos-sign is skipped, not failed, when signing is not configured.
+    if: >-
+      !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+      && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     # Two runs for one tag would race on `gh release create`; a half-finished publish is never cancelled.
     concurrency:
