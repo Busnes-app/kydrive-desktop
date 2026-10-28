@@ -2,7 +2,6 @@
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15938/badge)](https://www.bestpractices.dev/projects/15938)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Busnes-app/kydrive-desktop/badge)](https://scorecard.dev/viewer/?uri=github.com/Busnes-app/kydrive-desktop)
-[![OctoCounts](https://api.octocounts.com/badge/Busnes-app/kydrive-desktop/branch/main)](https://octocounts.com/github/Busnes-app/kydrive-desktop/tree/main)
 
 KyDrive desktop sync client for Windows, macOS and Linux. A linked computer keeps the
 workspaces you choose in `~/KyDrive`, works offline, and syncs edits both ways with your
@@ -226,3 +225,5 @@ Tests only: `xunit`, `xunit.runner.visualstudio` (Apache-2.0); `Microsoft.NET.Te
 ## Licence
 
 MIT. See `LICENSE`.
+
+[![OctoCounts](https://api.octocounts.com/badge/Busnes-app/kydrive-desktop/branch/main)](https://octocounts.com/github/Busnes-app/kydrive-desktop/tree/main)
