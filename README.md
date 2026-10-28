@@ -216,12 +216,14 @@ Windows app (NuGet):
 Indirect: `H.NotifyIcon`, `H.GeneratedIcons.System.Drawing`, `System.Drawing.Common` (MIT).
 Tests only: `xunit`, `xunit.runner.visualstudio` (Apache-2.0); `Microsoft.NET.Test.Sdk` (MIT).
 
-## More documentation
+## Licence
+
+MIT. See `LICENSE`.
+
+[![OctoCounts](https://api.octocounts.com/badge/Busnes-app/kydrive-desktop/branch/main)](https://octocounts.com/github/Busnes-app/kydrive-desktop/tree/main)
+
+## Documentation
 
 - [Contributing](CONTRIBUTING.md) — how changes land, the test policy and the coding standard.
 - [Verifying releases](docs/VERIFYING-RELEASES.md) — check a download's checksum and provenance, and rebuild the core to the same bytes.
 - [Assurance case](docs/ASSURANCE-CASE.md) — threat model, trust boundaries, and why the security requirements are met.
-
-## Licence
-
-MIT. See `LICENSE`.
