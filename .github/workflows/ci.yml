@@ -20,8 +20,8 @@ jobs:
       run:
         working-directory: core
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
@@ -61,17 +61,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Pinned public KyDrive server source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Busnes-app/kydrive-server
           ref: a949b9ac016090a604d2ecc2bd9631f921fffad4
           path: .ci/kydrive-server
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: .ci/kydrive-server/go.mod
           cache-dependency-path: |
@@ -101,7 +101,7 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Add KDE neon apt archive (KF6/Qt6 for noble)
         run: |
           sudo install -d -m 0755 /etc/apt/keyrings
@@ -124,7 +124,7 @@ jobs:
   flatpak:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install flatpak-builder
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils appstream desktop-file-utils
       - name: Validate metadata
@@ -151,8 +151,8 @@ jobs:
   macos-shell:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
@@ -189,7 +189,7 @@ jobs:
           macos/build/KyDrive.app/Contents/MacOS/kydrive-sync ctl Status
       - name: Zip the unsigned app
         run: ditto -c -k --keepParent macos/build/KyDrive.app KyDrive-macos-unsigned.zip
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: KyDrive-macos-unsigned
           path: KyDrive-macos-unsigned.zip
@@ -207,9 +207,9 @@ jobs:
       - name: No signing secrets
         if: env.HAVE_SIGNING != 'true'
         run: echo "::notice::Apple signing secrets are not set; skipping. See macos/AGENTS.md."
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.HAVE_SIGNING == 'true'
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: env.HAVE_SIGNING == 'true'
         with:
           go-version-file: core/go.mod
@@ -260,7 +260,7 @@ jobs:
           xcrun stapler staple "$app"
           spctl --assess --type execute --verbose "$app"
           ditto -c -k --keepParent "$app" KyDrive-macos.zip
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: env.HAVE_SIGNING == 'true'
         with:
           name: KyDrive-macos
