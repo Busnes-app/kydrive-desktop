@@ -9,8 +9,9 @@ on:
 permissions:
   contents: read
 
+# Each non-PR run gets its own group: a ref-keyed group drops queued main and tag runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

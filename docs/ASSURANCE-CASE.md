@@ -92,8 +92,8 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 - **The Linux core uses the SDK extension's Go**, subject to the module minimum/toolchain selection; the bundled binary must still carry the strong TLS default.
 - **The keyring may persist the token on disk**, encrypted as the OS and keyring decide (README).
 - **The large-delete guard is a threshold**, not a guarantee: smaller deletes go through.
-- **No static analysis beyond `go vet`** runs in CI (no CodeQL or similar), and there are no fuzz
-  targets.
+- **CodeQL scans the Swift, C# and C++ shells only after merge** (push to `main`, weekly), so a
+  finding there can land before it is reported. There are no fuzz targets.
 - **Runtime overrides can weaken compiled defaults.** The supported profile retains
   `fips140=on` and normal TLS settings. A launch environment that turns it off is not
   evidence of the strong profile; the external system browser has its own TLS policy.
@@ -115,7 +115,8 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
   normal trust/hostname controls. Requests include link redemption and file transfers;
   a failed TLS operation retains the credential, workspace binding and local edit.
 - **Static analysis:** `go vet` and `gofmt` on the core; compiler warnings on the Linux shell;
-  `tst_qml` fails on QML warnings.
+  `tst_qml` fails on QML warnings. CodeQL (`security-extended`) scans Go and the workflows on
+  every pull request, and the three shells on `main` and weekly.
 - **Releases:** checksums, attestations and a repeatable core ([VERIFYING-RELEASES.md](VERIFYING-RELEASES.md)).
 
 A pull request that changes a trust boundary or a security requirement must update this page in
