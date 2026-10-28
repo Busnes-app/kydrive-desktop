@@ -10,7 +10,7 @@
 
   <!-- The OID marks an unsigned package (Add-AppxPackage -AllowUnsigned). Signing replaces
        Publisher with the certificate's subject; see windows/AGENTS.md. -->
-  <Identity Name="com.kysecurity.drive" Publisher="CN=KySecurity, OID.2.25.311729368913984317654407730594956997722=1" Version="0.4.0.0" />
+  <Identity Name="com.kysecurity.drive" Publisher="CN=KySecurity, OID.2.25.311729368913984317654407730594956997722=1" Version="0.5.0.0" />
 
   <Properties>
     <DisplayName>KyDrive</DisplayName>
