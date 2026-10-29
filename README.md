@@ -27,7 +27,7 @@ companion, not a standalone file server. The server must run KyDrive Server 0.4.
 older versions lack the linked-computer and change-feed APIs.
 
 Download a package from [GitHub Releases](https://github.com/Busnes-app/kydrive-desktop/releases)
-(see [Releases](#releases)), or build one with the platform steps below. Linux needs a working Secret
+(see [Releases](docs/RELEASING.md#releases)), or build one with the platform steps [below](docs/BUILDING.md#linux-app). Linux needs a working Secret
 Service keyring; macOS uses Keychain and Windows uses Credential Manager.
 
 - **Linux:** `flatpak install --user KyDrive-linux.flatpak`; the KDE runtime comes from Flathub.
@@ -64,158 +64,6 @@ session/keyring and disposable data to check linking, file-watcher uploads, toke
 custody, revocation/wipe, retained local edits and unlinking. Short private fixture
 directories avoid Unix setup-socket path limits.
 
-## Layout
-
-| Path | What |
-|---|---|
-| `core/` | Go sync core: `kydrive-sync`, one per user, driven over a local socket |
-| `linux/` | Qt6/Kirigami tray app (`kydrive-desktop`), systemd user unit, Flatpak |
-| `macos/` | SwiftUI menu bar app (`KyDrive.app`), the core as a bundled launch agent |
-| `windows/` | WinUI 3 tray app (`KyDrive.exe`), MSIX and zip |
-| `scripts/smoke.sh` | Drives a built `kydrive-sync` against a real server |
-
-## Build and run the core
-
-Use Go matching `core/go.mod`; clone the repository and start from its root. On Linux,
-macOS and Windows, run only one core per user. A running desktop app may already own it.
-
-```sh
-cd core
-go build ./cmd/kydrive-sync
-./kydrive-sync &                                   # the core
-./kydrive-sync ctl Link '{"Server":"https://drive.example.com"}'
-./kydrive-sync ctl Workspaces
-./kydrive-sync ctl Choose '{"IDs":["<workspace id>"]}'
-./kydrive-sync ctl Status
-```
-
-`ctl` methods: `Status`, `Link`, `Unlink`, `Workspaces`, `Choose`, `Pause`, `Conflicts`,
-`Activity`, `ConfirmDeletes`. They are JSON-RPC 1.0 calls `Core.<Method>` on the socket at
-`$XDG_RUNTIME_DIR/kydrive/sync.sock` (Linux), `~/Library/Application Support/kydrive/sync.sock`
-(macOS) or `<user config dir>/kydrive/sync.sock`.
-
-## TLS key policy and upgrading
-
-The core is built with `godebug fips140=on` from `core/go.mod`. This supported
-configuration uses Go's built-in TLS policy on Windows, macOS and Linux: the whole
-verified certificate chain, including explicitly trusted roots and intermediates,
-must use RSA-2048+ or P-256/P-384/P-521 or fixed-size Ed25519 keys. Trust and hostname
-verification still apply. It is a runtime policy, not FIPS certification.
-
-The same client handles browser-link code redemption, workspace APIs, uploads and
-downloads. It refuses redirects, including HTTPS-to-HTTP downgrades. Configure the
-final HTTPS origin directly; a reverse proxy must serve the API there without
-redirecting it. Loopback HTTP remains available for development and for RFC 8252's
-local browser callback, not for a remote production server.
-
-Before updating, check the server and private-CA chain and replace any undersized
-keys. Keep the OS keyring item, state database and `~/KyDrive` files: this update
-changes neither tokens nor local data. A TLS refusal pauses the operation with an
-error; correct the server certificate chain and retry. Do not unlink or remove
-files as a TLS repair.
-
-Go's `GODEBUG` environment overrides compiled defaults. The supported configuration
-retains `fips140=on`; if a launcher already sets `GODEBUG`, preserve its other
-settings and set its `fips140` entry to `on`, then restart the core. Do not use
-`fips140=off`, `fips140=only` or TLS compatibility overrides. Install/update the
-core together with its native shell so an older already-running daemon is not
-mistaken for the updated one. The browser sign-in page uses your external browser's
-TLS settings; native shells send no HTTPS requests themselves.
-
-Build with the Go toolchain selected by `core/go.mod` (currently 1.26.10) or a
-newer supported Go release. `go version -m /path/to/kydrive-sync` must show
-`DefaultGODEBUG=fips140=on`; release CI checks that setting on every core target.
-TLS tests exercise real daemon requests with weak/strong certificate chains and
-normal verification, rather than inferring strength from cipher names.
-
-Primary reference: [Go runtime policy](https://go.dev/doc/security/fips140).
-
-## Linux app
-
-From the repository root (build and install both the sync core and shell):
-
-```sh
-(cd core && go build -o kydrive-sync ./cmd/kydrive-sync)
-cmake -B linux/build -S linux -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_INSTALL_PREFIX=/usr/local
-cmake --build linux/build
-ctest --test-dir linux/build --output-on-failure
-sudo install -m 755 core/kydrive-sync /usr/local/bin/kydrive-sync
-sudo cmake --install linux/build
-# Optional login startup after installing the generated unit:
-systemctl --user daemon-reload
-systemctl --user enable --now kydrive-sync
-# Launch the tray app after installation:
-kydrive-desktop
-```
-
-Needs CMake 3.21+, Ninja, a C++20 compiler, Qt 6.5+, Kirigami, KI18n, KDBusAddons and KStatusNotifierItem (KF6). The Flatpak
-manifest is `linux/packaging/flatpak/com.kysecurity.drive.yml`. Install the released bundle with
-`flatpak install --user KyDrive-linux.flatpak`; the KDE runtime comes from Flathub.
-
-## macOS app
-
-```sh
-cd macos
-swift test
-scripts/bundle.sh && open build/KyDrive.app     # needs Xcode and Go
-```
-
-Needs macOS 13+. The app registers the bundled core as a login item; until CI signs it with a
-Developer ID, the built app is only ad-hoc signed.
-
-## Windows app
-
-CI builds an unsigned MSIX and a zip for x64 and arm64 (artifacts `kydrive-windows-msix-unsigned`
-and `kydrive-windows-zip`). Until the MSIX is signed it installs only on Windows 11 (or Server 2025), from an
-administrator PowerShell: `Add-AppxPackage -Path .\KyDrive_….msix -AllowUnsigned`. The zip runs
-unpacked: start `KyDrive.exe`, which starts `kydrive-sync.exe` beside it. Building needs Windows
-and the .NET 10 SDK; see `windows/AGENTS.md`.
-
-## Releases
-
-Pushing a `v*` tag builds every package in CI and, once all jobs pass, publishes them to a GitHub
-Release: `KyDrive-linux.flatpak`, the macOS zip (`KyDrive-macos.zip` when Developer ID signed,
-otherwise `KyDrive-macos-unsigned.zip`), the Windows MSIX and zip for x64 and arm64, and
-`SHA256SUMS`, each with a GitHub build provenance attestation. Asset names carry no version, so
-`https://github.com/Busnes-app/kydrive-desktop/releases/latest/download/<name>` always points at
-the newest release. A tag with a suffix such as `v0.4.0-test.1` becomes a pre-release, a test
-build: it is checked against the version without its suffix, and its notes open with
-`.github/release-notes/prerelease.md` (the unsigned-build warning and install steps). First bump
-the version in `linux/CMakeLists.txt`, the newest `<release>` (version and date) in
-`linux/packaging/com.kysecurity.drive.metainfo.xml`,
-`CFBundleShortVersionString` in `macos/packaging/Info.plist` and `Identity Version` (with a
-trailing `.0`) in `windows/KyDrive/Package.appxmanifest`. The release job refuses a tag that
-does not match all four.
-
-```sh
-git tag v0.4.0-test.1 && git push origin v0.4.0-test.1
-```
-
-## Dependencies
-
-| Module | Licence | Why |
-|---|---|---|
-| `modernc.org/sqlite` | BSD-3-Clause | CGO-free SQLite for the state database |
-| `github.com/zalando/go-keyring` | MIT | OS keyring |
-| `github.com/fsnotify/fsnotify` | BSD-3-Clause | file system events |
-
-Indirect: `modernc.org/libc`, `modernc.org/mathutil`, `modernc.org/memory`,
-`golang.org/x/sys`, `github.com/google/uuid`, `github.com/remyoudompheng/bigfft`
-(BSD-3-Clause); `github.com/godbus/dbus/v5` (BSD-2-Clause); `github.com/danieljoos/wincred`,
-`github.com/dustin/go-humanize`, `github.com/mattn/go-isatty`, `github.com/ncruces/go-strftime`
-(MIT).
-
-Windows app (NuGet):
-
-| Package | Licence | Why |
-|---|---|---|
-| `Microsoft.WindowsAppSDK` | Microsoft Software License Terms (redistributable) | WinUI 3, app lifecycle, toasts; bundled in the MSIX and zip |
-| `H.NotifyIcon.WinUI` | MIT | tray icon and its menu |
-
-Indirect: `H.NotifyIcon`, `H.GeneratedIcons.System.Drawing`, `System.Drawing.Common` (MIT).
-Tests only: `xunit`, `xunit.runner.visualstudio` (Apache-2.0); `Microsoft.NET.Test.Sdk` (MIT).
-
 ## Licence
 
 MIT. See `LICENSE`.
@@ -224,6 +72,10 @@ MIT. See `LICENSE`.
 
 ## Documentation
 
+- [Building](docs/BUILDING.md) — the repository layout, running the sync core, and building the Linux, macOS and Windows apps. <a id="layout"></a><a id="build-and-run-the-core"></a><a id="linux-app"></a><a id="macos-app"></a><a id="windows-app"></a>
+- [TLS key policy](docs/TLS-KEY-POLICY.md) — the core's TLS key floors, redirect refusal and what to check before upgrading. <a id="tls-key-policy-and-upgrading"></a>
+- [Releasing](docs/RELEASING.md) — what a `v*` tag publishes and the four version fields to bump first. <a id="releases"></a>
+- [Dependencies](docs/DEPENDENCIES.md) — every Go and NuGet dependency, its licence and why it is used. <a id="dependencies"></a>
 - [Contributing](CONTRIBUTING.md) — how changes land, the test policy and the coding standard.
 - [Verifying releases](docs/VERIFYING-RELEASES.md) — check a download's checksum and provenance, and rebuild the core to the same bytes.
 - [Assurance case](docs/ASSURANCE-CASE.md) — threat model, trust boundaries, and why the security requirements are met.

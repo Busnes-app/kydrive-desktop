@@ -34,7 +34,7 @@ packages and a checksum file. Asset names carry no version.
   unless the `macos-sign` job's secrets exist; as of 2026-10-23 they do not, so a release would
   ship `KyDrive-macos-unsigned.zip`. The Flatpak bundle is not GPG-signed. The provenance
   attestation is the only signature on these files.
-- There is no SBOM. The Go dependencies are listed in [README.md](../README.md#dependencies), and
+- There is no SBOM. The Go dependencies are listed in [DEPENDENCIES.md](DEPENDENCIES.md#dependencies), and
   `go version -m` prints the exact module versions inside a core binary.
 
 ## Verify a download

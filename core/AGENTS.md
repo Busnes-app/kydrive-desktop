@@ -22,7 +22,7 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
   daemon's one HTTP client for linking, APIs and file transfers. Preserve normal
   chain/hostname verification and reject all redirects. Never weaken the runtime
   policy to repair an endpoint: correct its certificate chain. TLS failure must
-  preserve credentials, bindings and local work. README owns operator migration.
+  preserve credentials, bindings and local work. docs/TLS-KEY-POLICY.md owns operator migration.
 - Linking accepts `https` servers, or `http` on loopback for development. Every approved link clears previous workspace bindings, cursors and item/retry records under the work lock before saving and activating new credentials; files remain untouched and workspaces must be selected afresh. A refused approval preserves existing bindings. Platform names are `windows`, `macos`, `linux`.
 
 ## Work Guidance
