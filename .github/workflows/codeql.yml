@@ -75,7 +75,7 @@ jobs:
           - language: csharp
             runner: windows-latest
           - language: c-cpp
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -98,19 +98,12 @@ jobs:
         run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o ../windows/build/core/x64/kydrive-sync.exe ./cmd/kydrive-sync
 
       - if: matrix.language == 'c-cpp'
-        name: Add KDE neon apt archive (KF6/Qt6 for noble)
-        run: |
-          sudo install -d -m 0755 /etc/apt/keyrings
-          curl -fsSL https://archive.neon.kde.org/public.key | sudo gpg --dearmor -o /etc/apt/keyrings/neon-archive.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/neon-archive.gpg] https://archive.neon.kde.org/user noble main" \
-            | sudo tee /etc/apt/sources.list.d/neon.list
-      - if: matrix.language == 'c-cpp'
         name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build gettext \
-            qt6-base-dev qt6-declarative-dev libkf6kirigami2-dev libkf6i18n-dev \
-            libkf6dbusaddons-dev kf6-kstatusnotifieritem-dev \
+            qt6-base-dev qt6-declarative-dev libkirigami-dev libkf6i18n-dev \
+            libkf6dbusaddons-dev libkf6statusnotifieritem-dev \
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-workerscript \
             qml6-module-org-kde-kirigami
