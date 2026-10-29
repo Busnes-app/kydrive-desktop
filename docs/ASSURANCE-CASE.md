@@ -39,7 +39,7 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 1. **Core → KyDrive server.** HTTPS only, except `http` on a loopback host for development.
    `core/go.mod` enables Go's `fips140=on` verified-chain key policy by default,
    including trusted roots/intermediates. The daemon's shared client refuses redirects;
-   trust/hostname verification remains required. See README's TLS migration requirements.
+   trust/hostname verification remains required. See the [TLS migration requirements](TLS-KEY-POLICY.md#tls-key-policy-and-upgrading).
    Every server name and path is checked before it touches disk.
 2. **Shell → core**, over a local socket: on Unix a `0600` socket in a `0700` directory; on
    Windows the per-user `%LOCALAPPDATA%` profile's ACL. Shells contain no sync logic.
@@ -79,7 +79,7 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 | Data loss from server-driven deletes | Unuploaded edits move to `Unsynced/`; a push deleting more than half a workspace and over 20 items, or whose folder is gone, waits for `ConfirmDeletes` | `core/engine/pull.go` (`remove`), `core/engine/push.go`, `TestLostAccessKeepsUnsynced`, `TestWipeKeepsUnsynced`, `TestLargeDeletePauses` |
 | Markup or URL injection in the shells (CWE-79-like) | macOS shows core strings with `Text(verbatim:)` and opens only `http`/`https` URLs; Windows uses plain string properties, builds toasts as XML trees and launches only `http`/`https` | `macos/Tests/KyDriveKitTests/PlainTextTests.swift`, `macos/Sources/KyDriveKit/AppModel.swift` (`webURL`), `windows/KyDrive.Client/Safe.cs`, `windows/KyDrive.Tests/SafetyTests.cs` |
 | Unbounded error bodies | Error responses read through a 4 KiB limit; downloads read at most the listed size plus one byte | `core/api/api.go` |
-| Vulnerable dependencies | `go mod verify` in CI; three direct Go modules, each listed with its licence | `.github/workflows/ci.yml` (`core`), `README.md` "Dependencies" |
+| Vulnerable dependencies | `go mod verify` in CI; three direct Go modules, each listed with its licence | `.github/workflows/ci.yml` (`core`), `docs/DEPENDENCIES.md` |
 | Tampered release | SHA-256 checksums and build provenance attestations; the core rebuilds to the same bytes | [VERIFYING-RELEASES.md](VERIFYING-RELEASES.md), `release core is repeatable` step |
 
 ## Residual risk
