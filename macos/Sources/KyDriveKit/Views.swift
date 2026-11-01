@@ -205,6 +205,8 @@ struct KyButtonStyle: ButtonStyle {
         }
         configuration.label
             .font(KyType.nav)
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle((enabled ? text : half.ink).color)
             .padding(.horizontal, 12)
             .frame(minHeight: 28)
@@ -241,7 +243,7 @@ struct Banner<Buttons: View>: View {
                 Image(systemName: danger ? "xmark.octagon.fill" : "exclamationmark.triangle.fill").foregroundStyle(tone.color)
                 Text(verbatim: text).fixedSize(horizontal: false, vertical: true)
             }
-            HStack { buttons }.padding(.leading, 24)
+            HStack(spacing: 8) { buttons }.padding(.leading, 24)
         }
         .padding(12)
         .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
@@ -302,7 +304,10 @@ struct WorkspaceRow: View {
 struct ConflictRow: View {
     let issue: Issue
     var body: some View {
-        Text(verbatim: issue.path + " — " + issue.detail).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: issue.path).fixedSize(horizontal: false, vertical: true)
+            Text(verbatim: issue.detail).font(KyType.meta).modifier(Muted()).fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
