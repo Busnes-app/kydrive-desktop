@@ -12,6 +12,7 @@ struct KyDriveApp: App {
             MenuContent(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
+        Settings { AppearanceSettings() }
     }
 }
 
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var started = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = AppearanceStore.load() // migrates a saved suite theme once
         if agent.status != .enabled {
             do { try agent.register() } catch { NSLog("KyDrive: launch agent not registered: %@", String(describing: error)) }
         }

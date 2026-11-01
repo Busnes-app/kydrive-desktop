@@ -5,6 +5,7 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
 - `Sources/KyDriveKit/CoreClient.swift` — socket path, JSON-RPC 1.0 client (`Core.<Method>`, one JSON object per line, one connection per call), the core's reply types; the only link to the core.
 - `Sources/KyDriveKit/AppModel.swift` — what the menu shows, actions, warning announcements, `webURL`, `notice`.
 - `Sources/KyDriveKit/Views.swift` — the menu window: link form, workspaces, held deletes, conflicts, unlink.
+- `Sources/KyDriveKit/Appearance.swift` — the suite's six theme pairs (ky-ui `THEME_PAIRS` and `tokens.css`), the saved pair and System/Light/Dark mode (`appearancePair`, `appearanceMode`; a legacy `theme` migrates once), `kyThemed()` and the Settings window's `AppearanceSettings`.
 - `Sources/KyDrive/KyDriveApp.swift` — `@main`, launch agent registration, notifications, starting the core without the agent.
 - `packaging/` — `Info.plist` (`LSUIElement`) and the launch agent `com.kysecurity.drive.sync.plist`.
 - `scripts/bundle.sh` — `build/KyDrive.app`: universal shell and core (`Contents/MacOS/`), agent plist (`Contents/Library/LaunchAgents/`), ad-hoc signed.
@@ -13,6 +14,7 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
 - No sync logic here: every decision comes from the core's answers. The shell never sees the token; the core keeps it in the Keychain and opens the browser to link.
 - **Socket:** `$HOME/Library/Application Support/kydrive/sync.sock`, exactly the core's `filepath.Join(os.UserConfigDir(), "kydrive", "sync.sock")`. A path over 103 bytes (`sun_path`) is refused with a clear error, never truncated.
 - **Plain text:** every core or server string is shown with `Text(verbatim:)`. A string literal with interpolation, `LocalizedStringKey(…)` and `AttributedString(markdown:)` parse Markdown; `PlainTextTests` refuses them in any file that imports SwiftUI. Notification bodies are plain `UNNotificationContent.body`.
+- **Theme:** Busnes following the system by default. Copy palette and status values from ky-ui, never approximate them; `AppearanceTests` ports ky-ui's `check-status-colours.mjs` gate (180 checks). Status colours never reuse the accent and always come with a word and an icon or dot.
 - **URLs:** only `http`/`https` with a host are opened (`webURL`). The sync root is revealed with `selectFile(_:inFileViewerRootedAtPath:)`, which never launches anything.
 - **Core lifecycle:** the app registers the bundled core as a per-user launch agent with `SMAppService.agent` (`RunAtLoad`, restarted after a crash). Only when the agent is not enabled (refused, or switched off in Login Items) and nothing answers does the app start the core itself, once; never both, as two cores would contend for one socket.
 
@@ -27,7 +29,7 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
   - `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID` — that key's ID and issuer ID.
 
 ## Verification
-- `swift test` in `macos/`; set `KYDRIVE_SYNC_BIN` to a built `kydrive-sync` to also check the real core listens on the shell's path with 0700/0600 modes.
+- `swift test` in `macos/`; set `KYDRIVE_SHOT_DIR` to save menu and Settings screenshots; set `KYDRIVE_SYNC_BIN` to a built `kydrive-sync` to also check the real core listens on the shell's path with 0700/0600 modes.
 - `scripts/bundle.sh`, then open `build/KyDrive.app`.
 - CI `macos-shell` runs both, checks the bundle (plists, both architectures, signature), launches the app until its core answers `ctl Status`, and uploads `KyDrive-macos-unsigned.zip`.
 

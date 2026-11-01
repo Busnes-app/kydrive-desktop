@@ -1,15 +1,21 @@
 import QtQuick
 
-// The suite's default palettes ("Dark Matter" / "Light Matter" from KyPost's AppTheme),
-// following the system light or dark preference.
+// The chosen suite theme pair and light/dark half (Appearance = src/Appearance.cpp, which holds
+// ky-ui's values). Status colours never reuse the accent; show each with a word and an icon or dot.
 QtObject {
-    readonly property bool dark: Qt.styleHints.colorScheme !== Qt.ColorScheme.Light
-    readonly property color bg: dark ? "#1A1A1E" : "#F5EFE5"
-    readonly property color panel: dark ? "#252530" : "#FFF8EE"
-    readonly property color ink: dark ? "#D4C5E2" : "#4C3D32"
-    readonly property color inkStrong: dark ? "#E8DDF5" : "#2D1F15"
-    readonly property color accent: "#C29A72"
-    readonly property color line: dark ? "#404050" : "#C5B29D"
+    readonly property var c: Appearance.colors
+    readonly property bool dark: Appearance.dark
+    readonly property color bg: c.bg
+    readonly property color panel: c.panel
+    readonly property color ink: c.ink
+    readonly property color inkStrong: c.inkStrong
+    readonly property color accent: c.accent
+    readonly property color accentSoft: c.accentSoft
+    readonly property color line: c.line
+    readonly property color buttonText: c.buttonText
+    readonly property color danger: c.danger
+    readonly property color warning: c.warning
+    readonly property color success: c.success
 
     // Kirigami paints from the platform palette unless told otherwise.
     function paint(theme, background) {
@@ -19,9 +25,15 @@ QtObject {
         theme.textColor = Qt.binding(() => inkStrong)
         theme.disabledTextColor = Qt.binding(() => ink)
         theme.highlightColor = Qt.binding(() => accent)
-        theme.highlightedTextColor = Qt.binding(() => dark ? "#1A1A1E" : "#FFFFFF")
+        theme.highlightedTextColor = Qt.binding(() => buttonText)
         theme.hoverColor = Qt.binding(() => accent)
         theme.focusColor = Qt.binding(() => accent)
         theme.linkColor = Qt.binding(() => accent)
+        theme.negativeTextColor = Qt.binding(() => danger)
+        theme.neutralTextColor = Qt.binding(() => warning)
+        theme.positiveTextColor = Qt.binding(() => success)
+        theme.negativeBackgroundColor = Qt.binding(() => c.dangerSoft)
+        theme.neutralBackgroundColor = Qt.binding(() => c.warningSoft)
+        theme.positiveBackgroundColor = Qt.binding(() => c.successSoft)
     }
 }

@@ -21,10 +21,14 @@ public struct MenuContent: View {
             if let error = model.shownError { ErrorBanner(text: error) }
             if model.status.linked { linked } else { linkForm }
             Divider()
-            Button("Quit KyDrive") { NSApp.terminate(nil) }
+            HStack {
+                SettingsButton()
+                Button("Quit KyDrive") { NSApp.terminate(nil) }
+            }
         }
         .padding()
         .frame(width: 360)
+        .kyThemed()
     }
 
     // The browser does the sign-in and approval.
@@ -43,7 +47,7 @@ public struct MenuContent: View {
 
     @ViewBuilder private var linked: some View {
         Text(verbatim: model.status.server).font(.headline)
-        Text(verbatim: "Status: " + model.status.state)
+        StatusLine(state: model.status.paused ? "paused" : model.status.state)
         ForEach((model.status.workspaces ?? []).filter { $0.heldDeletes > 0 }) { w in
             HeldDeletesBanner(workspace: w, model: model)
         }
@@ -96,10 +100,53 @@ public struct MenuContent: View {
     }
 }
 
+// Status colours never stand alone: each comes with a word and an icon or dot.
 struct ErrorBanner: View {
     let text: String
+    @Environment(\.themeHalf) private var half
     var body: some View {
-        Text(verbatim: text).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .firstTextBaseline) {
+            Image(systemName: "xmark.octagon.fill")
+            Text(verbatim: text).fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(half.danger.color)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(half.soft(half.danger).color, in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Connection state: a dot in the status colour beside the word.
+struct StatusLine: View {
+    let state: String
+    @Environment(\.themeHalf) private var half
+    var body: some View {
+        let colour: RGB = switch state {
+        case "idle": half.success
+        case "syncing": half.accent
+        case "paused": half.warning
+        case "error", "revoked", "signed_out": half.danger
+        default: half.ink
+        }
+        HStack(spacing: 6) {
+            Circle().fill(colour.color).frame(width: 8, height: 8)
+            Text(verbatim: "Status: " + state)
+        }
+    }
+}
+
+/// Opens the Settings window (Appearance).
+struct SettingsButton: View {
+    var body: some View {
+        if #available(macOS 14, *) {
+            SettingsLink { Text("Settings…") }
+                .simultaneousGesture(TapGesture().onEnded { NSApp.activate(ignoringOtherApps: true) })
+        } else {
+            Button("Settings…") {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+        }
     }
 }
 
@@ -122,11 +169,15 @@ struct ConflictRow: View {
 struct HeldDeletesBanner: View {
     let workspace: WorkspaceStatus
     let model: AppModel
+    @Environment(\.themeHalf) private var half
     var body: some View {
         GroupBox {
             VStack(alignment: .leading) {
-                Text(verbatim: "\(workspace.heldDeletes) items were deleted from \(workspace.name) on this computer.")
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(half.warning.color)
+                    Text(verbatim: "\(workspace.heldDeletes) items were deleted from \(workspace.name) on this computer.")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     Button("Delete from KyDrive too") { Task { await model.confirmDeletes(workspace: workspace.id, allow: true) } }
                     Button("Restore them") { Task { await model.confirmDeletes(workspace: workspace.id, allow: false) } }
