@@ -111,7 +111,6 @@ struct ErrorBanner: View {
         }
         .foregroundStyle(half.danger.color)
         .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(half.soft(half.danger).color, in: RoundedRectangle(cornerRadius: 6))
     }
 }
