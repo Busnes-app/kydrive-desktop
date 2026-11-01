@@ -185,15 +185,20 @@ public struct AppearanceSettings: View {
     public init() {}
 
     public var body: some View {
-        Form {
+        // Each label sits above its control, as in the link form.
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Theme").font(KyType.nav)
             Picker("Theme", selection: $pair) {
                 ForEach(themePairs) { Text(verbatim: $0.name).tag($0.id) }
             }
-            LabeledContent("Light or dark") {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(ThemeMode.allCases) { m in AccentRadio(label: m.label, isOn: mode == m.rawValue) { mode = m.rawValue } }
-                }
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Light or dark").font(KyType.nav).padding(.top, 14)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(ThemeMode.allCases) { m in AccentRadio(label: m.label, isOn: mode == m.rawValue) { mode = m.rawValue } }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text("Light or dark"))
         }
         .padding(24)
         .frame(width: 360)

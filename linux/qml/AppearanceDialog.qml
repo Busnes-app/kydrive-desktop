@@ -8,7 +8,6 @@ Kirigami.Dialog {
     id: dialog
     required property QtObject theme
     title: i18n("Appearance")
-    standardButtons: Kirigami.Dialog.Close
     // ky-ui's card padding, so the form never touches the dialog's edge.
     padding: Kirigami.Units.gridUnit * 1.5
     preferredWidth: Kirigami.Units.gridUnit * 22
@@ -61,6 +60,7 @@ Kirigami.Dialog {
     // Radios mark the choice in the accent, as ky-ui's do.
     component AccentRadio: Controls.RadioButton {
         id: radio
+        leftPadding: 0   // the circle lines up with the labels above
         indicator: Rectangle {
             implicitWidth: 18
             implicitHeight: 18
@@ -81,17 +81,54 @@ Kirigami.Dialog {
         }
     }
 
-    Kirigami.FormLayout {
+    // Close, as the suite's secondary button, right-aligned under the form.
+    footer: Controls.Control {
+        leftPadding: dialog.padding
+        rightPadding: dialog.padding
+        bottomPadding: dialog.padding
+        contentItem: RowLayout {
+            Item { Layout.fillWidth: true }
+            KyButton {
+                theme: dialog.theme
+                text: i18n("Close")
+                onClicked: dialog.close()
+            }
+        }
+    }
+
+    // A control's label, above the control.
+    component FieldLabel: Controls.Label {
+        Layout.fillWidth: true
+        Layout.bottomMargin: Kirigami.Units.smallSpacing * 1.5
+        font.pixelSize: dialog.theme.typeNav
+        font.weight: Font.DemiBold
+        color: dialog.theme.inkStrong
+    }
+
+    ColumnLayout {
+        spacing: 0
+        FieldLabel { text: i18n("Theme") }
         Controls.ComboBox {
-            Kirigami.FormData.label: i18n("Theme:")
+            id: pairBox
+            Layout.fillWidth: true
+            Accessible.name: i18n("Theme")
+            implicitHeight: 36   // KyButton's height
+            leftPadding: 12
             model: Appearance.pairs
             textRole: "name"
             valueRole: "id"
             currentIndex: Appearance.pairs.findIndex(p => p.id === Appearance.pair)
             onActivated: Appearance.pair = currentValue
+            // The suite's control radius and line, as KyButton.
+            background: Rectangle {
+                radius: dialog.theme.controlRadius
+                color: pairBox.hovered ? Qt.tint(dialog.theme.panel, Qt.alpha(dialog.theme.inkStrong, 0.06)) : dialog.theme.panel
+                border.width: pairBox.visualFocus ? 2 : 1
+                border.color: pairBox.visualFocus ? dialog.theme.accent : dialog.theme.line
+            }
         }
+        FieldLabel { text: i18n("Light or dark"); Layout.topMargin: Kirigami.Units.gridUnit * 1.25 }
         AccentRadio {
-            Kirigami.FormData.label: i18n("Light or dark:")
             text: i18n("Match system")
             checked: Appearance.mode === "system"
             onToggled: Appearance.mode = "system"

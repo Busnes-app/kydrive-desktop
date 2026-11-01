@@ -66,6 +66,7 @@ private:
             for (const QQmlError& e : list)
                 m_warnings << e.toString();
         });
+        loadBundledFonts();
         QIcon::setThemeName(QStringLiteral("breeze")); // so message icons show, as on a desktop
         KLocalization::setupLocalizedContext(&engine);
         engine.rootContext()->setContextProperty(QStringLiteral("Core"), &client);

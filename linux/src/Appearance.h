@@ -37,6 +37,11 @@ struct ThemeChoice {
 // unknown is Busnes following the system.
 ThemeChoice migrateTheme(const QString& saved);
 
+// The suite face, Space Grotesk (ky-ui --ky-font-sans), compiled into qml.qrc under the OFL as
+// KyPost and KyAuth for Linux bundle it. Call before loading QML; a file that fails to load is
+// logged and the platform sans stands in.
+void loadBundledFonts();
+
 class Appearance : public QObject
 {
     Q_OBJECT

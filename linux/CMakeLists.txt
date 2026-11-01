@@ -35,6 +35,9 @@ install(TARGETS kydrive-desktop RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/com.kysecurity.drive.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES packaging/com.kysecurity.drive.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES packaging/icons/hicolor/256x256/apps/com.kysecurity.drive.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
+# The bundled Space Grotesk (in qml.qrc) ships with its licence.
+install(FILES fonts/Space_Grotesk/OFL.txt DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/com.kysecurity.drive
+  RENAME SpaceGrotesk-OFL.txt)
 configure_file(packaging/kydrive-sync.service.in kydrive-sync.service @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/kydrive-sync.service DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/user)
 
