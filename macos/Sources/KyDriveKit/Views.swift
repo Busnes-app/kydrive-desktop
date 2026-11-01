@@ -27,7 +27,7 @@ public struct MenuContent: View {
                     Text("Link this computer").font(KyType.title)
                 }
             }
-            if let error = model.shownError { ErrorBanner(text: error) }
+            if let error = model.shownError { ErrorBanner(text: error, fill: true) }
             if model.status.linked { linked } else { linkForm }
             Hairline()
             HStack {
@@ -60,7 +60,7 @@ public struct MenuContent: View {
 
     @ViewBuilder private var linked: some View {
         ForEach((model.status.workspaces ?? []).filter { $0.heldDeletes > 0 }) { w in
-            HeldDeletesBanner(workspace: w, model: model)
+            HeldDeletesBanner(workspace: w, model: model, fill: true)
         }
 
         KySection(Text("Workspaces on this computer")) {
@@ -224,10 +224,13 @@ struct KyButtonStyle: ButtonStyle {
 struct Banner<Buttons: View>: View {
     let danger: Bool
     let text: String
+    let fill: Bool
     let buttons: Buttons
-    init(danger: Bool, verbatim text: String, @ViewBuilder buttons: () -> Buttons) {
+    /// fill stretches it to the menu's width; without it the banner is its text's size.
+    init(danger: Bool, verbatim text: String, fill: Bool, @ViewBuilder buttons: () -> Buttons) {
         self.danger = danger
         self.text = text
+        self.fill = fill
         self.buttons = buttons()
     }
     @Environment(\.themeHalf) private var half
@@ -241,7 +244,7 @@ struct Banner<Buttons: View>: View {
             HStack { buttons }.padding(.leading, 24)
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
         .background(half.soft(tone).color, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(RGB(tone.hex, alpha: 0.45).color, lineWidth: 1))
     }
@@ -250,7 +253,8 @@ struct Banner<Buttons: View>: View {
 // Status colours never stand alone: each comes with a word and an icon or dot.
 struct ErrorBanner: View {
     let text: String
-    var body: some View { Banner(danger: true, verbatim: text) { EmptyView() } }
+    var fill = false
+    var body: some View { Banner(danger: true, verbatim: text, fill: fill) { EmptyView() } }
 }
 
 /// Connection state: a dot in the status colour beside the word.
@@ -306,8 +310,9 @@ struct ConflictRow: View {
 struct HeldDeletesBanner: View {
     let workspace: WorkspaceStatus
     let model: AppModel
+    var fill = false
     var body: some View {
-        Banner(danger: false, verbatim: "\(workspace.heldDeletes) items were deleted from \(workspace.name) on this computer.") {
+        Banner(danger: false, verbatim: "\(workspace.heldDeletes) items were deleted from \(workspace.name) on this computer.", fill: fill) {
             Button("Delete from KyDrive too") { Task { await model.confirmDeletes(workspace: workspace.id, allow: true) } }
                 .buttonStyle(KyButtonStyle(kind: .danger))
             Button("Restore them") { Task { await model.confirmDeletes(workspace: workspace.id, allow: false) } }
