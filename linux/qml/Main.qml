@@ -176,16 +176,18 @@ Kirigami.ApplicationWindow {
                 visible: !root.linked
                 // Each label sits above its full-width field.
                 FieldLabel { theme: root.ky; text: i18n("KyDrive address") }
-                Controls.TextField {
+                KyField {
                     id: server
+                    theme: root.ky
                     Layout.fillWidth: true
                     Accessible.name: i18n("KyDrive address")
                     placeholderText: "https://drive.example.com"
                     enabled: !Core.linking
                 }
                 FieldLabel { theme: root.ky; text: i18n("Computer name"); Layout.topMargin: Kirigami.Units.gridUnit }
-                Controls.TextField {
+                KyField {
                     id: deviceName
+                    theme: root.ky
                     Layout.fillWidth: true
                     Accessible.name: i18n("Computer name")
                     placeholderText: i18n("This computer's name")
