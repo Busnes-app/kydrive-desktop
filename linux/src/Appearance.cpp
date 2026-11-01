@@ -1,5 +1,6 @@
 #include "Appearance.h"
 
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QStyleHints>
 
@@ -179,4 +180,13 @@ QVariantList Appearance::pairs() const
     for (const ThemePair& p : themePairs())
         list << QVariantMap{{QStringLiteral("id"), p.id}, {QStringLiteral("name"), p.name}};
     return list;
+}
+
+void loadBundledFonts()
+{
+    for (const char* weight : {"Regular", "Medium", "SemiBold", "Bold"}) {
+        const QString file = QStringLiteral(":/fonts/SpaceGrotesk-%1.ttf").arg(QLatin1String(weight));
+        if (QFontDatabase::addApplicationFont(file) == -1)
+            qWarning("loadBundledFonts: failed to load %s", qPrintable(file));
+    }
 }

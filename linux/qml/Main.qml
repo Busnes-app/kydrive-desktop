@@ -31,6 +31,7 @@ Kirigami.ApplicationWindow {
     palette.highlight: theme.accent
     palette.highlightedText: theme.buttonText
     palette.placeholderText: theme.ink
+    font.family: "Space Grotesk"   // bundled; see loadBundledFonts
     font.pixelSize: theme.typeBody
 
     pageStack.initialPage: Kirigami.ScrollablePage {
@@ -173,29 +174,30 @@ Kirigami.ApplicationWindow {
             Card {
                 theme: root.ky
                 visible: !root.linked
-                Kirigami.FormLayout {
+                // Each label sits above its full-width field.
+                FieldLabel { theme: root.ky; text: i18n("KyDrive address") }
+                Controls.TextField {
+                    id: server
                     Layout.fillWidth: true
-                    Controls.TextField {
-                        id: server
-                        implicitWidth: Kirigami.Units.gridUnit * 18
-                        Kirigami.FormData.label: i18n("KyDrive address:")
-                        placeholderText: "https://drive.example.com"
-                        enabled: !Core.linking
-                    }
-                    Controls.TextField {
-                        id: deviceName
-                        implicitWidth: Kirigami.Units.gridUnit * 18
-                        Kirigami.FormData.label: i18n("Computer name:")
-                        placeholderText: i18n("This computer's name")
-                        enabled: !Core.linking
-                    }
-                    KyButton {
-                        theme: root.ky
-                        kind: "primary"
-                        text: Core.linking ? i18n("Waiting for approval in your browser…") : i18n("Link")
-                        enabled: !Core.linking && server.text !== ""
-                        onClicked: Core.link(server.text, deviceName.text)
-                    }
+                    Accessible.name: i18n("KyDrive address")
+                    placeholderText: "https://drive.example.com"
+                    enabled: !Core.linking
+                }
+                FieldLabel { theme: root.ky; text: i18n("Computer name"); Layout.topMargin: Kirigami.Units.gridUnit }
+                Controls.TextField {
+                    id: deviceName
+                    Layout.fillWidth: true
+                    Accessible.name: i18n("Computer name")
+                    placeholderText: i18n("This computer's name")
+                    enabled: !Core.linking
+                }
+                KyButton {
+                    Layout.topMargin: Kirigami.Units.gridUnit * 1.5
+                    theme: root.ky
+                    kind: "primary"
+                    text: Core.linking ? i18n("Waiting for approval in your browser…") : i18n("Link")
+                    enabled: !Core.linking && server.text !== ""
+                    onClicked: Core.link(server.text, deviceName.text)
                 }
             }
 
@@ -327,6 +329,15 @@ Kirigami.ApplicationWindow {
         required property QtObject theme
         Layout.fillWidth: true
         font.pixelSize: theme.typeSection
+        font.weight: Font.DemiBold
+        color: theme.inkStrong
+    }
+    // A form field's label, above the field.
+    component FieldLabel: Controls.Label {
+        required property QtObject theme
+        Layout.fillWidth: true
+        Layout.bottomMargin: Kirigami.Units.smallSpacing * 1.5
+        font.pixelSize: theme.typeNav
         font.weight: Font.DemiBold
         color: theme.inkStrong
     }

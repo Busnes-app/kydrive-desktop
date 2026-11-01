@@ -66,6 +66,7 @@ private:
             for (const QQmlError& e : list)
                 m_warnings << e.toString();
         });
+        loadBundledFonts();
         QIcon::setThemeName(QStringLiteral("breeze")); // so message icons show, as on a desktop
         KLocalization::setupLocalizedContext(&engine);
         engine.rootContext()->setContextProperty(QStringLiteral("Core"), &client);
@@ -117,7 +118,8 @@ private slots:
         show(core, socket, QStringLiteral("linked"));
     }
 
-    // Each theme pair and half renders without warnings, the main window and the Appearance page.
+    // Each theme pair and half renders without warnings: the main window, the Appearance page and
+    // the link form.
     void themes_data()
     {
         QTest::addColumn<QString>("pair");
@@ -152,6 +154,16 @@ private slots:
         QTest::qWait(800);
         QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
         save(window, QStringLiteral("settings-") + shot);
+
+        // The link form, in the same half.
+        QTemporaryDir unlinkedDir;
+        const QString unlinkedSocket = unlinkedDir.filePath(QStringLiteral("s"));
+        FakeCore unlinkedCore(unlinkedSocket);
+        unlinkedCore.status = {{QStringLiteral("Linked"), false}, {QStringLiteral("State"), QStringLiteral("unlinked")}};
+        unlinkedCore.conflicts = {};
+        CoreClient unlinkedClient(unlinkedSocket, QString());
+        QQmlApplicationEngine unlinkedEngine;
+        QVERIFY(render(unlinkedEngine, unlinkedClient, QStringLiteral("unlinked-") + shot));
         m_appearance.setPair(QStringLiteral("busnes-pair"));
         m_appearance.setMode(QStringLiteral("system"));
     }

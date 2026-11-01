@@ -18,6 +18,9 @@ Indirect: `modernc.org/libc`, `modernc.org/mathutil`, `modernc.org/memory`,
 `github.com/dustin/go-humanize`, `github.com/mattn/go-isatty`, `github.com/ncruces/go-strftime`
 (MIT).
 
+Linux app: the suite face Space Grotesk (`linux/fonts/Space_Grotesk`, SIL Open Font Licence 1.1),
+compiled into the app and installed with its licence as `SpaceGrotesk-OFL.txt`.
+
 Windows app (NuGet):
 
 | Package | Licence | Why |

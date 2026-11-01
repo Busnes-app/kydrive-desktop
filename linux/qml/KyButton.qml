@@ -2,12 +2,12 @@ import QtQuick
 import QtQuick.Controls as Controls
 
 // The suite's button hierarchy: one filled "primary" per group, the rest "secondary";
-// destructive actions are "danger".
+// destructive actions are "danger". A disabled primary stays filled, dimmed.
 Controls.Button {
     id: control
     required property QtObject theme
     property string kind: "secondary"
-    readonly property bool primary: kind === "primary" && enabled
+    readonly property bool primary: kind === "primary"
     readonly property color edge: kind === "danger" ? Qt.alpha(theme.danger, 0.55) : theme.line
 
     implicitHeight: 36
@@ -15,7 +15,7 @@ Controls.Button {
     rightPadding: 16
     font.pixelSize: theme.typeNav
     font.weight: Font.DemiBold
-    opacity: enabled || kind === "primary" ? 1 : 0.6
+    opacity: enabled ? 1 : (primary ? 0.5 : 0.6)
 
     contentItem: Controls.Label {
         text: control.text

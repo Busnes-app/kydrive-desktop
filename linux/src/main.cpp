@@ -30,6 +30,7 @@ int main(int argc, char* argv[])
     KDBusService service(KDBusService::Unique);
 
     CoreClient core(CoreClient::defaultSocketPath(), QStringLiteral(KYDRIVE_SYNC_PATH));
+    loadBundledFonts();
     QQmlApplicationEngine engine;
     KLocalization::setupLocalizedContext(&engine);
     engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);

@@ -7,4 +7,10 @@
         <file>KyButton.qml</file>
         <file alias="kydrive.png">../packaging/icons/hicolor/256x256/apps/com.kysecurity.drive.png</file>
     </qresource>
+    <qresource prefix="/fonts">
+        <file alias="SpaceGrotesk-Regular.ttf">../fonts/Space_Grotesk/SpaceGrotesk-Regular.ttf</file>
+        <file alias="SpaceGrotesk-Medium.ttf">../fonts/Space_Grotesk/SpaceGrotesk-Medium.ttf</file>
+        <file alias="SpaceGrotesk-SemiBold.ttf">../fonts/Space_Grotesk/SpaceGrotesk-SemiBold.ttf</file>
+        <file alias="SpaceGrotesk-Bold.ttf">../fonts/Space_Grotesk/SpaceGrotesk-Bold.ttf</file>
+    </qresource>
 </RCC>

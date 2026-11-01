@@ -44,14 +44,18 @@ public struct MenuContent: View {
     // The browser does the sign-in and approval.
     private var linkForm: some View {
         Card {
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("https://drive.example.com", text: $server)
-                TextField("This computer's name", text: $name)
+            // Each label sits above its full-width field.
+            VStack(alignment: .leading, spacing: 6) {
+                Text("KyDrive address").font(KyType.nav)
+                TextField("https://drive.example.com", text: $server).accessibilityLabel(Text("KyDrive address"))
+                Text("Computer name").font(KyType.nav).padding(.top, 10)
+                TextField("This computer's name", text: $name).accessibilityLabel(Text("Computer name"))
                 Button(model.linking ? "Waiting for approval in your browser…" : "Link") {
                     Task { await model.link(server: server, name: name) }
                 }
                 .buttonStyle(KyButtonStyle(kind: .primary))
                 .disabled(model.linking || server.isEmpty)
+                .padding(.top, 10)
             }
             .padding(16)
         }
@@ -189,7 +193,8 @@ struct Hairline: View {
 }
 
 /// The suite's button hierarchy: one filled primary per group, the rest secondary; destructive
-/// actions use danger (outlined, or filled for the final confirmation).
+/// actions use danger (outlined, or filled for the final confirmation). A disabled primary stays
+/// filled, dimmed.
 struct KyButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary, danger, dangerFilled }
     var kind: Kind = .secondary
@@ -203,21 +208,23 @@ struct KyButtonStyle: ButtonStyle {
         case .danger: (half.panel, half.danger, RGB(half.danger.hex, alpha: 0.55))
         case .dangerFilled: (half.danger, half.dark ? half.buttonText : half.panel, nil)
         }
+        let shown = enabled || kind == .primary
         configuration.label
             .font(KyType.nav)
             .lineLimit(1)
             .fixedSize()
-            .foregroundStyle((enabled ? text : half.ink).color)
+            .foregroundStyle((shown ? text : half.ink).color)
             .padding(.horizontal, 12)
             .frame(minHeight: 28)
-            .background((enabled ? fill : half.panel).color, in: RoundedRectangle(cornerRadius: 8))
+            .background((shown ? fill : half.panel).color, in: RoundedRectangle(cornerRadius: 8))
             .overlay {
-                if let edge = enabled ? edge : half.line {
+                if let edge = shown ? edge : half.line {
                     RoundedRectangle(cornerRadius: 8).strokeBorder(edge.color, lineWidth: 1)
                 }
             }
             .overlay(RoundedRectangle(cornerRadius: 8).fill(half.inkStrong.color.opacity(configuration.isPressed ? 0.12 : 0)))
             .contentShape(RoundedRectangle(cornerRadius: 8))
+            .opacity(enabled ? 1 : (kind == .primary ? 0.5 : 1))
     }
 }
 
