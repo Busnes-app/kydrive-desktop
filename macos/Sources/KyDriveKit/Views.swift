@@ -243,7 +243,12 @@ struct Banner<Buttons: View>: View {
                 Image(systemName: danger ? "xmark.octagon.fill" : "exclamationmark.triangle.fill").foregroundStyle(tone.color)
                 Text(verbatim: text).fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) { buttons }.padding(.leading, 24)
+            // Side by side when they fit, else stacked; a label never wraps.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { buttons }
+                VStack(alignment: .leading, spacing: 8) { buttons }
+            }
+            .padding(.leading, 24)
         }
         .padding(12)
         .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
