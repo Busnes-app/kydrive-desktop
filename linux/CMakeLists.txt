@@ -21,8 +21,8 @@ find_package(KF6StatusNotifierItem REQUIRED)
 find_package(KF6DBusAddons REQUIRED)
 include(GNUInstallDirs)
 
-# CoreClient has no QML or KF6 dependency, so the tests link it alone.
-add_library(coreclient STATIC src/CoreClient.cpp)
+# CoreClient and Appearance have no QML or KF6 dependency, so the tests link them alone.
+add_library(coreclient STATIC src/CoreClient.cpp src/Appearance.cpp)
 target_include_directories(coreclient PUBLIC src)
 target_link_libraries(coreclient PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
 
@@ -43,6 +43,10 @@ if(BUILD_TESTING)
   add_executable(tst_coreclient tests/tst_coreclient.cpp)
   target_link_libraries(tst_coreclient PRIVATE coreclient Qt6::Test)
   add_test(NAME coreclient COMMAND tst_coreclient)
+  add_executable(tst_appearance tests/tst_appearance.cpp)
+  target_link_libraries(tst_appearance PRIVATE coreclient Qt6::Test)
+  add_test(NAME appearance COMMAND tst_appearance)
+  set_tests_properties(appearance PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
   add_executable(tst_qml tests/tst_qml.cpp qml/qml.qrc)
   target_link_libraries(tst_qml PRIVATE coreclient Qt6::Test Qt6::Widgets Qt6::Qml Qt6::Quick KF6::Kirigami KF6::I18nQml)
   add_test(NAME qml COMMAND tst_qml)

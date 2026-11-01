@@ -1,3 +1,4 @@
+#include "Appearance.h"
 #include "CoreClient.h"
 
 #include <KDBusService>
@@ -12,6 +13,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QSettings>
 
 int main(int argc, char* argv[])
 {
@@ -31,6 +33,9 @@ int main(int argc, char* argv[])
     QQmlApplicationEngine engine;
     KLocalization::setupLocalizedContext(&engine);
     engine.rootContext()->setContextProperty(QStringLiteral("Core"), &core);
+    QSettings settings;
+    Appearance appearance(&settings);
+    engine.rootContext()->setContextProperty(QStringLiteral("Appearance"), &appearance);
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;

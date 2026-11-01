@@ -18,8 +18,22 @@ Kirigami.ApplicationWindow {
         return "<span>" + String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") + "</span>"
     }
     onLinkedChanged: if (linked) Core.loadWorkspaces()
+    function showAppearance() {
+        appearanceDialog.open()
+    }
 
     Theme { id: theme }
+    // Controls, the toolbar and dialogs draw from the window palette, not Kirigami.Theme.
+    palette.window: theme.bg
+    palette.windowText: theme.inkStrong
+    palette.base: theme.panel
+    palette.alternateBase: theme.bg
+    palette.text: theme.inkStrong
+    palette.button: theme.panel
+    palette.buttonText: theme.inkStrong
+    palette.highlight: theme.accent
+    palette.highlightedText: theme.buttonText
+    palette.placeholderText: theme.ink
 
     pageStack.initialPage: Kirigami.ScrollablePage {
         id: page
@@ -52,6 +66,12 @@ Kirigami.ApplicationWindow {
                 icon.name: "network-disconnect"
                 visible: root.linked
                 onTriggered: unlinkDialog.open()
+            },
+            Kirigami.Action {
+                text: i18n("Appearance")
+                icon.name: "preferences-desktop-theme-global"
+                displayHint: Kirigami.DisplayHint.AlwaysHide
+                onTriggered: root.showAppearance()
             }
         ]
 
@@ -89,11 +109,22 @@ Kirigami.ApplicationWindow {
                 }
             }
 
-            Controls.Label {
+            // Connection state: a dot in the status colour beside the word, never colour alone.
+            RowLayout {
                 visible: root.linked
-                text: i18n("Status: %1", Core.status.State || "")
-                textFormat: Text.PlainText
-                color: theme.inkStrong
+                readonly property string state: Core.status.Paused ? "paused" : (Core.status.State || "")
+                Rectangle {
+                    implicitWidth: Kirigami.Units.smallSpacing * 2
+                    implicitHeight: implicitWidth
+                    radius: width / 2
+                    color: ({idle: theme.success, syncing: theme.accent, paused: theme.warning,
+                             error: theme.danger, revoked: theme.danger, signed_out: theme.danger})[parent.state] || theme.ink
+                }
+                Controls.Label {
+                    text: i18n("Status: %1", parent.state)
+                    textFormat: Text.PlainText
+                    color: theme.inkStrong
+                }
             }
 
             // The large-delete guard: deletes wait here until the user answers.
@@ -185,6 +216,11 @@ Kirigami.ApplicationWindow {
                 }
             }
         }
+    }
+
+    AppearanceDialog {
+        id: appearanceDialog
+        theme: theme
     }
 
     Kirigami.PromptDialog {
