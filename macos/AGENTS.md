@@ -4,7 +4,7 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
 ## Ownership
 - `Sources/KyDriveKit/CoreClient.swift` — socket path, JSON-RPC 1.0 client (`Core.<Method>`, one JSON object per line, one connection per call), the core's reply types; the only link to the core.
 - `Sources/KyDriveKit/AppModel.swift` — what the menu shows, actions, warning announcements, `webURL`, `notice`.
-- `Sources/KyDriveKit/Views.swift` — the menu window: link form, workspaces, held deletes, conflicts, unlink.
+- `Sources/KyDriveKit/Views.swift` — the menu window: brand row, link form, workspaces, held deletes, conflicts, unlink; the shared `Banner`, `Card` and `KyButtonStyle` (primary, secondary, danger), matching the Linux shell.
 - `Sources/KyDriveKit/Appearance.swift` — the suite's six theme pairs (ky-ui `THEME_PAIRS` and `tokens.css`), the saved pair and System/Light/Dark mode (`appearancePair`, `appearanceMode`; a legacy `theme` migrates once), `kyThemed()` and the Settings window's `AppearanceSettings`.
 - `Sources/KyDrive/KyDriveApp.swift` — `@main`, launch agent registration, notifications, starting the core without the agent.
 - `packaging/` — `Info.plist` (`LSUIElement`) and the launch agent `com.kysecurity.drive.sync.plist`.

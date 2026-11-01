@@ -83,8 +83,8 @@ Kirigami.ApplicationWindow {
 
         // The brand row: logo tile and ink wordmark, nothing under it; the page name is below.
         titleDelegate: RowLayout {
-            Layout.leftMargin: Kirigami.Units.largeSpacing
             spacing: Kirigami.Units.smallSpacing * 2
+            Item { implicitWidth: Kirigami.Units.smallSpacing }
             Image {
                 source: "qrc:/qml/kydrive.png"
                 sourceSize: Qt.size(56, 56)
