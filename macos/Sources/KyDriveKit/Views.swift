@@ -17,102 +17,240 @@ public struct MenuContent: View {
     public init(model: AppModel) { self.model = model }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
+            BrandRow()
+            VStack(alignment: .leading, spacing: 4) {
+                if model.status.linked {
+                    Text(verbatim: model.status.server).font(KyType.title).fixedSize(horizontal: false, vertical: true)
+                    StatusLine(state: model.status.paused ? "paused" : model.status.state)
+                } else {
+                    Text("Link this computer").font(KyType.title)
+                }
+            }
             if let error = model.shownError { ErrorBanner(text: error) }
             if model.status.linked { linked } else { linkForm }
-            Divider()
+            Hairline()
             HStack {
-                SettingsButton()
-                Button("Quit KyDrive") { NSApp.terminate(nil) }
+                SettingsButton().buttonStyle(KyButtonStyle())
+                Button("Quit KyDrive") { NSApp.terminate(nil) }.buttonStyle(KyButtonStyle())
             }
         }
-        .padding()
+        .padding(16)
         .frame(width: 360)
+        .font(KyType.body)
         .kyThemed()
     }
 
     // The browser does the sign-in and approval.
     private var linkForm: some View {
-        VStack(alignment: .leading) {
-            Text("Link this computer").font(.headline)
-            TextField("https://drive.example.com", text: $server)
-            TextField("This computer's name", text: $name)
-            Button(model.linking ? "Waiting for approval in your browser…" : "Link") {
-                Task { await model.link(server: server, name: name) }
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("https://drive.example.com", text: $server)
+                TextField("This computer's name", text: $name)
+                Button(model.linking ? "Waiting for approval in your browser…" : "Link") {
+                    Task { await model.link(server: server, name: name) }
+                }
+                .buttonStyle(KyButtonStyle(kind: .primary))
+                .disabled(model.linking || server.isEmpty)
             }
-            .disabled(model.linking || server.isEmpty)
+            .padding(16)
         }
         .disabled(model.linking)
     }
 
     @ViewBuilder private var linked: some View {
-        Text(verbatim: model.status.server).font(.headline)
-        StatusLine(state: model.status.paused ? "paused" : model.status.state)
         ForEach((model.status.workspaces ?? []).filter { $0.heldDeletes > 0 }) { w in
             HeldDeletesBanner(workspace: w, model: model)
         }
 
-        Text("Workspaces on this computer").font(.headline)
-        ForEach(model.workspaces) { c in
-            WorkspaceRow(choice: c, isOn: Binding(get: { picked[c.id] ?? c.chosen }, set: { picked[c.id] = $0 }))
-        }
-        Text("Unchecking a workspace removes its files from this computer. Edits that never uploaded are kept in the Unsynced folder.")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        HStack {
-            Button("Apply") {
-                let ids = model.workspaces.filter { picked[$0.id] ?? $0.chosen }.map(\.id)
-                picked = [:]
-                Task { await model.choose(ids) }
+        KySection(Text("Workspaces on this computer")) {
+            Card {
+                ForEach(Array(model.workspaces.enumerated()), id: \.element.id) { i, c in
+                    if i > 0 { Hairline() }
+                    WorkspaceRow(choice: c, isOn: Binding(get: { picked[c.id] ?? c.chosen }, set: { picked[c.id] = $0 }))
+                        .padding(.horizontal, 12).frame(minHeight: 40)
+                }
+                Hairline()
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Unchecking a workspace removes its files from this computer. Edits that never uploaded are kept in the Unsynced folder.")
+                        .font(KyType.meta).modifier(Muted()).fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Apply") {
+                            let ids = model.workspaces.filter { picked[$0.id] ?? $0.chosen }.map(\.id)
+                            picked = [:]
+                            Task { await model.choose(ids) }
+                        }
+                        .buttonStyle(KyButtonStyle(kind: .primary))
+                        Button("Reload") { Task { await model.loadWorkspaces() } }.buttonStyle(KyButtonStyle())
+                    }
+                }
+                .padding(12)
             }
-            Button("Reload") { Task { await model.loadWorkspaces() } }
         }
 
         if !model.conflicts.isEmpty {
-            Text("Conflicts and kept files").font(.headline)
-            ForEach(model.conflicts) { ConflictRow(issue: $0) }
+            KySection(Text("Conflicts and kept files")) {
+                Card {
+                    ForEach(Array(model.conflicts.enumerated()), id: \.element.id) { i, issue in
+                        if i > 0 { Hairline() }
+                        ConflictRow(issue: issue).padding(12)
+                    }
+                }
+            }
         }
 
-        Divider()
         HStack {
             Button("Open folder") { model.openFolder() }
             Button("Open in browser") { model.openInBrowser() }
             Button(model.status.paused ? "Resume" : "Pause") { Task { await model.pause(!model.status.paused) } }
         }
-        if unlinking { unlinkConfirm } else { Button("Unlink…") { unlinking = true } }
+        .buttonStyle(KyButtonStyle())
+        if unlinking { unlinkConfirm } else { Button("Unlink…") { unlinking = true }.buttonStyle(KyButtonStyle(kind: .danger)) }
     }
 
     private var unlinkConfirm: some View {
-        GroupBox {
-            VStack(alignment: .leading) {
-                Text("Unlink this computer?").font(.headline)
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Unlink this computer?").font(KyType.section)
                 Text("KyDrive stops syncing and this computer is revoked on the server.")
                     .fixedSize(horizontal: false, vertical: true)
                 Toggle("Also remove KyDrive files from this computer (unuploaded edits are kept in Unsynced)", isOn: $removeFiles)
                 HStack {
-                    Button("Cancel") { unlinking = false }
+                    Button("Cancel") { unlinking = false }.buttonStyle(KyButtonStyle())
                     Button("Unlink") {
                         unlinking = false
                         Task { await model.unlink(removeFiles: removeFiles) }
                     }
+                    .buttonStyle(KyButtonStyle(kind: .dangerFilled))
                 }
             }
+            .padding(16)
         }
+    }
+}
+
+/// ky-ui's type scale (--ky-type-*): title, section, body, nav (buttons) and meta.
+enum KyType {
+    static let title = Font.system(size: 24, weight: .semibold)
+    static let section = Font.system(size: 17, weight: .semibold)
+    static let body = Font.system(size: 15)
+    static let nav = Font.system(size: 14, weight: .semibold)
+    static let meta = Font.system(size: 13)
+}
+
+/// The brand row: the app icon and the ink wordmark, nothing under it.
+struct BrandRow: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 28, height: 28)
+            Text("KyDrive").font(.system(size: 17, weight: .bold))
+        }
+    }
+}
+
+/// A section's sentence-case title over its content.
+struct KySection<Content: View>: View {
+    let title: Text
+    @ViewBuilder let content: Content
+    init(_ title: Text, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            title.font(KyType.section)
+            content
+        }
+    }
+}
+
+/// Secondary text in the theme's ink.
+struct Muted: ViewModifier {
+    @Environment(\.themeHalf) private var half
+    func body(content: Content) -> some View { content.foregroundStyle(half.ink.color) }
+}
+
+/// A flat card: the panel, a 1px line and ky-ui's 10px radius, no shadow.
+struct Card<Content: View>: View {
+    @ViewBuilder let content: Content
+    @Environment(\.themeHalf) private var half
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(half.panel.color, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(half.line.color, lineWidth: 1))
+    }
+}
+
+/// A 1px line between rows.
+struct Hairline: View {
+    @Environment(\.themeHalf) private var half
+    var body: some View { Rectangle().fill(half.line.color).frame(height: 1) }
+}
+
+/// The suite's button hierarchy: one filled primary per group, the rest secondary; destructive
+/// actions use danger (outlined, or filled for the final confirmation).
+struct KyButtonStyle: ButtonStyle {
+    enum Kind { case primary, secondary, danger, dangerFilled }
+    var kind: Kind = .secondary
+    @Environment(\.themeHalf) private var half
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let (fill, text, edge): (RGB, RGB, RGB?) = switch kind {
+        case .primary: (half.accent, half.buttonText, nil)
+        case .secondary: (half.panel, half.inkStrong, half.line)
+        case .danger: (half.panel, half.danger, RGB(half.danger.hex, alpha: 0.55))
+        case .dangerFilled: (half.danger, half.dark ? half.buttonText : half.panel, nil)
+        }
+        configuration.label
+            .font(KyType.nav)
+            .foregroundStyle((enabled ? text : half.ink).color)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 28)
+            .background((enabled ? fill : half.panel).color, in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                if let edge = enabled ? edge : half.line {
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(edge.color, lineWidth: 1)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 8).fill(half.inkStrong.color.opacity(configuration.isPressed ? 0.12 : 0)))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// The one status message, as on Linux: the status tint, a 1px status edge, an icon and plain
+/// text, then any buttons. Errors and held deletes both use it.
+struct Banner<Buttons: View>: View {
+    let danger: Bool
+    let text: String
+    let buttons: Buttons
+    init(danger: Bool, verbatim text: String, @ViewBuilder buttons: () -> Buttons) {
+        self.danger = danger
+        self.text = text
+        self.buttons = buttons()
+    }
+    @Environment(\.themeHalf) private var half
+    var body: some View {
+        let tone = danger ? half.danger : half.warning
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: danger ? "xmark.octagon.fill" : "exclamationmark.triangle.fill").foregroundStyle(tone.color)
+                Text(verbatim: text).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack { buttons }.padding(.leading, 24)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(half.soft(tone).color, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(RGB(tone.hex, alpha: 0.45).color, lineWidth: 1))
     }
 }
 
 // Status colours never stand alone: each comes with a word and an icon or dot.
 struct ErrorBanner: View {
     let text: String
-    @Environment(\.themeHalf) private var half
-    var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Image(systemName: "xmark.octagon.fill")
-            Text(verbatim: text).fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(half.danger.color)
-        .padding(8)
-        .background(half.soft(half.danger).color, in: RoundedRectangle(cornerRadius: 6))
-    }
+    var body: some View { Banner(danger: true, verbatim: text) { EmptyView() } }
 }
 
 /// Connection state: a dot in the status colour beside the word.
@@ -129,7 +267,7 @@ struct StatusLine: View {
         }
         HStack(spacing: 6) {
             Circle().fill(colour.color).frame(width: 8, height: 8)
-            Text(verbatim: "Status: " + state)
+            Text(verbatim: "Status: " + state).font(KyType.meta).modifier(Muted())
         }
     }
 }
@@ -168,20 +306,12 @@ struct ConflictRow: View {
 struct HeldDeletesBanner: View {
     let workspace: WorkspaceStatus
     let model: AppModel
-    @Environment(\.themeHalf) private var half
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading) {
-                HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(half.warning.color)
-                    Text(verbatim: "\(workspace.heldDeletes) items were deleted from \(workspace.name) on this computer.")
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    Button("Delete from KyDrive too") { Task { await model.confirmDeletes(workspace: workspace.id, allow: true) } }
-                    Button("Restore them") { Task { await model.confirmDeletes(workspace: workspace.id, allow: false) } }
-                }
-            }
+        Banner(danger: false, verbatim: "\(workspace.heldDeletes) items were deleted from \(workspace.name) on this computer.") {
+            Button("Delete from KyDrive too") { Task { await model.confirmDeletes(workspace: workspace.id, allow: true) } }
+                .buttonStyle(KyButtonStyle(kind: .danger))
+            Button("Restore them") { Task { await model.confirmDeletes(workspace: workspace.id, allow: false) } }
+                .buttonStyle(KyButtonStyle())
         }
     }
 }
