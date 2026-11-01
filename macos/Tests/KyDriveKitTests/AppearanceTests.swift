@@ -140,7 +140,7 @@ final class AppearanceTests: XCTestCase {
         XCTAssertEqual((deltaE(RGB(0xbf3f18), RGB(0xa8174e)) * 100).rounded(), 2388)
     }
 
-    // With KYDRIVE_SHOT_DIR set, saves the menu and the Settings window in three halves.
+    // With KYDRIVE_SHOT_DIR set, saves the menu, the link form and the Settings window in three halves.
     func testScreenshots() async throws {
         guard let dir = ProcessInfo.processInfo.environment["KYDRIVE_SHOT_DIR"] else {
             throw XCTSkip("set KYDRIVE_SHOT_DIR to save screenshots")
@@ -162,11 +162,22 @@ final class AppearanceTests: XCTestCase {
         let icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("packaging/AppIcon.iconset/icon_32x32@2x.png")
         NSApplication.shared.applicationIconImage = NSImage(contentsOf: icon)
+        // The link form: a second core that is not linked.
+        let unlinkedFake = try FakeCore()
+        defer { unlinkedFake.stop() }
+        var unlinkedStatus = FakeCore.status
+        unlinkedStatus["Linked"] = false
+        unlinkedStatus["Server"] = ""
+        unlinkedStatus["State"] = "unlinked"
+        unlinkedFake.answer("Core.Status", unlinkedStatus)
+        let unlinked = AppModel(core: CoreClient(socketPath: unlinkedFake.path))
+        await unlinked.refresh()
         for (pair, mode, name) in [("busnes-pair", ThemeMode.light, "busnes-light"), ("busnes-pair", .dark, "busnes-dark"), ("forest-pair", .light, "forest-light")] {
             let d = defaults()
             d.set(pair, forKey: AppearanceStore.pairKey)
             d.set(mode.rawValue, forKey: AppearanceStore.modeKey)
             try snapshot(MenuContent(model: model).defaultAppStorage(d), dark: mode == .dark, to: dir + "/main-" + name + ".png")
+            try snapshot(MenuContent(model: unlinked).defaultAppStorage(d), dark: mode == .dark, to: dir + "/unlinked-" + name + ".png")
             try snapshot(AppearanceSettings().defaultAppStorage(d), dark: mode == .dark, to: dir + "/settings-" + name + ".png")
         }
     }
