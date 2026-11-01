@@ -158,6 +158,10 @@ final class AppearanceTests: XCTestCase {
         let model = AppModel(core: CoreClient(socketPath: fake.path))
         await model.refresh()
         await model.loadWorkspaces()
+        // The bundle's icon, which the brand row shows; a test process has none of its own.
+        let icon = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("packaging/AppIcon.iconset/icon_32x32@2x.png")
+        NSApplication.shared.applicationIconImage = NSImage(contentsOf: icon)
         for (pair, mode, name) in [("busnes-pair", ThemeMode.light, "busnes-light"), ("busnes-pair", .dark, "busnes-dark"), ("forest-pair", .light, "forest-light")] {
             let d = defaults()
             d.set(pair, forKey: AppearanceStore.pairKey)
