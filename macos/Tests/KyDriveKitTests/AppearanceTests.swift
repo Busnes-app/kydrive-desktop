@@ -8,7 +8,10 @@ private func linear(_ v: Double) -> Double {
     return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
 }
 
-private func luminance(_ c: RGB) -> Double { 0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b) }
+private func luminance(_ c: RGB) -> Double {
+    let r: Double = 0.2126 * linear(c.r), g: Double = 0.7152 * linear(c.g), b: Double = 0.0722 * linear(c.b)
+    return r + g + b
+}
 
 func contrast(_ a: RGB, _ b: RGB) -> Double {
     let la = luminance(a), lb = luminance(b)
@@ -17,9 +20,11 @@ func contrast(_ a: RGB, _ b: RGB) -> Double {
 
 private func lab(_ c: RGB) -> (Double, Double, Double) {
     let r = linear(c.r), g = linear(c.g), b = linear(c.b)
-    let xyz = [(0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047, 0.2126729 * r + 0.7151522 * g + 0.072175 * b,
-               (0.0193339 * r + 0.119192 * g + 0.9503041 * b) / 1.08883]
-        .map { $0 > 216.0 / 24389 ? cbrt($0) : (24389.0 / 27 * $0 + 16) / 116 }
+    func f(_ t: Double) -> Double { t > 216.0 / 24389 ? cbrt(t) : (24389.0 / 27 * t + 16) / 116 }
+    let x: Double = 0.4124564 * r + 0.3575761 * g + 0.1804375 * b
+    let y: Double = 0.2126729 * r + 0.7151522 * g + 0.072175 * b
+    let z: Double = 0.0193339 * r + 0.119192 * g + 0.9503041 * b
+    let xyz: [Double] = [f(x / 0.95047), f(y), f(z / 1.08883)]
     return (116 * xyz[1] - 16, 500 * (xyz[0] - xyz[1]), 200 * (xyz[1] - xyz[2]))
 }
 
@@ -28,7 +33,7 @@ func deltaE(_ x: RGB, _ y: RGB) -> Double {
     let (L1, a1, b1) = lab(x), (L2, a2, b2) = lab(y)
     let rad = Double.pi / 180
     let C = (hypot(a1, b1) + hypot(a2, b2)) / 2
-    let G = 0.5 * (1 - sqrt(pow(C, 7) / (pow(C, 7) + pow(25, 7))))
+    let G: Double = 0.5 * (1 - sqrt(pow(C, 7) / (pow(C, 7) + pow(25, 7))))
     let ap1 = a1 * (1 + G), ap2 = a2 * (1 + G)
     let Cp1 = hypot(ap1, b1), Cp2 = hypot(ap2, b2)
     func hue(_ b: Double, _ a: Double) -> Double { (atan2(b, a) / rad + 360).truncatingRemainder(dividingBy: 360) }
@@ -40,11 +45,15 @@ func deltaE(_ x: RGB, _ y: RGB) -> Double {
     let Lm = (L1 + L2) / 2, Cm = (Cp1 + Cp2) / 2
     var hm = hp1 + hp2
     if Cp1 * Cp2 != 0 { hm = abs(hp1 - hp2) > 180 ? (hm + (hm < 360 ? 360 : -360)) / 2 : hm / 2 }
-    let T = 1 - 0.17 * cos((hm - 30) * rad) + 0.24 * cos(2 * hm * rad) + 0.32 * cos((3 * hm + 6) * rad) - 0.2 * cos((4 * hm - 63) * rad)
-    let SL = 1 + 0.015 * pow(Lm - 50, 2) / sqrt(20 + pow(Lm - 50, 2))
+    let t1: Double = 0.17 * cos((hm - 30) * rad), t2: Double = 0.24 * cos(2 * hm * rad)
+    let t3: Double = 0.32 * cos((3 * hm + 6) * rad), t4: Double = 0.2 * cos((4 * hm - 63) * rad)
+    let T: Double = 1 - t1 + t2 + t3 - t4
+    let SL: Double = 1 + 0.015 * pow(Lm - 50, 2) / sqrt(20 + pow(Lm - 50, 2))
     let SC = 1 + 0.045 * Cm, SH = 1 + 0.015 * Cm * T
-    let RT = -2 * sqrt(pow(Cm, 7) / (pow(Cm, 7) + pow(25, 7))) * sin(60 * exp(-pow((hm - 275) / 25, 2)) * rad)
-    return sqrt(pow(dL / SL, 2) + pow(dC / SC, 2) + pow(dH / SH, 2) + RT * (dC / SC) * (dH / SH))
+    let RC: Double = -2 * sqrt(pow(Cm, 7) / (pow(Cm, 7) + pow(25, 7)))
+    let RT: Double = RC * sin(60 * exp(-pow((hm - 275) / 25, 2)) * rad)
+    let l: Double = dL / SL, c: Double = dC / SC, h: Double = dH / SH
+    return sqrt(l * l + c * c + h * h + RT * c * h)
 }
 
 @MainActor
