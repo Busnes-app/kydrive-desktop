@@ -5,6 +5,7 @@
         <file>AppearanceDialog.qml</file>
         <file>Banner.qml</file>
         <file>KyButton.qml</file>
+        <file>KyField.qml</file>
         <file alias="kydrive.png">../packaging/icons/hicolor/256x256/apps/com.kysecurity.drive.png</file>
     </qresource>
     <qresource prefix="/fonts">
