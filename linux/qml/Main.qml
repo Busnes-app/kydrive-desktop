@@ -19,11 +19,21 @@ Kirigami.ApplicationWindow {
     }
     onLinkedChanged: if (linked) Core.loadWorkspaces()
     function showAppearance() {
-        if (pageStack.layers.depth === 1)
-            pageStack.layers.push(Qt.resolvedUrl("AppearancePage.qml"), {theme: theme})
+        appearanceDialog.open()
     }
 
     Theme { id: theme }
+    // Controls, the toolbar and dialogs draw from the window palette, not Kirigami.Theme.
+    palette.window: theme.bg
+    palette.windowText: theme.inkStrong
+    palette.base: theme.panel
+    palette.alternateBase: theme.bg
+    palette.text: theme.inkStrong
+    palette.button: theme.panel
+    palette.buttonText: theme.inkStrong
+    palette.highlight: theme.accent
+    palette.highlightedText: theme.buttonText
+    palette.placeholderText: theme.ink
 
     pageStack.initialPage: Kirigami.ScrollablePage {
         id: page
@@ -206,6 +216,11 @@ Kirigami.ApplicationWindow {
                 }
             }
         }
+    }
+
+    AppearanceDialog {
+        id: appearanceDialog
+        theme: theme
     }
 
     Kirigami.PromptDialog {

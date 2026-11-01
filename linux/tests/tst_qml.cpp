@@ -4,6 +4,7 @@
 
 #include <KLocalizedQmlContext>
 
+#include <QIcon>
 #include <QNetworkAccessManager>
 #include <QQmlNetworkAccessManagerFactory>
 #include <QQuickItem>
@@ -65,6 +66,7 @@ private:
             for (const QQmlError& e : list)
                 m_warnings << e.toString();
         });
+        QIcon::setThemeName(QStringLiteral("breeze")); // so message icons show, as on a desktop
         KLocalization::setupLocalizedContext(&engine);
         engine.rootContext()->setContextProperty(QStringLiteral("Core"), &client);
         engine.rootContext()->setContextProperty(QStringLiteral("Appearance"), &m_appearance);

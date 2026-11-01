@@ -5,7 +5,7 @@ The Linux shell: a Qt6/Kirigami tray app (`kydrive-desktop`, app id `com.kysecur
 - `src/CoreClient.*` — JSON-RPC 1.0 client over the core's socket (`Core.<Method>`, one JSON object per line); the only link to the core.
 - `src/Appearance.*` — the suite's six theme pairs (ky-ui `THEME_PAIRS` and `tokens.css`), the saved pair and System/Light/Dark mode, migration of a saved suite theme.
 - `src/main.cpp` — app setup, tray menu, notifications for new `warn` activity.
-- `qml/` — `Main.qml` (link form, workspaces, held deletes, conflicts, unlink dialog), `AppearancePage.qml` (theme pair and light/dark, a Kirigami layer) and `Theme.qml`.
+- `qml/` — `Main.qml` (link form, workspaces, held deletes, conflicts, unlink dialog), `AppearanceDialog.qml` (theme pair and light/dark, from the Appearance action) and `Theme.qml`.
 - `packaging/` — desktop file, metainfo, icon (from Busnes.app-site `icons/kydrive.png`), systemd user unit, Flatpak manifest.
 
 ## Local Contracts
