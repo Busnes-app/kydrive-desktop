@@ -17,6 +17,15 @@ QtObject {
     readonly property color warning: c.warning
     readonly property color success: c.success
 
+    // ky-ui's type scale (--ky-type-*, at 16px to the rem), card and control radii.
+    readonly property int typeTitle: 24
+    readonly property int typeSection: 17
+    readonly property int typeBody: 15
+    readonly property int typeNav: 14
+    readonly property int typeMeta: 13
+    readonly property int radius: 10
+    readonly property int controlRadius: 8
+
     // Kirigami paints from the platform palette unless told otherwise.
     function paint(theme, background) {
         theme.inherit = false

@@ -189,13 +189,36 @@ public struct AppearanceSettings: View {
             Picker("Theme", selection: $pair) {
                 ForEach(themePairs) { Text(verbatim: $0.name).tag($0.id) }
             }
-            Picker("Light or dark", selection: $mode) {
-                ForEach(ThemeMode.allCases) { Text(verbatim: $0.label).tag($0.rawValue) }
+            LabeledContent("Light or dark") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(ThemeMode.allCases) { m in AccentRadio(label: m.label, isOn: mode == m.rawValue) { mode = m.rawValue } }
+                }
             }
-            .pickerStyle(.radioGroup)
         }
-        .padding(20)
+        .padding(24)
         .frame(width: 360)
         .kyThemed()
+    }
+}
+
+/// A radio that marks the choice in the theme's accent; the system radio ignores the tint.
+struct AccentRadio: View {
+    let label: String
+    let isOn: Bool
+    let select: () -> Void
+    @Environment(\.themeHalf) private var half
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 8) {
+                Circle().strokeBorder((isOn ? half.accent : half.ink).color, lineWidth: isOn ? 2 : 1)
+                    .background(Circle().fill(half.panel.color))
+                    .overlay(Circle().fill(half.accent.color).frame(width: 6, height: 6).opacity(isOn ? 1 : 0))
+                    .frame(width: 16, height: 16)
+                Text(verbatim: label)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 }
