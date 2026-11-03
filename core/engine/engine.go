@@ -354,8 +354,13 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 	if strings.HasPrefix(d.Name(), ".kydrive-") && strings.HasSuffix(d.Name(), ".tmp") {
 		return os.Remove(p)
 	}
+	// Each file's record goes with it, so a partial evict leaves no record of a file that is
+	// gone, which the next push would read as a local delete.
 	if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && !e.changed(*it, p, fi) {
-		return os.Remove(p)
+		if err := os.Remove(p); err != nil {
+			return err
+		}
+		return e.DB.DropTree(w.ID, r)
 	}
 	dst := filepath.Join(e.Root, Unsynced, w.Dir, filepath.FromSlash(r))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
@@ -365,6 +370,9 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 		return err
 	}
 	if err := os.Rename(p, dst); err != nil {
+		return err
+	}
+	if err := e.DB.DropTree(w.ID, r); err != nil {
 		return err
 	}
 	rd, _ := filepath.Rel(e.Root, dst)

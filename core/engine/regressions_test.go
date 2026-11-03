@@ -264,3 +264,20 @@ func TestBlockedRemoteRenameRetries(t *testing.T) {
 		t.Fatalf("local tree %v", tree(t, v.path("")))
 	}
 }
+
+// An unchoose that cannot remove one file keeps the workspace, but the files it did remove
+// must not read as local deletes on the next pass.
+func TestPartialEvictDoesNotTrash(t *testing.T) {
+	v := setup(t, map[string]string{"a/x.txt": "x", "z.txt": "z"})
+	readOnly(t, v.path("a"))
+	if err := v.e.Choose(context.Background(), nil); err == nil {
+		t.Fatal("unchoose reported success with a file left behind")
+	}
+	if v.exists("z.txt") {
+		t.Fatal("the evict stopped at the first file it could not remove")
+	}
+	v.sync()
+	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"a/x.txt", "z.txt"}) {
+		t.Fatalf("server paths %v; an evicted copy was trashed", got)
+	}
+}
