@@ -172,9 +172,7 @@ func wipeUnfinished(err error) error {
 // files stay unless RemoveFiles, which still keeps unuploaded edits in Unsynced/.
 func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	d := c.d
-	done := d.interrupt()
 	d.work.Lock()
-	done()
 	defer d.work.Unlock()
 	// Unlink drops the bindings, which an unfinished wipe still needs.
 	if err := d.engine().ResumeWipe(); err != nil {
@@ -232,9 +230,7 @@ func (c *Core) Workspaces(_ struct{}, out *[]Choice) error {
 // keeping unuploaded edits in Unsynced/.
 func (c *Core) Choose(in struct{ IDs []string }, _ *struct{}) error {
 	d := c.d
-	done := d.interrupt()
 	d.work.Lock()
-	done()
 	err := d.engine().Choose(c.ctx, in.IDs)
 	d.work.Unlock()
 	d.trigger(true)
@@ -249,9 +245,7 @@ func (c *Core) Pause(in struct{ Paused bool }, _ *struct{}) error {
 	if err := c.d.db.Set("paused", v); err != nil {
 		return err
 	}
-	if in.Paused {
-		c.d.interrupt()()
-	} else {
+	if !in.Paused {
 		c.d.trigger(true)
 	}
 	return nil
@@ -276,9 +270,7 @@ func (c *Core) ConfirmDeletes(in struct {
 	Allow     bool
 }, _ *struct{}) error {
 	d := c.d
-	done := d.interrupt()
 	d.work.Lock()
-	done()
 	err := d.engine().ConfirmDeletes(in.Workspace, in.Allow)
 	d.work.Unlock()
 	d.trigger(true)

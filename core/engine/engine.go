@@ -117,8 +117,7 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 			continue
 		}
 		dir := folderName(s.Name)
-		// Lstat also catches a name the file system treats as the same (Unicode normalization).
-		for i := 2; slices.ContainsFunc(taken, func(t string) bool { return strings.EqualFold(t, dir) }) || present(filepath.Join(e.Root, dir)); i++ {
+		for i := 2; slices.ContainsFunc(taken, func(t string) bool { return strings.EqualFold(t, dir) }); i++ {
 			dir = fitName(folderName(s.Name), fmt.Sprintf(" (%d)", i), "")
 		}
 		taken = append(taken, dir)
@@ -129,9 +128,7 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 	return nil
 }
 
-// present reports that p is known to exist; missing, that it is known not to.
-func present(p string) bool { _, err := os.Lstat(p); return err == nil }
-
+// missing reports that p is known not to exist.
 func missing(p string) bool { _, err := os.Lstat(p); return errors.Is(err, fs.ErrNotExist) }
 
 func folderName(name string) string {

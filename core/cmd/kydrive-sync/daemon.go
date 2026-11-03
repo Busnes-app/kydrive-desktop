@@ -38,11 +38,9 @@ type daemon struct {
 	http            *http.Client
 	open            func(url string) error
 
-	lock    *os.File           // held for the daemon's life: one core per state directory
-	work    sync.Mutex         // one engine operation at a time
-	mu      sync.Mutex         // guards the fields below
-	stop    context.CancelFunc // interrupts the running pass
-	waiting int                // user requests waiting for work; passes yield to them
+	lock *os.File   // held for the daemon's life: one core per state directory
+	work sync.Mutex // one engine operation at a time
+	mu   sync.Mutex // guards the fields below
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -197,13 +195,6 @@ func netPrint() string {
 }
 
 func (d *daemon) pass(ctx context.Context, local bool) {
-	// Registered before the work lock, so a request that interrupts while this pass waits for
-	// the lock, or has only just taken it, still stops it.
-	pctx, stop := context.WithCancel(ctx)
-	d.mu.Lock()
-	d.stop = stop
-	d.mu.Unlock()
-	defer func() { stop(); d.mu.Lock(); d.stop = nil; d.mu.Unlock() }()
 	d.work.Lock()
 	defer d.work.Unlock()
 	// A wipe the server asked for continues even after the credential is gone.
@@ -211,7 +202,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		log.Printf("wipe: %v", err)
 	}
 	d.mu.Lock()
-	if d.waiting > 0 || d.token == "" || d.db.Get("paused") != "" || d.state == "revoked" || d.state == "signed_out" {
+	if d.token == "" || d.db.Get("paused") != "" || d.state == "revoked" || d.state == "signed_out" {
 		d.mu.Unlock()
 		return
 	}
@@ -221,9 +212,9 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	e := d.engine()
 	var err error
 	if local {
-		err = e.Sync(pctx)
+		err = e.Sync(ctx)
 	} else {
-		err = e.Poll(pctx)
+		err = e.Poll(ctx)
 	}
 	if e.Unsettled {
 		time.AfterFunc(settle+time.Second, func() { d.trigger(true) })
@@ -237,26 +228,12 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		d.forget()
 	case errors.Is(err, engine.ErrSignedOut):
 		d.state, d.lastErr = "signed_out", err.Error()
-	case pctx.Err() != nil && ctx.Err() == nil:
-		d.state = "idle" // a user request interrupted the pass; the next one resumes
 	case err != nil:
 		d.state, d.lastErr = "error", err.Error()
 		log.Printf("sync: %v", err)
 	default:
 		d.state, d.lastErr, d.lastSync = "idle", "", time.Now().Unix()
 	}
-}
-
-// interrupt cancels the running pass, if any, and keeps queued passes from taking the work
-// lock first, so a user's request need not wait for a pass. Call done once holding the lock.
-func (d *daemon) interrupt() (done func()) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.waiting++
-	if d.stop != nil {
-		d.stop()
-	}
-	return func() { d.mu.Lock(); d.waiting--; d.mu.Unlock() }
 }
 
 // forget deletes the credential from the keyring. The caller holds d.mu.

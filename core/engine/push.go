@@ -71,9 +71,6 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		return err
 	}
 	for _, n := range entries {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		it, err := e.DB.ItemAt(w.ID, n.rel)
 		if err != nil {
 			return err
@@ -328,9 +325,6 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		return e.DB.PutWorkspace(w)
 	}
 	for _, it := range top {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if it.Kind == "folder" {
 			err = e.API.TrashFolder(ctx, it.ID)
 		} else {

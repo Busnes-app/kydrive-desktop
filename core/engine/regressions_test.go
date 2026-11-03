@@ -202,29 +202,6 @@ func TestConflictNameFromAnyDeviceName(t *testing.T) {
 	}
 }
 
-// A new workspace never lands in an existing directory, even one whose name differs only in
-// Unicode normalization (the same directory on macOS).
-func TestChooseAvoidsExistingDirectoryAnySpelling(t *testing.T) {
-	f := newFake(t)
-	v := setupOn(t, f, nil)
-	if err := os.Mkdir(filepath.Join(v.root, "Café"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cafe := f.NewWorkspace(t, "Café")
-	if err := v.e.Choose(context.Background(), []string{v.ws, cafe}); err != nil {
-		t.Fatal(err)
-	}
-	ws, _ := v.e.DB.Workspaces()
-	for _, w := range ws {
-		if w.ID != cafe {
-			continue
-		}
-		if _, err := os.Lstat(filepath.Join(v.root, w.Dir)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("new workspace folder %q already exists", w.Dir)
-		}
-	}
-}
-
 // A numbered folder for a long workspace name still fits the file system.
 func TestLongWorkspaceNameGetsAFittingFolder(t *testing.T) {
 	f := newFake(t)
@@ -321,19 +298,6 @@ func TestBlockedFolderRenameDoesNotStopPull(t *testing.T) {
 	if v.exists("ro/sub") || v.read("ro/sub2/a.txt") != "a" {
 		t.Fatalf("the refused folder move was not retried: %v", tree(t, v.path("")))
 	}
-}
-
-// Choose finishes even when the sync root cannot be searched.
-func TestChooseReturnsOnUnsearchableRoot(t *testing.T) {
-	f := newFake(t)
-	v := setupOn(t, f, nil)
-	id := f.NewWorkspace(t, "Other")
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("directory permission bits do not stop this user")
-	}
-	os.Chmod(v.root, 0o600)
-	defer os.Chmod(v.root, 0o755)
-	within(t, func() { v.e.Choose(context.Background(), []string{v.ws, id}) })
 }
 
 // A folder move waiting in retries is dropped once its folder is gone, never replayed as a file.

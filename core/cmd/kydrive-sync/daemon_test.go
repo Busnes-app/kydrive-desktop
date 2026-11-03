@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Busnes-app/kydrive-desktop/core/engine"
 	"github.com/zalando/go-keyring"
@@ -238,61 +237,6 @@ func TestSecondDaemonOnSameStateRefused(t *testing.T) {
 	if ln, err := other.listen(); err == nil {
 		ln.Close()
 		t.Fatal("a second daemon started on the same state")
-	}
-}
-
-// Choose (and Unlink) must not wait for a pass stuck in a long transfer.
-func TestChooseInterruptsARunningPass(t *testing.T) {
-	inner := server(t)
-	stuck := make(chan struct{}, 10)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/snapshot") {
-			stuck <- struct{}{}
-			<-r.Context().Done()
-			return
-		}
-		u, _ := url.Parse(inner.URL)
-		r.URL.Scheme, r.URL.Host, r.RequestURI = u.Scheme, u.Host, ""
-		res, err := http.DefaultTransport.RoundTrip(r)
-		if err != nil {
-			http.Error(w, err.Error(), 502)
-			return
-		}
-		defer res.Body.Close()
-		w.WriteHeader(res.StatusCode)
-		io.Copy(w, res.Body)
-	}))
-	t.Cleanup(srv.Close)
-	d, ctl := start(t, srv)
-	var out struct{}
-	if err := ctl("Link", map[string]string{"Server": srv.URL}, &out); err != nil {
-		t.Fatal(err)
-	}
-	if err := ctl("Choose", map[string][]string{"IDs": {"w1"}}, &out); err != nil {
-		t.Fatal(err)
-	}
-	// As in the run loop, another pass is already queued behind the running one.
-	passDone := make(chan struct{})
-	go func() {
-		defer close(passDone)
-		d.pass(context.Background(), true)
-		d.pass(context.Background(), false)
-	}()
-	<-stuck
-	done := make(chan error, 1)
-	go func() { done <- ctl("Choose", map[string][]string{"IDs": {}}, &out) }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Choose waited for the running pass")
-	}
-	<-passDone
-	var st Status
-	if err := ctl("Status", struct{}{}, &st); err != nil || st.State == "error" {
-		t.Fatalf("an interrupted pass reads as a failure: %+v, %v", st, err)
 	}
 }
 

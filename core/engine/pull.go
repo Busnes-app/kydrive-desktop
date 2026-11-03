@@ -30,9 +30,6 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 		return err
 	}
 	for _, f := range retries {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		var err error
 		switch it, _ := e.DB.Item(f.ID); {
 		case f.Digest != "":
@@ -156,9 +153,6 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 	for len(folders) > 0 {
 		var later []api.Folder
 		for _, f := range folders {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
 			if !seen[f.Parent] {
 				later = append(later, f)
 				continue
@@ -175,9 +169,6 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 	}
 	slices.SortFunc(files, func(a, b api.File) int { return strings.Compare(a.Name, b.Name) })
 	for _, f := range files {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if !seen[f.Parent] {
 			continue
 		}
@@ -202,9 +193,6 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		return err
 	}
 	for _, it := range items {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if seen[it.ID] {
 			continue
 		}
