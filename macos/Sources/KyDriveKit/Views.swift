@@ -85,6 +85,8 @@ public struct MenuContent: View {
                             Task { await model.choose(ids) }
                         }
                         .buttonStyle(KyButtonStyle(kind: .primary))
+                        // An empty list is one that did not load: applying it would remove every workspace.
+                        .disabled(model.workspaces.isEmpty)
                         Button("Reload") { Task { await model.loadWorkspaces() } }.buttonStyle(KyButtonStyle())
                     }
                 }

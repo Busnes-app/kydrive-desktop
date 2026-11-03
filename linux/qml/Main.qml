@@ -260,6 +260,8 @@ Kirigami.ApplicationWindow {
                                 theme: root.ky
                                 kind: "primary"
                                 text: i18n("Apply")
+                                // An empty list is one that did not load: applying it would remove every workspace.
+                                enabled: choices.count > 0
                                 onClicked: {
                                     let ids = []
                                     for (let i = 0; i < choices.count; i++)

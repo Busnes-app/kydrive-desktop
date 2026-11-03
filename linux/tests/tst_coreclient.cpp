@@ -102,6 +102,21 @@ private slots:
         QTRY_VERIFY(!err.isEmpty());
         QVERIFY(!client.connected());
     }
+
+    // A connection error clears once the core answers again.
+    void reconnectClearsConnectionError()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("sync.sock"));
+        CoreClient client(path, QString());
+        client.refresh();
+        QTRY_VERIFY(!client.error().isEmpty());
+        FakeCore core(path);
+        QSignalSpy status(&client, &CoreClient::statusChanged);
+        client.refresh();
+        QVERIFY(status.wait());
+        QCOMPARE(client.error(), QString());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestCoreClient)
