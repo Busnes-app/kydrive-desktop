@@ -244,7 +244,7 @@ func TestSecondDaemonOnSameStateRefused(t *testing.T) {
 // Choose (and Unlink) must not wait for a pass stuck in a long transfer.
 func TestChooseInterruptsARunningPass(t *testing.T) {
 	inner := server(t)
-	stuck := make(chan struct{}, 1)
+	stuck := make(chan struct{}, 10)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/snapshot") {
 			stuck <- struct{}{}
@@ -271,8 +271,13 @@ func TestChooseInterruptsARunningPass(t *testing.T) {
 	if err := ctl("Choose", map[string][]string{"IDs": {"w1"}}, &out); err != nil {
 		t.Fatal(err)
 	}
+	// As in the run loop, another pass is already queued behind the running one.
 	passDone := make(chan struct{})
-	go func() { defer close(passDone); d.pass(context.Background(), true) }()
+	go func() {
+		defer close(passDone)
+		d.pass(context.Background(), true)
+		d.pass(context.Background(), false)
+	}()
 	<-stuck
 	done := make(chan error, 1)
 	go func() { done <- ctl("Choose", map[string][]string{"IDs": {}}, &out) }()

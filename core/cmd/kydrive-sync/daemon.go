@@ -38,10 +38,11 @@ type daemon struct {
 	http            *http.Client
 	open            func(url string) error
 
-	lock *os.File           // held for the daemon's life: one core per state directory
-	work sync.Mutex         // one engine operation at a time
-	mu   sync.Mutex         // guards the fields below
-	stop context.CancelFunc // interrupts the running pass
+	lock    *os.File           // held for the daemon's life: one core per state directory
+	work    sync.Mutex         // one engine operation at a time
+	mu      sync.Mutex         // guards the fields below
+	stop    context.CancelFunc // interrupts the running pass
+	waiting int                // user requests waiting for work; passes yield to them
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -75,12 +76,14 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	return d, nil
 }
 
+var errRunning = errors.New("another kydrive-sync is already running")
+
 // listen opens the socket in an owner-only directory, refusing to replace a live core. The
 // state lock comes first: two cores started together can both find no socket.
 func (d *daemon) listen() (net.Listener, error) {
 	lock, err := lockState(filepath.Join(d.dir, "lock"))
 	if err != nil {
-		return nil, errors.New("another kydrive-sync is already running")
+		return nil, err
 	}
 	d.lock = lock
 	dir := filepath.Dir(d.sock)
@@ -92,7 +95,7 @@ func (d *daemon) listen() (net.Listener, error) {
 	}
 	if c, err := net.DialTimeout("unix", d.sock, time.Second); err == nil {
 		c.Close()
-		return nil, errors.New("another kydrive-sync is already running")
+		return nil, errRunning
 	}
 	os.Remove(d.sock)
 	ln, err := net.Listen("unix", d.sock)
@@ -208,7 +211,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		log.Printf("wipe: %v", err)
 	}
 	d.mu.Lock()
-	if d.token == "" || d.db.Get("paused") != "" || d.state == "revoked" || d.state == "signed_out" {
+	if d.waiting > 0 || d.token == "" || d.db.Get("paused") != "" || d.state == "revoked" || d.state == "signed_out" {
 		d.mu.Unlock()
 		return
 	}
@@ -244,13 +247,16 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	}
 }
 
-// interrupt cancels the running pass, if any, so a user's request need not wait for it.
-func (d *daemon) interrupt() {
+// interrupt cancels the running pass, if any, and keeps queued passes from taking the work
+// lock first, so a user's request need not wait for a pass. Call done once holding the lock.
+func (d *daemon) interrupt() (done func()) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.waiting++
 	if d.stop != nil {
 		d.stop()
 	}
+	return func() { d.mu.Lock(); d.waiting--; d.mu.Unlock() }
 }
 
 // forget deletes the credential from the keyring. The caller holds d.mu.

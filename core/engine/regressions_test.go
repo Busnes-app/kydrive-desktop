@@ -303,3 +303,28 @@ func TestConfirmedFolderDeleteKeepsUnseenRemoteFile(t *testing.T) {
 		t.Fatal("the confirmed delete did not happen")
 	}
 }
+
+// A server folder rename that cannot be applied locally must not stop the pass either.
+func TestBlockedFolderRenameDoesNotStopPull(t *testing.T) {
+	v := setup(t, map[string]string{"ro/sub/a.txt": "a", "z.txt": "1"})
+	v.r.Rename(t, v.ws, "ro/sub", "sub2")
+	v.r.Put(t, v.ws, "z.txt", []byte("2"))
+	readOnly(t, v.path("ro"))
+	v.sync()
+	if v.read("z.txt") != "2" {
+		t.Fatal("a folder that could not move stopped the pass")
+	}
+}
+
+// Choose finishes even when the sync root cannot be searched.
+func TestChooseReturnsOnUnsearchableRoot(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, nil)
+	id := f.NewWorkspace(t, "Other")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permission bits do not stop this user")
+	}
+	os.Chmod(v.root, 0o600)
+	defer os.Chmod(v.root, 0o755)
+	within(t, func() { v.e.Choose(context.Background(), []string{v.ws, id}) })
+}

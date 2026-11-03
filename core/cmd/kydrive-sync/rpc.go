@@ -106,13 +106,6 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	if err != nil {
 		return err
 	}
-	// A new link drops the old bindings, which an unfinished wipe still needs.
-	d.work.Lock()
-	err = d.engine().ResumeWipe()
-	d.work.Unlock()
-	if err != nil {
-		return errors.New("files from this computer's revoked link are not all removed yet; close any app using them and try again: " + err.Error())
-	}
 	d.mu.Lock()
 	if d.token != "" || d.linking {
 		d.mu.Unlock()
@@ -121,6 +114,10 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	d.linking = true
 	d.mu.Unlock()
 	defer func() { d.mu.Lock(); d.linking = false; d.mu.Unlock() }()
+	// A new link drops the old bindings, which an unfinished wipe still needs.
+	if err := d.finishWipe(); err != nil {
+		return err
+	}
 	host, _ := os.Hostname()
 	name := deviceName(cmp.Or(strings.TrimSpace(in.Name), host))
 	tok, err := link.Link(c.ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
@@ -157,13 +154,32 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	return nil
 }
 
+// finishWipe completes a wipe the server asked for, before anything drops its bindings.
+func (d *daemon) finishWipe() error {
+	d.work.Lock()
+	defer d.work.Unlock()
+	if err := d.engine().ResumeWipe(); err != nil {
+		return wipeUnfinished(err)
+	}
+	return nil
+}
+
+func wipeUnfinished(err error) error {
+	return errors.New("files from this computer's revoked link are not all removed yet; close any app using them and try again: " + err.Error())
+}
+
 // Unlink revokes this device on the server (best effort) and forgets the credential. Local
 // files stay unless RemoveFiles, which still keeps unuploaded edits in Unsynced/.
 func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	d := c.d
-	d.interrupt()
+	done := d.interrupt()
 	d.work.Lock()
+	done()
 	defer d.work.Unlock()
+	// Unlink drops the bindings, which an unfinished wipe still needs.
+	if err := d.engine().ResumeWipe(); err != nil {
+		return wipeUnfinished(err)
+	}
 	if e := d.engine(); e.API.Token != "" {
 		ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 		if err := e.API.RevokeSelf(ctx); err != nil {
@@ -216,8 +232,9 @@ func (c *Core) Workspaces(_ struct{}, out *[]Choice) error {
 // keeping unuploaded edits in Unsynced/.
 func (c *Core) Choose(in struct{ IDs []string }, _ *struct{}) error {
 	d := c.d
-	d.interrupt()
+	done := d.interrupt()
 	d.work.Lock()
+	done()
 	err := d.engine().Choose(c.ctx, in.IDs)
 	d.work.Unlock()
 	d.trigger(true)
@@ -233,7 +250,7 @@ func (c *Core) Pause(in struct{ Paused bool }, _ *struct{}) error {
 		return err
 	}
 	if in.Paused {
-		c.d.interrupt()
+		c.d.interrupt()()
 	} else {
 		c.d.trigger(true)
 	}
@@ -259,8 +276,9 @@ func (c *Core) ConfirmDeletes(in struct {
 	Allow     bool
 }, _ *struct{}) error {
 	d := c.d
-	d.interrupt()
+	done := d.interrupt()
 	d.work.Lock()
+	done()
 	err := d.engine().ConfirmDeletes(in.Workspace, in.Allow)
 	d.work.Unlock()
 	d.trigger(true)

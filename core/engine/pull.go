@@ -297,10 +297,14 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 		return err
 	}
 	if old != nil && old.State != "skipped" && old.Path != rel {
-		if ok, err := e.relocate(w, old.Path, rel); !ok || err != nil {
-			if err == nil {
-				e.warn("Could not move %s to %s: something is already there", old.Path, rel)
-			}
+		ok, err := e.relocate(w, old.Path, rel)
+		if !ok {
+			// Refused locally (occupied, a file open inside, no permission): the folder stays
+			// where it is and the next snapshot tries again. It must not stop the pass.
+			e.warn("Could not move %s to %s: %v", old.Path, rel, cmpErr(err, errors.New("something is already there")))
+			return nil
+		}
+		if err != nil {
 			return err
 		}
 	}
