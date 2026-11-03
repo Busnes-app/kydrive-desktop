@@ -335,3 +335,27 @@ func TestChooseReturnsOnUnsearchableRoot(t *testing.T) {
 	defer os.Chmod(v.root, 0o755)
 	within(t, func() { v.e.Choose(context.Background(), []string{v.ws, id}) })
 }
+
+// A folder move waiting in retries is dropped once its folder is gone, never replayed as a file.
+func TestFolderRetryEndsWithItsFolder(t *testing.T) {
+	v := setup(t, map[string]string{"sub/a.txt": "a"})
+	if err := os.Mkdir(v.path("sub2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	v.r.Rename(t, v.ws, "sub", "sub2")
+	if err := v.e.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(v.path("sub"))
+	v.sync()
+	v.sync()
+	issues, _ := v.e.DB.Issues()
+	for _, i := range issues {
+		if i.Kind == "skipped" {
+			t.Errorf("spurious issue %+v", i)
+		}
+	}
+	if r, _ := v.e.DB.Retries(v.ws); len(r) != 0 {
+		t.Fatalf("retries left: %+v", r)
+	}
+}

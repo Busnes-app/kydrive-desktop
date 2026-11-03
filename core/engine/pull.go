@@ -34,10 +34,13 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 			return err
 		}
 		var err error
-		if it, _ := e.DB.Item(f.ID); it != nil && it.Kind == "folder" {
-			err = e.upsertFolder(w, api.Folder{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
-		} else {
+		switch it, _ := e.DB.Item(f.ID); {
+		case f.Digest != "":
 			err = e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f))
+		case it != nil && it.Kind == "folder":
+			err = e.upsertFolder(w, api.Folder{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
+		default: // a folder move whose folder is gone here
+			err = e.DB.DropRetry(f.ID)
 		}
 		if err != nil && !errors.Is(err, errSnapshot) {
 			return err
