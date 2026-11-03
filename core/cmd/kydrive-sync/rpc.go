@@ -114,6 +114,10 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	d.linking = true
 	d.mu.Unlock()
 	defer func() { d.mu.Lock(); d.linking = false; d.mu.Unlock() }()
+	// A new link drops the old bindings, which an unfinished wipe still needs.
+	if err := d.finishWipe(); err != nil {
+		return err
+	}
 	host, _ := os.Hostname()
 	name := deviceName(cmp.Or(strings.TrimSpace(in.Name), host))
 	tok, err := link.Link(c.ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
@@ -150,12 +154,30 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	return nil
 }
 
+// finishWipe completes a wipe the server asked for, before anything drops its bindings.
+func (d *daemon) finishWipe() error {
+	d.work.Lock()
+	defer d.work.Unlock()
+	if err := d.engine().ResumeWipe(); err != nil {
+		return wipeUnfinished(err)
+	}
+	return nil
+}
+
+func wipeUnfinished(err error) error {
+	return errors.New("files from this computer's revoked link are not all removed yet; close any app using them and try again: " + err.Error())
+}
+
 // Unlink revokes this device on the server (best effort) and forgets the credential. Local
 // files stay unless RemoveFiles, which still keeps unuploaded edits in Unsynced/.
 func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	d := c.d
 	d.work.Lock()
 	defer d.work.Unlock()
+	// Unlink drops the bindings, which an unfinished wipe still needs.
+	if err := d.engine().ResumeWipe(); err != nil {
+		return wipeUnfinished(err)
+	}
 	if e := d.engine(); e.API.Token != "" {
 		ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 		if err := e.API.RevokeSelf(ctx); err != nil {

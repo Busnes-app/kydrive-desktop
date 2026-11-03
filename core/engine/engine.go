@@ -118,7 +118,7 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 		}
 		dir := folderName(s.Name)
 		for i := 2; slices.ContainsFunc(taken, func(t string) bool { return strings.EqualFold(t, dir) }); i++ {
-			dir = fmt.Sprintf("%s (%d)", folderName(s.Name), i)
+			dir = fitName(folderName(s.Name), fmt.Sprintf(" (%d)", i), "")
 		}
 		taken = append(taken, dir)
 		if err := e.DB.PutWorkspace(Workspace{ID: s.ID, Name: s.Name, Dir: dir, Cursor: -1}); err != nil {
@@ -127,6 +127,9 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 	}
 	return nil
 }
+
+// missing reports that p is known not to exist.
+func missing(p string) bool { _, err := os.Lstat(p); return errors.Is(err, fs.ErrNotExist) }
 
 func folderName(name string) string {
 	name = strings.Trim(strings.Map(func(r rune) rune {
@@ -186,8 +189,26 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		if w.Deletes > 0 && !w.AllowDeletes {
 			continue
 		}
+		if w.Cursor >= 0 && !w.AllowDeletes && list[i].Role != "reader" && missing(e.dir(w)) {
+			// A pull would recreate the folder and the push then trash what is missing from it,
+			// so the guard is armed first. Confirmed deletes still pull first: the server may
+			// have new files in the folders about to be trashed.
+			if !local {
+				continue
+			}
+			if err := e.deletes(ctx, w, nil, true); err != nil {
+				return err
+			}
+			if w, err = e.workspace(w.ID); err != nil {
+				return err
+			}
+			if w.ID == "" || w.Deletes > 0 {
+				continue // held for ConfirmDeletes
+			}
+		}
 		err := e.pull(ctx, w, list[i].Head)
-		if s := api.Status(err); s == 403 || s == 404 {
+		// Only KyDrive's own answer (a JSON error) means lost access; a proxy's page does not.
+		if ae := (*api.Error)(nil); errors.As(err, &ae) && (ae.Status == 403 || ae.Status == 404) && ae.Code != "" {
 			if err := e.lose(w); err != nil {
 				return err
 			}
@@ -196,20 +217,27 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		if err != nil {
 			return err
 		}
-		ws, err := e.DB.Workspaces()
-		if err != nil {
-			return err
-		}
 		if !local || list[i].Role == "reader" {
 			continue // a reader has nothing to send
 		}
-		if i := slices.IndexFunc(ws, func(x Workspace) bool { return x.ID == w.ID }); i >= 0 {
-			if err := e.push(ctx, ws[i]); err != nil {
+		if w, err := e.workspace(w.ID); err != nil {
+			return err
+		} else if w.ID != "" {
+			if err := e.push(ctx, w); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// workspace re-reads a chosen workspace; ID is empty once it is gone.
+func (e *Engine) workspace(id string) (Workspace, error) {
+	ws, err := e.DB.Workspaces()
+	if i := slices.IndexFunc(ws, func(x Workspace) bool { return x.ID == id }); i >= 0 {
+		return ws[i], err
+	}
+	return Workspace{}, err
 }
 
 // fail turns a revoked or refused credential into ErrRevoked or ErrSignedOut, wiping first
@@ -227,10 +255,12 @@ func (e *Engine) fail(err error) error {
 		return ErrSignedOut
 	}
 	if ae.Wipe {
-		if werr := e.Wipe(); werr != nil {
+		if err := e.DB.Set(wipeKey, "1"); err != nil {
+			return errors.Join(ErrRevoked, err)
+		}
+		if werr := e.ResumeWipe(); werr != nil {
 			return errors.Join(ErrRevoked, werr)
 		}
-		e.warn("This computer was revoked. Synced files were removed; unuploaded edits are in %s", Unsynced)
 	} else {
 		e.warn("This computer was revoked; syncing stopped and files were kept")
 	}
@@ -243,15 +273,32 @@ func (e *Engine) Wipe() error {
 	if err != nil {
 		return err
 	}
+	var failed error
 	for _, w := range ws {
 		if err := e.evict(w, ""); err != nil {
-			return err
+			failed = errors.Join(failed, err) // the other workspaces still go
+			continue
 		}
 		if err := e.DB.DropWorkspace(w.ID); err != nil {
 			return err
 		}
 	}
-	return nil
+	return failed
+}
+
+// wipeKey marks a wipe the server asked for that has not finished; it survives a restart.
+const wipeKey = "wipe"
+
+// ResumeWipe finishes a pending wipe. It needs no credentials, so it runs after a revoke.
+func (e *Engine) ResumeWipe() error {
+	if e.DB.Get(wipeKey) == "" {
+		return nil
+	}
+	if err := e.Wipe(); err != nil {
+		return err
+	}
+	e.warn("This computer was revoked. Synced files were removed; unuploaded edits are in %s", Unsynced)
+	return e.DB.Set(wipeKey, "")
 }
 
 func (e *Engine) lose(w Workspace) error {
@@ -271,6 +318,7 @@ func (e *Engine) evict(w Workspace, rel string) error {
 		return e.DB.DropTree(w.ID, rel)
 	}
 	var dirs []string
+	var failed error
 	err = filepath.WalkDir(top, func(p string, d fs.DirEntry, err error) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -282,38 +330,57 @@ func (e *Engine) evict(w Workspace, rel string) error {
 			dirs = append(dirs, p)
 			return nil
 		}
-		r, _ := filepath.Rel(e.dir(w), p)
-		r = filepath.ToSlash(r)
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return err
-		}
-		if strings.HasPrefix(d.Name(), ".kydrive-") && strings.HasSuffix(d.Name(), ".tmp") {
-			return os.Remove(p)
-		}
-		if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && !e.changed(*it, p, fi) {
-			return os.Remove(p)
-		}
-		dst := filepath.Join(e.Root, Unsynced, w.Dir, filepath.FromSlash(r))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			return err
-		}
-		if dst, err = freePath(dst); err != nil {
-			return err
-		}
-		if err := os.Rename(p, dst); err != nil {
-			return err
-		}
-		rd, _ := filepath.Rel(e.Root, dst)
-		return e.DB.AddIssue(w.ID, filepath.ToSlash(rd), "unsynced", "never uploaded; kept here")
+		// One file that cannot go (open elsewhere, no permission) does not keep the rest.
+		failed = errors.Join(failed, e.evictFile(w, p, d))
+		return nil
 	})
-	if err != nil {
+	if err = errors.Join(err, failed); err != nil {
+		if rel == "" {
+			// The workspace stays chosen; a fresh snapshot restores what this evict removed.
+			w.Cursor = -1
+			err = errors.Join(err, e.DB.PutWorkspace(w))
+		}
 		return err
 	}
 	for _, d := range slices.Backward(dirs) {
 		os.Remove(d)
 	}
 	return e.DB.DropTree(w.ID, rel)
+}
+
+func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
+	r, _ := filepath.Rel(e.dir(w), p)
+	r = filepath.ToSlash(r)
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(d.Name(), ".kydrive-") && strings.HasSuffix(d.Name(), ".tmp") {
+		return os.Remove(p)
+	}
+	// Each file's record goes with it, so a partial evict leaves no record of a file that is
+	// gone, which the next push would read as a local delete.
+	if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && !e.changed(*it, p, fi) {
+		if err := os.Remove(p); err != nil {
+			return err
+		}
+		return e.DB.DropTree(w.ID, r)
+	}
+	dst := filepath.Join(e.Root, Unsynced, w.Dir, filepath.FromSlash(r))
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	if dst, err = freePath(dst); err != nil {
+		return err
+	}
+	if err := os.Rename(p, dst); err != nil {
+		return err
+	}
+	if err := e.DB.DropTree(w.ID, r); err != nil {
+		return err
+	}
+	rd, _ := filepath.Rel(e.Root, dst)
+	return e.DB.AddIssue(w.ID, filepath.ToSlash(rd), "unsynced", "never uploaded; kept here")
 }
 
 // changed reports whether the local file differs from what the last sync left.
@@ -368,7 +435,13 @@ func freePath(p string) (string, error) {
 // a new file, and lists it.
 func (e *Engine) conflict(w Workspace, rel string) error {
 	stem, ext := splitName(path.Base(rel))
-	name := fitName(stem, fmt.Sprintf(" (conflict from %s %s)", e.Device, e.Now().Format("2006-01-02")), ext)
+	device := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`<>:"|?*`, r) {
+			return '-'
+		}
+		return r
+	}, e.Device)
+	name := fitName(stem, fmt.Sprintf(" (conflict from %s %s)", device, e.Now().Format("2006-01-02")), ext)
 	src, err := e.abs(w, rel)
 	if err != nil {
 		return err
@@ -419,7 +492,8 @@ func windowsName(name string) bool {
 	stem, _, _ := strings.Cut(strings.ToUpper(name), ".")
 	switch strings.TrimRight(stem, " ") {
 	case "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+		"COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³", "CONIN$", "CONOUT$":
 		return false
 	}
 	return true

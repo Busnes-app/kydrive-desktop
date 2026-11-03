@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Busnes-app/kydrive-desktop/core/engine"
 	"github.com/zalando/go-keyring"
 )
 
@@ -47,7 +48,7 @@ func start(t *testing.T, srv *httptest.Server) (*daemon, func(method string, par
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go d.serve(ctx, ln)
-	t.Cleanup(func() { cancel(); ln.Close(); d.db.Close() })
+	t.Cleanup(func() { cancel(); ln.Close(); d.db.Close(); d.lock.Close() })
 	return d, func(method string, params, out any) error {
 		b, _ := json.Marshal(params)
 		var raw json.RawMessage
@@ -216,5 +217,57 @@ func TestPlatformAndDeviceName(t *testing.T) {
 		if got := deviceName(in); got != want {
 			t.Errorf("deviceName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Two cores started together must not both run on one state directory, even when they
+// reach the socket by different paths or both find it missing.
+func TestSecondDaemonOnSameStateRefused(t *testing.T) {
+	d, _ := start(t, server(t))
+	run, err := os.MkdirTemp("", "kyd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(run)
+	other, err := newDaemon(d.dir, d.root, filepath.Join(run, "sync.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.db.Close()
+	if ln, err := other.listen(); err == nil {
+		ln.Close()
+		t.Fatal("a second daemon started on the same state")
+	}
+}
+
+// A link must not start while a wipe the server asked for is unfinished: it would drop the
+// bindings the wipe still needs.
+func TestLinkWaitsForAPendingWipe(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permission bits do not stop this user")
+	}
+	srv := server(t)
+	d, ctl := start(t, srv)
+	ro := filepath.Join(d.root, "Old", "ro")
+	if err := os.MkdirAll(ro, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ro, "kept.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(ro, 0o555)
+	defer os.Chmod(ro, 0o755)
+	d.db.PutWorkspace(engine.Workspace{ID: "old", Name: "Old", Dir: "Old", Cursor: 5})
+	d.db.Set("wipe", "1")
+	var out struct{}
+	if err := ctl("Link", map[string]string{"Server": srv.URL}, &out); err == nil || !strings.Contains(err.Error(), "not all removed") {
+		t.Fatalf("linked over an unfinished wipe: %v", err)
+	}
+	os.Chmod(ro, 0o755)
+	if err := ctl("Link", map[string]string{"Server": srv.URL}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(d.root, "Old")); !os.IsNotExist(err) {
+		t.Fatalf("the wipe did not finish before the link: %v", err)
 	}
 }

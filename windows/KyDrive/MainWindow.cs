@@ -36,6 +36,7 @@ sealed class MainWindow : Window
     readonly Button pauseButton = new();
     readonly StackPanel held = new() { Spacing = 8 };
     readonly StackPanel choices = new();
+    readonly Button apply;
     readonly TextBlock conflictsHeading = Heading("Conflicts and kept files", Visibility.Collapsed);
     readonly StackPanel conflicts = new() { Spacing = 4 };
 
@@ -64,7 +65,7 @@ sealed class MainWindow : Window
 
         pauseButton.Click += (_, _) => TogglePause();
         var actions = Row(Act("Open folder", OpenFolder), Act("Open in browser", OpenInBrowser), pauseButton, Act("Unlink…", ConfirmUnlink));
-        var apply = Act("Apply", () => Run(c => c.Choose(Chosen()), reload: true));
+        apply = Act("Apply", () => Run(c => c.Choose(Chosen()), reload: true));
         var reload = Act("Reload", LoadWorkspaces);
         foreach (var e in new UIElement[] { serverText, stateText, actions, held, Heading("Workspaces on this computer"), choices,
                      Plain("Unchecking a workspace removes its files from this computer. Edits that never uploaded are kept in the Unsynced folder."),
@@ -173,6 +174,8 @@ sealed class MainWindow : Window
         server.IsEnabled = deviceName.IsEnabled = !linking;
         linkButton.Content = linking ? "Waiting for approval in your browser…" : "Link";
         linkButton.IsEnabled = !linking && server.Text.Trim() != "";
+        // An empty list is one that did not load: applying it would remove every workspace.
+        apply.IsEnabled = choices.Children.Count > 0;
 
         linked.Visibility = Show(isLinked);
         tray.ToolTipText = isLinked ? "KyDrive: " + s!.State : "KyDrive: not linked";

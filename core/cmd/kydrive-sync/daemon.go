@@ -38,6 +38,7 @@ type daemon struct {
 	http            *http.Client
 	open            func(url string) error
 
+	lock *os.File   // held for the daemon's life: one core per state directory
 	work sync.Mutex // one engine operation at a time
 	mu   sync.Mutex // guards the fields below
 	token,
@@ -73,8 +74,16 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	return d, nil
 }
 
-// listen opens the socket in an owner-only directory, refusing to replace a live core.
+var errRunning = errors.New("another kydrive-sync is already running")
+
+// listen opens the socket in an owner-only directory, refusing to replace a live core. The
+// state lock comes first: two cores started together can both find no socket.
 func (d *daemon) listen() (net.Listener, error) {
+	lock, err := lockState(filepath.Join(d.dir, "lock"))
+	if err != nil {
+		return nil, err
+	}
+	d.lock = lock
 	dir := filepath.Dir(d.sock)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -84,7 +93,7 @@ func (d *daemon) listen() (net.Listener, error) {
 	}
 	if c, err := net.DialTimeout("unix", d.sock, time.Second); err == nil {
 		c.Close()
-		return nil, errors.New("another kydrive-sync is already running")
+		return nil, errRunning
 	}
 	os.Remove(d.sock)
 	ln, err := net.Listen("unix", d.sock)
@@ -186,6 +195,12 @@ func netPrint() string {
 }
 
 func (d *daemon) pass(ctx context.Context, local bool) {
+	d.work.Lock()
+	defer d.work.Unlock()
+	// A wipe the server asked for continues even after the credential is gone.
+	if err := d.engine().ResumeWipe(); err != nil {
+		log.Printf("wipe: %v", err)
+	}
 	d.mu.Lock()
 	if d.token == "" || d.db.Get("paused") != "" || d.state == "revoked" || d.state == "signed_out" {
 		d.mu.Unlock()
@@ -194,7 +209,6 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	d.state = "syncing"
 	d.mu.Unlock()
 
-	d.work.Lock()
 	e := d.engine()
 	var err error
 	if local {
@@ -202,7 +216,6 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	} else {
 		err = e.Poll(ctx)
 	}
-	d.work.Unlock()
 	if e.Unsettled {
 		time.AfterFunc(settle+time.Second, func() { d.trigger(true) })
 	}

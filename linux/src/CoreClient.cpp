@@ -119,6 +119,9 @@ void CoreClient::refresh()
     call(QStringLiteral("Status"), {}, [this](const QJsonValue& result, const QString& error) {
         if (!error.isEmpty())
             return setError(error);
+        // The core answers again: a lost-connection error no longer holds.
+        if (m_error == tr("KyDrive sync stopped") || m_error == tr("KyDrive sync is not running"))
+            setError(QString());
         m_status = result.toObject().toVariantMap();
         emit statusChanged();
     });
