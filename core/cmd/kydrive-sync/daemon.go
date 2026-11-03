@@ -194,6 +194,13 @@ func netPrint() string {
 }
 
 func (d *daemon) pass(ctx context.Context, local bool) {
+	// Registered before the work lock, so a request that interrupts while this pass waits for
+	// the lock, or has only just taken it, still stops it.
+	pctx, stop := context.WithCancel(ctx)
+	d.mu.Lock()
+	d.stop = stop
+	d.mu.Unlock()
+	defer func() { stop(); d.mu.Lock(); d.stop = nil; d.mu.Unlock() }()
 	d.work.Lock()
 	defer d.work.Unlock()
 	// A wipe the server asked for continues even after the credential is gone.
@@ -206,9 +213,6 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		return
 	}
 	d.state = "syncing"
-	pctx, stop := context.WithCancel(ctx)
-	defer stop()
-	d.stop = stop
 	d.mu.Unlock()
 
 	e := d.engine()
@@ -224,7 +228,6 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.stop = nil
 	switch {
 	case errors.Is(err, engine.ErrRevoked):
 		d.state, d.lastErr = "revoked", err.Error()

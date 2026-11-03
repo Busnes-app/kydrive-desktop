@@ -350,6 +350,7 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	}
 	fi, err := os.Lstat(p)
 	if err == nil {
+		id := inode(p, fi)
 		switch {
 		case fi.IsDir():
 			return e.skip(w, fileItem(w, f, rel), "a local folder has this name")
@@ -361,8 +362,8 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 			return e.keep(it)
 		case old != nil && !e.changed(*old, p, fi):
 		case sameContent(p, f.Digest):
-			// fi was read before hashing: a write during the hash shows as a change later.
-			return e.record(w, f, rel, p, fi)
+			// fi and the file ID were read before hashing: a change during the hash shows later.
+			return e.record(w, f, rel, fi, id)
 		default:
 			// A local edit the server has not seen meets a server version this computer
 			// has not seen: keep both.
@@ -378,10 +379,10 @@ func fileItem(w Workspace, f api.File, rel string) Item {
 	return Item{ID: f.ID, Workspace: w.ID, Kind: "file", Parent: f.Parent, Name: f.Name, Revision: f.Revision, Digest: f.Digest, Size: f.Size, Mtime: f.Mtime, Path: rel, State: "synced"}
 }
 
-// record stores f as synced with the local file at p, as fi found it, as its copy.
-func (e *Engine) record(w Workspace, f api.File, rel, p string, fi fs.FileInfo) error {
+// record stores f as synced with the local file, as fi and its file ID found it, as its copy.
+func (e *Engine) record(w Workspace, f api.File, rel string, fi fs.FileInfo, id uint64) error {
 	it := fileItem(w, f, rel)
-	it.LocalSize, it.LocalMtime, it.LocalInode = fi.Size(), fi.ModTime().UnixNano(), inode(p, fi)
+	it.LocalSize, it.LocalMtime, it.LocalInode = fi.Size(), fi.ModTime().UnixNano(), id
 	return e.keep(it)
 }
 
@@ -457,9 +458,7 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if err := os.Rename(tmp.Name(), p); err != nil {
 		return err
 	}
-	it := fileItem(w, f, rel)
-	it.LocalSize, it.LocalMtime, it.LocalInode = tfi.Size(), tfi.ModTime().UnixNano(), id
-	return e.keep(it)
+	return e.record(w, f, rel, tfi, id)
 }
 
 // remove applies a server-side removal: synced copies go, unuploaded edits move to Unsynced/.

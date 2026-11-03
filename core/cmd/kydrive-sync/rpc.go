@@ -106,6 +106,13 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	if err != nil {
 		return err
 	}
+	// A new link drops the old bindings, which an unfinished wipe still needs.
+	d.work.Lock()
+	err = d.engine().ResumeWipe()
+	d.work.Unlock()
+	if err != nil {
+		return errors.New("files from this computer's revoked link are not all removed yet; close any app using them and try again: " + err.Error())
+	}
 	d.mu.Lock()
 	if d.token != "" || d.linking {
 		d.mu.Unlock()

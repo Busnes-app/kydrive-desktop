@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kydrive-desktop/core/engine"
 	"github.com/zalando/go-keyring"
 )
 
@@ -287,5 +288,37 @@ func TestChooseInterruptsARunningPass(t *testing.T) {
 	var st Status
 	if err := ctl("Status", struct{}{}, &st); err != nil || st.State == "error" {
 		t.Fatalf("an interrupted pass reads as a failure: %+v, %v", st, err)
+	}
+}
+
+// A link must not start while a wipe the server asked for is unfinished: it would drop the
+// bindings the wipe still needs.
+func TestLinkWaitsForAPendingWipe(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permission bits do not stop this user")
+	}
+	srv := server(t)
+	d, ctl := start(t, srv)
+	ro := filepath.Join(d.root, "Old", "ro")
+	if err := os.MkdirAll(ro, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ro, "kept.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(ro, 0o555)
+	defer os.Chmod(ro, 0o755)
+	d.db.PutWorkspace(engine.Workspace{ID: "old", Name: "Old", Dir: "Old", Cursor: 5})
+	d.db.Set("wipe", "1")
+	var out struct{}
+	if err := ctl("Link", map[string]string{"Server": srv.URL}, &out); err == nil || !strings.Contains(err.Error(), "not all removed") {
+		t.Fatalf("linked over an unfinished wipe: %v", err)
+	}
+	os.Chmod(ro, 0o755)
+	if err := ctl("Link", map[string]string{"Server": srv.URL}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(d.root, "Old")); !os.IsNotExist(err) {
+		t.Fatalf("the wipe did not finish before the link: %v", err)
 	}
 }

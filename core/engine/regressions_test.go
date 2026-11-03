@@ -280,4 +280,26 @@ func TestPartialEvictDoesNotTrash(t *testing.T) {
 	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"a/x.txt", "z.txt"}) {
 		t.Fatalf("server paths %v; an evicted copy was trashed", got)
 	}
+	if v.read("z.txt") != "z" {
+		t.Fatal("the still-chosen workspace did not get its removed file back")
+	}
+}
+
+// Confirmed deletes of a missing workspace folder pull first, so a file another device just
+// added to a folder about to be trashed survives.
+func TestConfirmedFolderDeleteKeepsUnseenRemoteFile(t *testing.T) {
+	v := setup(t, map[string]string{"a/old.txt": "old", "b.txt": "b"})
+	os.RemoveAll(v.path(""))
+	v.sync() // held
+	v.r.Put(t, v.ws, "a/new.txt", []byte("new"))
+	if err := v.e.ConfirmDeletes(v.ws, true); err != nil {
+		t.Fatal(err)
+	}
+	v.sync()
+	if b, ok := v.r.Read(t, v.ws, "a/new.txt"); !ok || string(b) != "new" {
+		t.Fatalf("a file the user never saw was trashed: %q, %v", b, ok)
+	}
+	if _, ok := v.r.Read(t, v.ws, "b.txt"); ok {
+		t.Fatal("the confirmed delete did not happen")
+	}
 }

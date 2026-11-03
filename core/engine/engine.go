@@ -192,8 +192,10 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		if w.Deletes > 0 && !w.AllowDeletes {
 			continue
 		}
-		if w.Cursor >= 0 && list[i].Role != "reader" && !exists(e.dir(w)) {
-			// A pull would recreate the folder and the push then trash what is missing from it.
+		if w.Cursor >= 0 && !w.AllowDeletes && list[i].Role != "reader" && !exists(e.dir(w)) {
+			// A pull would recreate the folder and the push then trash what is missing from it,
+			// so the guard is armed first. Confirmed deletes still pull first: the server may
+			// have new files in the folders about to be trashed.
 			if !local {
 				continue
 			}
@@ -336,6 +338,11 @@ func (e *Engine) evict(w Workspace, rel string) error {
 		return nil
 	})
 	if err = errors.Join(err, failed); err != nil {
+		if rel == "" {
+			// The workspace stays chosen; a fresh snapshot restores what this evict removed.
+			w.Cursor = -1
+			err = errors.Join(err, e.DB.PutWorkspace(w))
+		}
 		return err
 	}
 	for _, d := range slices.Backward(dirs) {
