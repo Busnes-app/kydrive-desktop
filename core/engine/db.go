@@ -186,14 +186,22 @@ func (d *DB) MoveTree(workspace, from, to string) error {
 	return err
 }
 
-// AddRetry remembers a download that failed, so the next pull tries it again.
-func (d *DB) AddRetry(workspace string, f api.File) error {
+// AddRetry remembers a download that failed, so the next pull tries it again. fresh is false
+// when the file was already waiting, so a repeated failure need not be announced again.
+func (d *DB) AddRetry(workspace string, f api.File) (fresh bool, err error) {
 	b, err := json.Marshal(f)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = d.db.Exec(`INSERT OR REPLACE INTO retries(id,workspace,file) VALUES(?,?,?)`, f.ID, workspace, string(b))
-	return err
+	res, err := d.db.Exec(`UPDATE retries SET workspace=?, file=? WHERE id=?`, workspace, string(b), f.ID)
+	if err != nil {
+		return false, err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return false, err
+	}
+	_, err = d.db.Exec(`INSERT INTO retries(id,workspace,file) VALUES(?,?,?)`, f.ID, workspace, string(b))
+	return err == nil, err
 }
 
 func (d *DB) DropRetry(id string) error {

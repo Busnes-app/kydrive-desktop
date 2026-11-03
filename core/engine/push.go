@@ -98,7 +98,7 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		case n.dir():
 		case it != nil && it.Kind != "file":
 		case it != nil && !e.changed(*it, n.p, n.fi):
-		case time.Since(n.fi.ModTime()) < e.Settle:
+		case unsettled(n.fi.ModTime(), e.Settle):
 			e.Unsettled = true
 		default:
 			err = e.upload(ctx, w, n, it)
@@ -108,6 +108,13 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		}
 	}
 	return e.deletes(ctx, w, entries, false)
+}
+
+// unsettled reports a file written within settle. A future mtime (an archive from another
+// time zone, a skewed clock) says nothing about writing, so it never waits.
+func unsettled(mtime time.Time, settle time.Duration) bool {
+	age := time.Since(mtime)
+	return age >= 0 && age < settle
 }
 
 // itemErr keeps one item's failure from stopping the pass, unless the credentials or the
@@ -303,7 +310,12 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		}
 	}
 	if count == 0 {
-		return nil
+		if w.Deletes == 0 && !w.AllowDeletes {
+			return nil
+		}
+		// What was held came back: the guard applies afresh to the next deletes.
+		w.Deletes, w.AllowDeletes = 0, false
+		return e.DB.PutWorkspace(w)
 	}
 	if !w.AllowDeletes && (folderGone || (count > 20 && count*2 > total)) {
 		if w.Deletes != count {

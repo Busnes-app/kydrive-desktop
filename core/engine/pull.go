@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -29,7 +30,7 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 		return err
 	}
 	for _, f := range retries {
-		if err := e.upsertFile(ctx, w, f); err != nil && !errors.Is(err, errSnapshot) {
+		if err := e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f)); err != nil && !errors.Is(err, errSnapshot) {
 			return err
 		}
 	}
@@ -90,9 +91,23 @@ func (e *Engine) apply(ctx context.Context, w Workspace, c api.Change) error {
 		}
 		return e.upsertFolder(w, *c.Folder)
 	case c.File != nil:
-		return e.upsertFile(ctx, w, *c.File)
+		return e.retryLater(ctx, w, *c.File, e.upsertFile(ctx, w, *c.File))
 	}
 	return nil
+}
+
+// retryLater keeps one file's local failure (a file open elsewhere, no permission, a name the
+// file system refuses) from stopping the pass: the file waits in retries for the next pull.
+// Server, network and cancellation errors still end the pass.
+func (e *Engine) retryLater(ctx context.Context, w Workspace, f api.File, err error) error {
+	if err == nil || errors.Is(err, errSnapshot) || ctx.Err() != nil || api.Status(err) != 0 || errors.As(err, new(*url.Error)) {
+		return err
+	}
+	fresh, aerr := e.DB.AddRetry(w.ID, f)
+	if fresh {
+		e.warn("Could not sync %s: %v", f.Name, err)
+	}
+	return aerr
 }
 
 func cmpErr(err, otherwise error) error {
@@ -148,7 +163,7 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		if !seen[f.Parent] {
 			continue
 		}
-		if err := e.upsertFile(ctx, w, f); err != nil && !errors.Is(err, errSnapshot) {
+		if err := e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f)); err != nil && !errors.Is(err, errSnapshot) {
 			return err
 		}
 		seen[f.ID] = true
@@ -255,7 +270,6 @@ func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
 	sfi, serr := os.Lstat(src)
 	// A case-only rename on a case-insensitive file system finds src at dst.
 	if dfi, err := os.Lstat(dst); err == nil && (serr != nil || !os.SameFile(sfi, dfi)) {
-		e.warn("Could not move %s to %s: something is already there", from, to)
 		return false, nil
 	}
 	if serr == nil {
@@ -284,6 +298,9 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 	}
 	if old != nil && old.State != "skipped" && old.Path != rel {
 		if ok, err := e.relocate(w, old.Path, rel); !ok || err != nil {
+			if err == nil {
+				e.warn("Could not move %s to %s: something is already there", old.Path, rel)
+			}
 			return err
 		}
 	}
@@ -318,8 +335,12 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 		old = nil
 	}
 	if old != nil && old.Path != rel {
-		if ok, err := e.relocate(w, old.Path, rel); !ok || err != nil {
-			return err
+		ok, err := e.relocate(w, old.Path, rel)
+		if err == nil && !ok {
+			err = fmt.Errorf("could not move it from %s: something is already there", old.Path)
+		}
+		if err != nil {
+			return err // retried on the next pull
 		}
 		old.Path = rel
 	}
@@ -332,14 +353,16 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 		switch {
 		case fi.IsDir():
 			return e.skip(w, fileItem(w, f, rel), "a local folder has this name")
+		case old != nil && old.State == "synced" && old.Revision == f.Revision && old.Digest == f.Digest:
+			// The server has nothing newer (often this computer's own upload coming back); a
+			// local change since is a pending upload, not a conflict.
+			it := fileItem(w, f, rel)
+			it.LocalSize, it.LocalMtime, it.LocalInode = old.LocalSize, old.LocalMtime, old.LocalInode
+			return e.keep(it)
 		case old != nil && !e.changed(*old, p, fi):
-			if old.Revision == f.Revision && old.Digest == f.Digest {
-				it := fileItem(w, f, rel)
-				it.LocalSize, it.LocalMtime, it.LocalInode = old.LocalSize, old.LocalMtime, old.LocalInode
-				return e.DB.PutItem(it)
-			}
 		case sameContent(p, f.Digest):
-			return e.record(w, f, rel, p)
+			// fi was read before hashing: a write during the hash shows as a change later.
+			return e.record(w, f, rel, p, fi)
 		default:
 			// A local edit the server has not seen meets a server version this computer
 			// has not seen: keep both.
@@ -355,14 +378,18 @@ func fileItem(w Workspace, f api.File, rel string) Item {
 	return Item{ID: f.ID, Workspace: w.ID, Kind: "file", Parent: f.Parent, Name: f.Name, Revision: f.Revision, Digest: f.Digest, Size: f.Size, Mtime: f.Mtime, Path: rel, State: "synced"}
 }
 
-// record stores f as synced with the local file at p as its copy.
-func (e *Engine) record(w Workspace, f api.File, rel, p string) error {
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return err
-	}
+// record stores f as synced with the local file at p, as fi found it, as its copy.
+func (e *Engine) record(w Workspace, f api.File, rel, p string, fi fs.FileInfo) error {
 	it := fileItem(w, f, rel)
 	it.LocalSize, it.LocalMtime, it.LocalInode = fi.Size(), fi.ModTime().UnixNano(), inode(p, fi)
+	return e.keep(it)
+}
+
+// keep stores a file item that needs no download, ending any retry of it.
+func (e *Engine) keep(it Item) error {
+	if err := e.DB.DropRetry(it.ID); err != nil {
+		return err
+	}
 	return e.DB.PutItem(it)
 }
 
@@ -392,9 +419,15 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if s := api.Status(err); s == 403 || s == 404 {
 		return e.DB.DropRetry(f.ID) // gone; the feed says so next
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
-		e.warn("Download of %s failed: %v", rel, err)
-		return e.DB.AddRetry(w.ID, f)
+		fresh, aerr := e.DB.AddRetry(w.ID, f)
+		if fresh {
+			e.warn("Download of %s failed: %v", rel, err)
+		}
+		return aerr
 	}
 	mtime, err := time.Parse(time.RFC3339, f.Mtime)
 	if err != nil {
@@ -403,13 +436,20 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if err := os.Chtimes(tmp.Name(), mtime, mtime); err != nil {
 		return err
 	}
+	// The verified copy as it is now; the rename below keeps its size, mtime and file ID.
+	tfi, err := os.Lstat(tmp.Name())
+	if err != nil {
+		return err
+	}
+	id := inode(tmp.Name(), tfi)
 	if fi, err := os.Lstat(p); err == nil {
 		old, err := e.DB.Item(f.ID)
 		if err != nil {
 			return err
 		}
 		if old == nil || old.Path != rel || e.changed(*old, p, fi) {
-			return e.DB.AddRetry(w.ID, f) // changed meanwhile; the next pass decides again
+			_, err := e.DB.AddRetry(w.ID, f) // changed meanwhile; the next pass decides again
+			return err
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -417,10 +457,9 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if err := os.Rename(tmp.Name(), p); err != nil {
 		return err
 	}
-	if err := e.DB.DropRetry(f.ID); err != nil {
-		return err
-	}
-	return e.record(w, f, rel, p)
+	it := fileItem(w, f, rel)
+	it.LocalSize, it.LocalMtime, it.LocalInode = tfi.Size(), tfi.ModTime().UnixNano(), id
+	return e.keep(it)
 }
 
 // remove applies a server-side removal: synced copies go, unuploaded edits move to Unsynced/.
