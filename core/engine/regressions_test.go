@@ -314,6 +314,13 @@ func TestBlockedFolderRenameDoesNotStopPull(t *testing.T) {
 	if v.read("z.txt") != "2" {
 		t.Fatal("a folder that could not move stopped the pass")
 	}
+	os.Chmod(v.path("ro"), 0o755)
+	if err := v.e.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if v.exists("ro/sub") || v.read("ro/sub2/a.txt") != "a" {
+		t.Fatalf("the refused folder move was not retried: %v", tree(t, v.path("")))
+	}
 }
 
 // Choose finishes even when the sync root cannot be searched.

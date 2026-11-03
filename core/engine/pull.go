@@ -30,7 +30,16 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 		return err
 	}
 	for _, f := range retries {
-		if err := e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f)); err != nil && !errors.Is(err, errSnapshot) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var err error
+		if it, _ := e.DB.Item(f.ID); it != nil && it.Kind == "folder" {
+			err = e.upsertFolder(w, api.Folder{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
+		} else {
+			err = e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f))
+		}
+		if err != nil && !errors.Is(err, errSnapshot) {
 			return err
 		}
 	}
@@ -144,6 +153,9 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 	for len(folders) > 0 {
 		var later []api.Folder
 		for _, f := range folders {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !seen[f.Parent] {
 				later = append(later, f)
 				continue
@@ -160,6 +172,9 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 	}
 	slices.SortFunc(files, func(a, b api.File) int { return strings.Compare(a.Name, b.Name) })
 	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !seen[f.Parent] {
 			continue
 		}
@@ -184,6 +199,9 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		return err
 	}
 	for _, it := range items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if seen[it.ID] {
 			continue
 		}
@@ -300,9 +318,12 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 		ok, err := e.relocate(w, old.Path, rel)
 		if !ok {
 			// Refused locally (occupied, a file open inside, no permission): the folder stays
-			// where it is and the next snapshot tries again. It must not stop the pass.
-			e.warn("Could not move %s to %s: %v", old.Path, rel, cmpErr(err, errors.New("something is already there")))
-			return nil
+			// where it is and waits in retries, like a file. It must not stop the pass.
+			fresh, aerr := e.DB.AddRetry(w.ID, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
+			if fresh {
+				e.warn("Could not move %s to %s: %v", old.Path, rel, cmpErr(err, errors.New("something is already there")))
+			}
+			return aerr
 		}
 		if err != nil {
 			return err
@@ -320,7 +341,7 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 		return err
 	}
 	it.LocalInode = inode(p, fi)
-	return e.DB.PutItem(it)
+	return e.keep(it)
 }
 
 func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error {
@@ -390,7 +411,7 @@ func (e *Engine) record(w Workspace, f api.File, rel string, fi fs.FileInfo, id 
 	return e.keep(it)
 }
 
-// keep stores a file item that needs no download, ending any retry of it.
+// keep stores an item that needs no download or move, ending any retry of it.
 func (e *Engine) keep(it Item) error {
 	if err := e.DB.DropRetry(it.ID); err != nil {
 		return err
