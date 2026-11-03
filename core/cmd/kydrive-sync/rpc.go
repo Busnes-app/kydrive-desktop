@@ -154,6 +154,7 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 // files stay unless RemoveFiles, which still keeps unuploaded edits in Unsynced/.
 func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	d := c.d
+	d.interrupt()
 	d.work.Lock()
 	defer d.work.Unlock()
 	if e := d.engine(); e.API.Token != "" {
@@ -208,6 +209,7 @@ func (c *Core) Workspaces(_ struct{}, out *[]Choice) error {
 // keeping unuploaded edits in Unsynced/.
 func (c *Core) Choose(in struct{ IDs []string }, _ *struct{}) error {
 	d := c.d
+	d.interrupt()
 	d.work.Lock()
 	err := d.engine().Choose(c.ctx, in.IDs)
 	d.work.Unlock()
@@ -223,7 +225,9 @@ func (c *Core) Pause(in struct{ Paused bool }, _ *struct{}) error {
 	if err := c.d.db.Set("paused", v); err != nil {
 		return err
 	}
-	if !in.Paused {
+	if in.Paused {
+		c.d.interrupt()
+	} else {
 		c.d.trigger(true)
 	}
 	return nil
@@ -248,6 +252,7 @@ func (c *Core) ConfirmDeletes(in struct {
 	Allow     bool
 }, _ *struct{}) error {
 	d := c.d
+	d.interrupt()
 	d.work.Lock()
 	err := d.engine().ConfirmDeletes(in.Workspace, in.Allow)
 	d.work.Unlock()

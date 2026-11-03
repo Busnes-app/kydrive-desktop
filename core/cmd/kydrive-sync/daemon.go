@@ -38,8 +38,10 @@ type daemon struct {
 	http            *http.Client
 	open            func(url string) error
 
-	work sync.Mutex // one engine operation at a time
-	mu   sync.Mutex // guards the fields below
+	lock *os.File           // held for the daemon's life: one core per state directory
+	work sync.Mutex         // one engine operation at a time
+	mu   sync.Mutex         // guards the fields below
+	stop context.CancelFunc // interrupts the running pass
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -73,8 +75,14 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	return d, nil
 }
 
-// listen opens the socket in an owner-only directory, refusing to replace a live core.
+// listen opens the socket in an owner-only directory, refusing to replace a live core. The
+// state lock comes first: two cores started together can both find no socket.
 func (d *daemon) listen() (net.Listener, error) {
+	lock, err := lockState(filepath.Join(d.dir, "lock"))
+	if err != nil {
+		return nil, errors.New("another kydrive-sync is already running")
+	}
+	d.lock = lock
 	dir := filepath.Dir(d.sock)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -186,40 +194,59 @@ func netPrint() string {
 }
 
 func (d *daemon) pass(ctx context.Context, local bool) {
+	d.work.Lock()
+	defer d.work.Unlock()
+	// A wipe the server asked for continues even after the credential is gone.
+	if err := d.engine().ResumeWipe(); err != nil {
+		log.Printf("wipe: %v", err)
+	}
 	d.mu.Lock()
 	if d.token == "" || d.db.Get("paused") != "" || d.state == "revoked" || d.state == "signed_out" {
 		d.mu.Unlock()
 		return
 	}
 	d.state = "syncing"
+	pctx, stop := context.WithCancel(ctx)
+	defer stop()
+	d.stop = stop
 	d.mu.Unlock()
 
-	d.work.Lock()
 	e := d.engine()
 	var err error
 	if local {
-		err = e.Sync(ctx)
+		err = e.Sync(pctx)
 	} else {
-		err = e.Poll(ctx)
+		err = e.Poll(pctx)
 	}
-	d.work.Unlock()
 	if e.Unsettled {
 		time.AfterFunc(settle+time.Second, func() { d.trigger(true) })
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.stop = nil
 	switch {
 	case errors.Is(err, engine.ErrRevoked):
 		d.state, d.lastErr = "revoked", err.Error()
 		d.forget()
 	case errors.Is(err, engine.ErrSignedOut):
 		d.state, d.lastErr = "signed_out", err.Error()
+	case pctx.Err() != nil && ctx.Err() == nil:
+		d.state = "idle" // a user request interrupted the pass; the next one resumes
 	case err != nil:
 		d.state, d.lastErr = "error", err.Error()
 		log.Printf("sync: %v", err)
 	default:
 		d.state, d.lastErr, d.lastSync = "idle", "", time.Now().Unix()
+	}
+}
+
+// interrupt cancels the running pass, if any, so a user's request need not wait for it.
+func (d *daemon) interrupt() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stop != nil {
+		d.stop()
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -47,7 +48,7 @@ func start(t *testing.T, srv *httptest.Server) (*daemon, func(method string, par
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go d.serve(ctx, ln)
-	t.Cleanup(func() { cancel(); ln.Close(); d.db.Close() })
+	t.Cleanup(func() { cancel(); ln.Close(); d.db.Close(); d.lock.Close() })
 	return d, func(method string, params, out any) error {
 		b, _ := json.Marshal(params)
 		var raw json.RawMessage
@@ -216,5 +217,75 @@ func TestPlatformAndDeviceName(t *testing.T) {
 		if got := deviceName(in); got != want {
 			t.Errorf("deviceName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Two cores started together must not both run on one state directory, even when they
+// reach the socket by different paths or both find it missing.
+func TestSecondDaemonOnSameStateRefused(t *testing.T) {
+	d, _ := start(t, server(t))
+	run, err := os.MkdirTemp("", "kyd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(run)
+	other, err := newDaemon(d.dir, d.root, filepath.Join(run, "sync.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.db.Close()
+	if ln, err := other.listen(); err == nil {
+		ln.Close()
+		t.Fatal("a second daemon started on the same state")
+	}
+}
+
+// Choose (and Unlink) must not wait for a pass stuck in a long transfer.
+func TestChooseInterruptsARunningPass(t *testing.T) {
+	inner := server(t)
+	stuck := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/snapshot") {
+			stuck <- struct{}{}
+			<-r.Context().Done()
+			return
+		}
+		u, _ := url.Parse(inner.URL)
+		r.URL.Scheme, r.URL.Host, r.RequestURI = u.Scheme, u.Host, ""
+		res, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		defer res.Body.Close()
+		w.WriteHeader(res.StatusCode)
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(srv.Close)
+	d, ctl := start(t, srv)
+	var out struct{}
+	if err := ctl("Link", map[string]string{"Server": srv.URL}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl("Choose", map[string][]string{"IDs": {"w1"}}, &out); err != nil {
+		t.Fatal(err)
+	}
+	passDone := make(chan struct{})
+	go func() { defer close(passDone); d.pass(context.Background(), true) }()
+	<-stuck
+	done := make(chan error, 1)
+	go func() { done <- ctl("Choose", map[string][]string{"IDs": {}}, &out) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Choose waited for the running pass")
+	}
+	<-passDone
+	var st Status
+	if err := ctl("Status", struct{}{}, &st); err != nil || st.State == "error" {
+		t.Fatalf("an interrupted pass reads as a failure: %+v, %v", st, err)
 	}
 }
