@@ -24,9 +24,22 @@ public class RunKeyTests
             Assert.False(key.Enabled);
             key.Set(true);
             Assert.True(key.Enabled);
-            // Another copy of KyDrive registered elsewhere is not this one.
-            Assert.False(new RunKey(@"D:\old\KyDrive.exe", root + @"\Run", root + @"\Approved").Enabled);
+            // Another copy of KyDrive registered elsewhere is not this one until it adopts the value
+            // (a release unzipped to a new folder), keeping Task Manager's switch.
+            var moved = new RunKey(@"D:\new\KyDrive.exe", root + @"\Run", root + @"\Approved");
+            Assert.False(moved.Enabled);
+            using (var approved = Registry.CurrentUser.CreateSubKey(root + @"\Approved"))
+                approved.SetValue("KyDrive", new byte[] { 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, RegistryValueKind.Binary);
+            moved.Adopt();
+            Assert.False(moved.Enabled);
+            using (var run = Registry.CurrentUser.OpenSubKey(root + @"\Run"))
+                Assert.Equal("\"D:\\new\\KyDrive.exe\"", run!.GetValue("KyDrive"));
+            moved.Set(true);
+            Assert.True(moved.Enabled);
+            key.Adopt();
+            Assert.True(key.Enabled);
             key.Set(false);
+            key.Adopt();
             Assert.False(key.Enabled);
         }
         finally

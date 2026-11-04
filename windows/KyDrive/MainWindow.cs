@@ -27,6 +27,7 @@ sealed class MainWindow : Window
     bool busy, linking, shown, wasLinked, quitting;
     DateTime started; // when this app last started the core
     DateTime quitAsked; // when an older core was last asked to quit
+    string? quitVersion; // an older core that quit; if it answers again, it is the one on disk
 
     readonly InfoBar errorBar = new() { Severity = InfoBarSeverity.Error, IsClosable = false };
     readonly StackPanel linkForm = new() { Spacing = 12 };
@@ -149,12 +150,16 @@ sealed class MainWindow : Window
             coreError = "";
             // An older core (from before an upgrade) is asked to quit, at most once a minute; it
             // refuses while it syncs. The next poll finds none and starts this build's core.
-            if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!) && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(1))
+            // One that comes back after quitting (the old kydrive-sync.exe beside this app, or an
+            // older KyDrive still running) is kept, not restarted every minute.
+            if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!) && status.Version != quitVersion
+                && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(1))
             {
                 quitAsked = DateTime.UtcNow;
                 try
                 {
                     await core.Quit();
+                    quitVersion = status.Version;
                     started = DateTime.MinValue;
                 }
                 catch (CoreException)
@@ -340,7 +345,10 @@ sealed class MainWindow : Window
     async Task<bool> StartsAtLogin()
     {
         if (!packaged)
+        {
+            runKey.Adopt();
             return runKey.Enabled;
+        }
         var task = await StartupTask.GetAsync("KyDriveStartup");
         return task.State is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
     }

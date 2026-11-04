@@ -26,6 +26,15 @@ public sealed class RunKey(string exe,
         }
     }
 
+    // A value naming another KyDrive.exe (a release unzipped elsewhere before) is the user's
+    // choice: it now starts this one. Task Manager's switch stays as it is.
+    public void Adopt()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(run, true);
+        if (key?.GetValue(Name) is string v && v.Length > 0 && !string.Equals(v, Command, StringComparison.OrdinalIgnoreCase))
+            key.SetValue(Name, Command);
+    }
+
     public void Set(bool on)
     {
         using (var key = Registry.CurrentUser.CreateSubKey(run))
