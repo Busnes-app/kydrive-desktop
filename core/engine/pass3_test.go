@@ -183,3 +183,26 @@ func TestFileBlockedByAFolderSyncsOnceFreed(t *testing.T) {
 		t.Fatal("the file did not sync once freed")
 	}
 }
+
+// Certification round 2: a file renamed on the server while its download backs off arrives under
+// the new name, even though the snapshot that saw the rename skipped it.
+func TestBackedOffDownloadFollowsARename(t *testing.T) {
+	f := newFake(t)
+	f.corrupt = true
+	v := setupOn(t, f, nil)
+	v.e.Memory = NewMemory()
+	v.r.Put(t, v.ws, "old.bin", []byte("data"))
+	v.sync()
+	v.sync() // the first retry; it now backs off
+	v.r.Rename(t, v.ws, "old.bin", "new.bin")
+	v.r.Put(t, v.ws, "n/x.txt", []byte("x")) // a new folder: a snapshot
+	v.sync()
+	f.mu.Lock()
+	f.corrupt = false
+	f.mu.Unlock()
+	v.e.Memory = NewMemory() // the backoff has passed
+	v.sync()
+	if v.exists("old.bin") || v.read("new.bin") != "data" {
+		t.Fatalf("local tree %v", tree(t, v.path("")))
+	}
+}

@@ -253,6 +253,10 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		seen[f.ID] = true
 		if r, ok := waiting[f.ID]; ok && r.Revision == f.Revision && r.Digest == f.Digest {
 			if !e.Memory.due(f.ID) {
+				// Still backing off; it may have moved since, so the retry takes its new place.
+				if _, err := e.DB.AddRetry(w.ID, f); err != nil {
+					return err
+				}
 				continue
 			}
 			tried = append(tried, f.ID)
