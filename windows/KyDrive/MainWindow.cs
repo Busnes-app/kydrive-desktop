@@ -150,10 +150,11 @@ sealed class MainWindow : Window
         {
             status = await core.Status();
             coreError = "";
+            var quitNow = false;
             // An older core (from before an upgrade) is asked to quit, at most once a minute; it
             // refuses while it syncs. The next poll finds none and starts this build's core.
-            // One that comes back after quitting (the old kydrive-sync.exe beside this app, or an
-            // older KyDrive still running) is kept, not restarted every minute.
+            // One that comes back after quitting (an older KyDrive still running started it again)
+            // is kept, not restarted every minute.
             if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!) && status.Version != quitVersion
                 && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(1))
             {
@@ -162,6 +163,7 @@ sealed class MainWindow : Window
                 {
                     await core.Quit();
                     quitVersion = status.Version;
+                    quitNow = true; // gone; the next poll sees who answers
                     started = DateTime.MinValue;
                 }
                 catch (CoreException)
@@ -184,6 +186,10 @@ sealed class MainWindow : Window
             }
             if (olderRunning && string.IsNullOrEmpty(status.Version))
                 coreError = Upgrade.OlderRunning;
+            // An older core that answers again after quitting was started by an older KyDrive
+            // still running (unzipped elsewhere): only the user can quit that one.
+            if (!quitNow && status.Version == quitVersion && Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!))
+                coreError = $"An older KyDrive ({status.Version}) is still running. Quit it from its tray icon to finish the upgrade.";
             RenderConflicts(await core.Conflicts());
             foreach (var message in warnings.Next(await core.Activity(warnings.After)))
                 Notify(message);
