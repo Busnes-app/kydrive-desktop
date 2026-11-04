@@ -1,5 +1,4 @@
 #include "Appearance.h"
-#include "Autostart.h"
 #include "CoreClient.h"
 
 #include <KDBusService>
@@ -9,7 +8,6 @@
 
 #include <QAction>
 #include <QApplication>
-#include <QFileInfo>
 #include <QIcon>
 #include <QMenu>
 #include <QQmlApplicationEngine>
@@ -39,9 +37,6 @@ int main(int argc, char* argv[])
     QSettings settings;
     Appearance appearance(&settings);
     engine.rootContext()->setContextProperty(QStringLiteral("Appearance"), &appearance);
-    Autostart autostart(Autostart::defaultFile(), QCoreApplication::applicationFilePath(), QFileInfo::exists(QStringLiteral("/.flatpak-info")));
-    engine.rootContext()->setContextProperty(QStringLiteral("Autostart"), &autostart);
-    autostart.refresh();
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;
@@ -76,9 +71,7 @@ int main(int argc, char* argv[])
     QObject::connect(&core, &CoreClient::warning, &tray, [&](const QString& message) {
         tray.showMessage(QStringLiteral("KyDrive"), message, QStringLiteral("dialog-warning"));
     });
-    QObject::connect(&autostart, &Autostart::failed, &tray, [&](const QString& message) {
-        tray.showMessage(QStringLiteral("KyDrive"), message.toHtmlEscaped(), QStringLiteral("dialog-warning"));
-    });
+
     // Launching the app again shows the running one's window.
     QObject::connect(&service, &KDBusService::activateRequested, window, [window] {
         window->show();

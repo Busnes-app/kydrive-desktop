@@ -6,7 +6,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Windows.AppNotifications;
-using Windows.ApplicationModel;
 using Windows.Graphics;
 
 namespace KyDrive;
@@ -38,10 +37,6 @@ sealed class MainWindow : Window
     readonly Button signInButton = new();
     readonly Button cancelSignIn;
     readonly Button signInUnlink;
-    // Start at login: off until the user turns it on. The MSIX has a StartupTask; the zip a Run value.
-    readonly CheckBox startAtLogin = new() { Content = "Start at login" };
-    readonly RunKey runKey = new(Path.Join(AppContext.BaseDirectory, "KyDrive.exe"));
-    readonly bool packaged = Packaged();
     readonly StackPanel linked = new() { Spacing = 12 };
     readonly TextBlock serverText = Plain("");
     readonly TextBlock stateText = Plain("");
@@ -82,9 +77,6 @@ sealed class MainWindow : Window
         signInPanel.Children.Add(Plain("KyDrive no longer accepts this computer's sign-in. Sign in again with the same account to keep syncing your workspaces."));
         signInPanel.Children.Add(Row(signInButton, cancelSignIn, signInUnlink));
 
-        startAtLogin.Click += (_, _) => SetStartAtLogin(startAtLogin.IsChecked == true);
-        Activated += (_, _) => _ = ShowStartAtLogin();
-
         pauseButton.Click += (_, _) => TogglePause();
         var actions = Row(Act("Open folder", OpenFolder), Act("Open in browser", OpenInBrowser), pauseButton, Act("Unlink…", ConfirmUnlink));
         apply = Act("Apply", () => Run(c => c.Choose(Chosen()), reload: true));
@@ -99,7 +91,6 @@ sealed class MainWindow : Window
         page.Children.Add(signInPanel);
         page.Children.Add(linkForm);
         page.Children.Add(linked);
-        page.Children.Add(startAtLogin);
         Content = new ScrollViewer { Content = page };
 
         pauseItem.Command = Command(TogglePause);
@@ -127,7 +118,6 @@ sealed class MainWindow : Window
         poll.Start();
         Render();
         _ = Refresh();
-        _ = ShowStartAtLogin();
     }
 
     // Safe from any thread.
@@ -307,66 +297,6 @@ sealed class MainWindow : Window
         }
         linking = false;
         await Refresh();
-    }
-
-    static bool Packaged()
-    {
-        try
-        {
-            return Package.Current != null;
-        }
-        catch (InvalidOperationException)
-        {
-            return false; // the zip build has no package identity
-        }
-    }
-
-    async Task<bool> StartsAtLogin()
-    {
-        if (!packaged)
-            return runKey.Enabled;
-        var task = await StartupTask.GetAsync("KyDriveStartup");
-        return task.State is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
-    }
-
-    // The checkbox shows the real state, which Task Manager or a policy can change.
-    async Task ShowStartAtLogin()
-    {
-        try
-        {
-            startAtLogin.IsChecked = await StartsAtLogin();
-        }
-        catch (Exception e)
-        {
-            startAtLogin.IsEnabled = false;
-            actionError = "Start at login is not available: " + e.Message;
-            Render();
-        }
-    }
-
-    async void SetStartAtLogin(bool on)
-    {
-        try
-        {
-            actionError = "";
-            if (!packaged)
-                runKey.Set(on);
-            else if (!on)
-                (await StartupTask.GetAsync("KyDriveStartup")).Disable();
-            else
-                actionError = await (await StartupTask.GetAsync("KyDriveStartup")).RequestEnableAsync() switch
-                {
-                    StartupTaskState.DisabledByUser => "Start at login was turned off in Task Manager; turn KyDrive on in Settings > Apps > Startup.",
-                    StartupTaskState.DisabledByPolicy => "Your organisation does not allow KyDrive to start at login.",
-                    _ => "",
-                };
-        }
-        catch (Exception e)
-        {
-            actionError = "Could not change Start at login: " + e.Message;
-        }
-        await ShowStartAtLogin();
-        Render();
     }
 
     void TogglePause() => Run(c => c.Pause(!(status?.Paused ?? false)));

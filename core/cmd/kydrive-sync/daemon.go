@@ -117,14 +117,8 @@ func (d *daemon) serve(ctx context.Context, ln net.Listener) {
 	srv.RegisterName("Core", &Core{d: d, ctx: ctx})
 	for {
 		c, err := ln.Accept()
-		if errors.Is(err, net.ErrClosed) {
-			return
-		}
 		if err != nil {
-			// Out of descriptors, say: the shells must still reach the core once it recovers.
-			log.Printf("accept: %v", err)
-			time.Sleep(time.Second)
-			continue
+			return
 		}
 		go srv.ServeCodec(jsonrpc.NewServerCodec(c))
 	}

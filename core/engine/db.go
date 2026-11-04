@@ -3,7 +3,6 @@ package engine
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/Busnes-app/kydrive-desktop/core/api"
@@ -203,16 +202,6 @@ func (d *DB) AddRetry(workspace string, f api.File) (fresh bool, err error) {
 	}
 	_, err = d.db.Exec(`INSERT INTO retries(id,workspace,file) VALUES(?,?,?)`, f.ID, workspace, string(b))
 	return err == nil, err
-}
-
-// RetryWorkspace names the workspace whose retry holds id, or "".
-func (d *DB) RetryWorkspace(id string) (string, error) {
-	var ws string
-	err := d.db.QueryRow(`SELECT workspace FROM retries WHERE id=?`, id).Scan(&ws)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	return ws, err
 }
 
 func (d *DB) DropRetry(id string) error {

@@ -540,7 +540,7 @@ func osJunk(name string) bool {
 
 func ignored(name string) bool {
 	l := strings.ToLower(name)
-	return l == ".ds_store" || l == "thumbs.db" || l == "desktop.ini" || strings.HasPrefix(name, ".kydrive-") ||
+	return l == ".ds_store" || l == "thumbs.db" || l == "desktop.ini" ||
 		strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".~lock.") || strings.HasSuffix(l, ".tmp")
 }
 

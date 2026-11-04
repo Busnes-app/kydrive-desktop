@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"net"
 	"net/url"
 	"os"
 	"path"
@@ -106,10 +104,6 @@ func rank(c api.Change) int {
 func (e *Engine) apply(ctx context.Context, w Workspace, c api.Change) error {
 	switch {
 	case c.Removed:
-		// A move to another workspace still waiting there removes this copy itself.
-		if ws, err := e.DB.RetryWorkspace(c.ID); err != nil || (ws != "" && ws != w.ID) {
-			return err
-		}
 		if err := e.DB.DropRetry(c.ID); err != nil {
 			return err
 		}
@@ -174,14 +168,6 @@ func (e *Engine) retryLater(ctx context.Context, w Workspace, f api.File, err er
 		e.warn("Could not sync %s: %v", f.Name, err)
 	}
 	return aerr
-}
-
-// networkKey is the Memory key of the announced lost network.
-const networkKey = "\x00network"
-
-// lostNetwork reports a connection that failed or broke off mid-transfer.
-func lostNetwork(err error) bool {
-	return errors.As(err, new(*url.Error)) || errors.As(err, new(*net.OpError)) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func cmpErr(err, otherwise error) error {
@@ -263,11 +249,6 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		}
 		if cur, err := e.DB.Item(it.ID); err != nil || cur == nil {
 			continue // already gone with its folder
-		}
-		if ws, err := e.DB.RetryWorkspace(it.ID); err != nil {
-			return err
-		} else if ws != "" && ws != w.ID {
-			continue // moved to another workspace, whose retry removes this copy
 		}
 		if err := e.removeLater(w, it, e.remove(w, it)); err != nil {
 			return err
@@ -428,18 +409,6 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	if old != nil && old.State == "skipped" {
 		old = nil
 	}
-	if old != nil && old.Workspace != w.ID {
-		// Moved here from another chosen workspace: its copy there goes (edits to Unsynced/),
-		// never a path of that workspace used in this one.
-		if from, err := e.workspace(old.Workspace); err != nil {
-			return err
-		} else if from.ID != "" {
-			if err := e.remove(from, *old); err != nil {
-				return err
-			}
-		}
-		old = nil
-	}
 	if old != nil && old.Path != rel {
 		ok, err := e.relocate(w, old.Path, rel)
 		if err == nil && !ok {
@@ -531,10 +500,8 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		return ctx.Err()
 	}
 	if err != nil {
-		// Every failed download waits in retries and never holds up the rest. A lost
-		// network fails them all in turn, so it is announced once until a download succeeds.
 		fresh, aerr := e.DB.AddRetry(w.ID, f)
-		if fresh && (!lostNetwork(err) || e.Memory.once(networkKey)) {
+		if fresh {
 			e.warn("Download of %s failed: %v", rel, err)
 		}
 		return aerr
@@ -567,7 +534,6 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if err := os.Rename(tmp.Name(), p); err != nil {
 		return err
 	}
-	e.Memory.clear(networkKey)
 	return e.record(w, f, rel, tfi, id)
 }
 

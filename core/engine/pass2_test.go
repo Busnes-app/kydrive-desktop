@@ -162,30 +162,6 @@ func second(t *testing.T, v *env, name string) string {
 	return ws
 }
 
-// O-R2: a file moved to another chosen workspace leaves the first one for good.
-func TestMoveBetweenWorkspaces(t *testing.T) {
-	f := newFake(t)
-	v := setupOn(t, f, map[string]string{"Plan.txt": "plan"})
-	archive := second(t, v, "Archive")
-	f.mu.Lock()
-	it := f.find(v.ws, "Plan.txt")
-	it.ws = archive
-	f.record(v.ws, "file", it.id)
-	f.record(archive, "file", it.id)
-	f.mu.Unlock()
-	v.sync()
-	v.sync()
-	if v.exists("Plan.txt") {
-		t.Fatalf("the moved file came back in Docs: %v", tree(t, v.path("")))
-	}
-	if b, err := os.ReadFile(filepath.Join(v.root, "Archive", "Plan.txt")); err != nil || string(b) != "plan" {
-		t.Fatalf("not in Archive: %q %v", b, err)
-	}
-	if got := v.r.Paths(t, v.ws); len(got) != 0 {
-		t.Fatalf("Docs on the server %v", got)
-	}
-}
-
 // O-R9: a download that keeps failing is not fetched again on every pass.
 func TestFailingDownloadBacksOff(t *testing.T) {
 	f := newFake(t)
@@ -209,41 +185,6 @@ func TestFailingDownloadBacksOff(t *testing.T) {
 	}
 	if n := downloads.Load(); n > 2 {
 		t.Fatalf("downloaded %d times in 4 passes", n)
-	}
-}
-
-// O-R10: a dropped network fails the remaining downloads with one warning, and they arrive
-// once it is back.
-func TestNetworkFailureWarnsOnce(t *testing.T) {
-	v := setup(t, nil)
-	v.e.Memory = NewMemory()
-	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
-		v.r.Put(t, v.ws, n, []byte(n))
-	}
-	target, _ := url.Parse(v.r.URL())
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	var down atomic.Bool
-	down.Store(true)
-	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if down.Load() && strings.HasSuffix(r.URL.Path, "/download") {
-			c, _, _ := w.(http.Hijacker).Hijack()
-			c.Close()
-			return
-		}
-		proxy.ServeHTTP(w, r)
-	}))
-	defer front.Close()
-	v.e.API.Base = front.URL
-	v.sync()
-	a, _ := v.e.DB.Activity(0)
-	if n := len(slices.DeleteFunc(a, func(x Activity) bool { return x.Level != "warn" })); n != 1 {
-		t.Fatalf("%d warnings", n)
-	}
-	down.Store(false)
-	v.e.Memory = NewMemory() // the backoff has passed
-	v.sync()
-	if !v.exists("c.txt") {
-		t.Fatal("the downloads did not arrive once the network was back")
 	}
 }
 
@@ -372,33 +313,8 @@ func TestHeldDeletesStayHeldWhenTheServerGrows(t *testing.T) {
 	}
 }
 
-// Certification round 1: a move to another workspace whose old copy cannot go yet still
-// arrives once it can.
-func TestBlockedMoveBetweenWorkspacesArrives(t *testing.T) {
-	f := newFake(t)
-	v := setupOn(t, f, map[string]string{"ro/Plan.txt": "plan"})
-	archive := second(t, v, "Archive") // synced before Docs
-	f.mu.Lock()
-	it := f.find(v.ws, "ro/Plan.txt")
-	it.ws, it.parent = archive, ""
-	f.record(v.ws, "file", it.id)
-	f.record(archive, "file", it.id)
-	f.mu.Unlock()
-	readOnly(t, v.path("ro"))
-	v.e.Sync(context.Background())
-	os.Chmod(v.path("ro"), 0o755)
-	v.sync()
-	v.sync()
-	if v.exists("ro/Plan.txt") {
-		t.Fatal("the old copy stayed")
-	}
-	if b, err := os.ReadFile(filepath.Join(v.root, "Archive", "Plan.txt")); err != nil || string(b) != "plan" {
-		t.Fatalf("never arrived: %q %v", b, err)
-	}
-}
-
-// Certification rounds 1-2: a file whose body is always cut mid-transfer warns once and
-// never holds up the rest.
+// Certification rounds 1-2: a file whose body is always cut mid-transfer never holds up the
+// rest.
 func TestBodyCutFileDoesNotStopSync(t *testing.T) {
 	v := setup(t, map[string]string{"keep.txt": "v1"})
 	v.e.Memory = NewMemory()
@@ -423,38 +339,5 @@ func TestBodyCutFileDoesNotStopSync(t *testing.T) {
 	v.sync()
 	if v.remote("keep.txt") != "v2" {
 		t.Fatal("a cut download held up the upload")
-	}
-	a, _ := v.e.DB.Activity(0)
-	if n := len(slices.DeleteFunc(a, func(x Activity) bool { return x.Level != "warn" })); n != 1 {
-		t.Fatalf("%d warnings", n)
-	}
-}
-
-// Certification round 2: a source workspace that re-snapshots (410) while the old copy of a
-// moved file cannot go yet does not strand the move.
-func TestBlockedMoveSurvivesASourceSnapshot(t *testing.T) {
-	f := newFake(t)
-	v := setupOn(t, f, map[string]string{"ro/Plan.txt": "plan"})
-	archive := second(t, v, "Archive") // synced before Docs
-	f.mu.Lock()
-	it := f.find(v.ws, "ro/Plan.txt")
-	it.ws, it.parent = archive, ""
-	f.record(v.ws, "file", it.id)
-	f.record(archive, "file", it.id)
-	f.floor = int64(len(f.log)) + 1 // every cursor gets 410: Docs snapshots
-	f.mu.Unlock()
-	readOnly(t, v.path("ro"))
-	v.e.Sync(context.Background())
-	f.mu.Lock()
-	f.floor = 0
-	f.mu.Unlock()
-	os.Chmod(v.path("ro"), 0o755)
-	v.sync()
-	v.sync()
-	if v.exists("ro/Plan.txt") {
-		t.Fatal("the old copy stayed")
-	}
-	if b, err := os.ReadFile(filepath.Join(v.root, "Archive", "Plan.txt")); err != nil || string(b) != "plan" {
-		t.Fatalf("never arrived: %q %v", b, err)
 	}
 }
