@@ -225,7 +225,7 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		if list[i].Role == "reader" {
 			// A reader sends nothing; its local edits are listed so they are not lost unseen.
 			if err := e.readerEdits(w); err != nil {
-				return err
+				failed = errors.Join(failed, fmt.Errorf("%s: %w", w.Name, err))
 			}
 			continue
 		}
@@ -341,7 +341,7 @@ func (e *Engine) ResumeWipe() error {
 	if err := e.Wipe(); err != nil {
 		return err
 	}
-	e.warn("This computer was revoked. Synced files were removed; unuploaded edits are in %s", Unsynced)
+	e.warn("This computer's synced files were removed; unuploaded edits are in %s", Unsynced)
 	return e.DB.Set(wipeKey, "")
 }
 
@@ -411,7 +411,8 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 	if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && !e.changed(*it, p, fi) {
 		// Moved aside first, the copy deleted is the one checked: an editor's save landing at
 		// p after the check is never deleted.
-		aside := filepath.Join(filepath.Dir(p), fmt.Sprintf(".kydrive-%d.tmp", time.Now().UnixNano()))
+		// Not a .tmp name: one left by a crash is kept like any unsynced file, never discarded.
+		aside := filepath.Join(filepath.Dir(p), fmt.Sprintf(".kydrive-aside-%d", time.Now().UnixNano()))
 		if err := os.Rename(p, aside); err != nil {
 			return err
 		}

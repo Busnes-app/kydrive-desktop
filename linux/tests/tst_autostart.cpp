@@ -29,6 +29,21 @@ private slots:
         QVERIFY(!QFile::exists(file));
     }
 
+    // An entry the desktop switched off reads as off, and turning it on rewrites it.
+    void disabledEntryIsOff()
+    {
+        QTemporaryDir dir;
+        const QString file = dir.filePath(QStringLiteral("com.kysecurity.drive.desktop"));
+        QFile f(file);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("[Desktop Entry]\nType=Application\nExec=kydrive-desktop\nHidden=true\n");
+        f.close();
+        Autostart a(file, QStringLiteral("kydrive-desktop"), false);
+        QVERIFY(!a.enabled());
+        a.setEnabled(true);
+        QVERIFY(a.enabled());
+    }
+
     void failureIsReported()
     {
         QTemporaryDir dir;

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -103,6 +105,10 @@ func rank(c api.Change) int {
 func (e *Engine) apply(ctx context.Context, w Workspace, c api.Change) error {
 	switch {
 	case c.Removed:
+		// A move to another workspace still waiting there removes this copy itself.
+		if ws, err := e.DB.RetryWorkspace(c.ID); err != nil || (ws != "" && ws != w.ID) {
+			return err
+		}
 		if err := e.DB.DropRetry(c.ID); err != nil {
 			return err
 		}
@@ -159,7 +165,7 @@ func (e *Engine) removeLater(w Workspace, it Item, err error) error {
 // file system refuses) from stopping the pass: the file waits in retries for the next pull.
 // Server, network and cancellation errors still end the pass.
 func (e *Engine) retryLater(ctx context.Context, w Workspace, f api.File, err error) error {
-	if err == nil || errors.Is(err, errSnapshot) || ctx.Err() != nil || api.Status(err) != 0 || errors.As(err, new(*url.Error)) {
+	if err == nil || errors.Is(err, errSnapshot) || ctx.Err() != nil || api.Status(err) != 0 || lostNetwork(err) {
 		return err
 	}
 	fresh, aerr := e.DB.AddRetry(w.ID, f)
@@ -167,6 +173,11 @@ func (e *Engine) retryLater(ctx context.Context, w Workspace, f api.File, err er
 		e.warn("Could not sync %s: %v", f.Name, err)
 	}
 	return aerr
+}
+
+// lostNetwork reports a connection that failed or broke off mid-transfer.
+func lostNetwork(err error) bool {
+	return errors.As(err, new(*url.Error)) || errors.As(err, new(*net.OpError)) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func cmpErr(err, otherwise error) error {
@@ -515,8 +526,9 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		if fresh {
 			e.warn("Download of %s failed: %v", rel, err)
 		}
-		// A network or server failure ends the pass rather than failing every file in turn.
-		if s := api.Status(err); s >= 500 || errors.As(err, new(*url.Error)) {
+		// A lost network ends the pass rather than failing every file in turn; a file the
+		// server cannot serve (5xx) only waits, so it never holds up the rest.
+		if lostNetwork(err) {
 			return errors.Join(err, aerr)
 		}
 		return aerr

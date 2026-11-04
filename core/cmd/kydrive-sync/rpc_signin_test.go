@@ -179,3 +179,23 @@ func TestUnlinkRemovingFilesResumes(t *testing.T) {
 		t.Fatalf("a later pass did not finish removing the files: %v", err)
 	}
 }
+
+// Q3: an install linked before the account was recorded signs in only as an account that
+// sees every workspace it syncs.
+func TestSignInWithoutRecordedAccount(t *testing.T) {
+	for _, bound := range []string{"w1", "w9"} {
+		t.Run(bound, func(t *testing.T) {
+			srv := server(t)
+			d, ctl := start(t, srv)
+			signedOut(t, d, ctl, srv.URL)
+			d.db.Set("user", "")
+			d.db.DropWorkspace("w1")
+			d.db.PutWorkspace(engine.Workspace{ID: bound, Name: "Docs", Dir: "Docs", Cursor: 7})
+			var out struct{}
+			err := ctl("SignIn", struct{}{}, &out)
+			if (bound == "w1") != (err == nil) {
+				t.Fatalf("bound %s: %v", bound, err)
+			}
+		})
+	}
+}

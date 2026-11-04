@@ -41,6 +41,7 @@ int main(int argc, char* argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("Appearance"), &appearance);
     Autostart autostart(Autostart::defaultFile(), QCoreApplication::applicationFilePath(), QFileInfo::exists(QStringLiteral("/.flatpak-info")));
     engine.rootContext()->setContextProperty(QStringLiteral("Autostart"), &autostart);
+    autostart.refresh();
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;

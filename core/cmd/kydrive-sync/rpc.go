@@ -173,6 +173,9 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	// An approved link starts a new connection; retained files keep no old sync binding.
 	d.work.Lock()
 	defer d.work.Unlock()
+	if err := d.stillWanted(ctx, server, tok); err != nil {
+		return err
+	}
 	previous, err := d.db.Workspaces()
 	if err != nil {
 		return err
@@ -224,18 +227,61 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	if err != nil {
 		return linkErr(ctx, err)
 	}
-	// An install linked before the account was recorded accepts the first sign-in.
-	if was := d.db.Get("user"); was != "" && tok.User != was {
-		rctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
-		if err := (&api.Client{Base: server, Token: tok.Token, HTTP: d.http}).RevokeSelf(rctx); err != nil {
-			log.Printf("sign in: the server did not revoke the refused link: %v", err)
-		}
-		cancel()
-		return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
+	if err := d.sameAccount(ctx, server, tok); err != nil {
+		d.revoke(server, tok)
+		return err
 	}
 	d.work.Lock()
 	defer d.work.Unlock()
+	if err := d.stillWanted(ctx, server, tok); err != nil {
+		return err
+	}
 	return d.activate(server, name, tok)
+}
+
+// sameAccount refuses a sign-in as another account. An install linked before the account was
+// recorded checks instead that the new credential sees every workspace it syncs.
+func (d *daemon) sameAccount(ctx context.Context, server string, tok api.Token) error {
+	was := d.db.Get("user")
+	if was != "" {
+		if tok.User != was {
+			return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
+		}
+		return nil
+	}
+	bound, err := d.db.Workspaces()
+	if err != nil {
+		return err
+	}
+	list, err := (&api.Client{Base: server, Token: tok.Token, HTTP: d.http}).Workspaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, w := range bound {
+		if !slices.ContainsFunc(list, func(s api.Workspace) bool { return s.ID == w.ID }) {
+			return fmt.Errorf("you signed in as %s, who cannot see %s, which this computer syncs; sign in with the account it was linked to, or unlink to use another account", tok.User, w.Name)
+		}
+	}
+	return nil
+}
+
+// stillWanted refuses an approval that arrived after CancelLink or Unlink, revoking it. The
+// caller holds d.work, which Unlink takes after cancelling.
+func (d *daemon) stillWanted(ctx context.Context, server string, tok api.Token) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	d.revoke(server, tok)
+	return errors.New("linking was cancelled")
+}
+
+// revoke drops a credential the server issued but this computer will not use.
+func (d *daemon) revoke(server string, tok api.Token) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := (&api.Client{Base: server, Token: tok.Token, HTTP: d.http}).RevokeSelf(ctx); err != nil {
+		log.Printf("link: the server did not revoke an unused link: %v", err)
+	}
 }
 
 // CancelLink ends a link or sign-in waiting for approval in the browser.
@@ -257,7 +303,7 @@ func (d *daemon) finishWipe() error {
 }
 
 func wipeUnfinished(err error) error {
-	return errors.New("files from this computer's revoked link are not all removed yet; close any app using them and try again: " + err.Error())
+	return errors.New("files from this computer's previous link are not all removed yet; close any app using them and try again: " + err.Error())
 }
 
 // Unlink revokes this device on the server (best effort) and forgets the credential. Local

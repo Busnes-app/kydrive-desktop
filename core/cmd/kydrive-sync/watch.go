@@ -21,9 +21,11 @@ func (d *daemon) watch(ctx context.Context) {
 		return
 	}
 	defer w.Close()
-	// kqueue (macOS) holds a descriptor for every file in a watched folder: past the budget,
-	// folders rely on the periodic scan rather than leaving none for syncing and the socket.
-	budget, used := watchBudget(), 0
+	// kqueue (macOS) holds a descriptor for every file in a watched folder, including files
+	// created later: past the budget, folders rely on the periodic scan rather than leaving
+	// none for syncing and the socket. counts holds what each watched folder was charged.
+	budget, used, full := watchBudget(), 0, false
+	counts := map[string]int{}
 	add := func(top string) {
 		filepath.WalkDir(top, func(p string, e fs.DirEntry, err error) error {
 			if err == nil && e.IsDir() {
@@ -34,9 +36,11 @@ func (d *daemon) watch(ctx context.Context) {
 					list, _ := os.ReadDir(p)
 					if used+len(list)+1 > budget {
 						log.Printf("watch: %s and below rely on periodic scans (%d entries watched)", p, used)
+						full = true
 						return filepath.SkipDir
 					}
-					used += len(list) + 1
+					counts[p] = len(list) + 1
+					used += counts[p]
 				}
 				if err := w.Add(p); err != nil {
 					log.Printf("watch %s: %v", p, err)
@@ -48,8 +52,8 @@ func (d *daemon) watch(ctx context.Context) {
 	quiet := time.NewTimer(time.Hour)
 	quiet.Stop()
 	for {
-		if _, err := os.Stat(d.root); err == nil && len(w.WatchList()) == 0 {
-			used = 0
+		if _, err := os.Stat(d.root); err == nil && len(w.WatchList()) == 0 && !full {
+			used, counts = 0, map[string]int{}
 			add(d.root)
 			d.trigger(true) // whatever changed while unwatched
 		}
@@ -63,6 +67,17 @@ func (d *daemon) watch(ctx context.Context) {
 			if ev.Has(fsnotify.Create) {
 				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
 					add(ev.Name)
+				}
+				if dir := filepath.Dir(ev.Name); budget > 0 && counts[dir] > 0 {
+					counts[dir]++
+					if used++; used > budget {
+						// Its files' descriptors close with it; the periodic scan covers it.
+						log.Printf("watch: %s relies on periodic scans (%d entries watched)", dir, used)
+						w.Remove(dir)
+						used -= counts[dir]
+						delete(counts, dir)
+						full = true
+					}
 				}
 			}
 			quiet.Reset(settle + time.Second)

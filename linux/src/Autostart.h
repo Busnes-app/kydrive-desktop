@@ -20,6 +20,8 @@ public:
 
     bool enabled() const;
     Q_INVOKABLE void setEnabled(bool on);
+    // At start: the Flatpak checks its last answer with the portal again.
+    void refresh();
 
 signals:
     void enabledChanged();

@@ -298,3 +298,120 @@ func TestUnreadableFolderStopsOnlyItsWorkspace(t *testing.T) {
 		t.Fatalf("Archive on the server %v", got)
 	}
 }
+
+// Certification round 1: a file the server cannot serve (503) waits; it never stops the rest.
+func TestUnservableFileDoesNotStopSync(t *testing.T) {
+	v := setup(t, map[string]string{"keep.txt": "v1"})
+	target, _ := url.Parse(v.r.URL())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/download") {
+			http.Error(w, `{"error":"Document bytes unavailable"}`, 503)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	v.e.API.Base = front.URL
+	v.r.Put(t, v.ws, "bad.bin", []byte("x"))
+	v.write("keep.txt", "v2")
+	v.sync()
+	if v.remote("keep.txt") != "v2" {
+		t.Fatal("an unservable file stopped the upload")
+	}
+}
+
+// Certification round 1: an unreadable folder in a reader workspace does not stop the others.
+func TestUnreadableReaderFolderStopsOnlyItsWorkspace(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, map[string]string{"a.txt": "a"})
+	second(t, v, "Archive") // synced before Docs
+	private := filepath.Join(v.root, "Archive", "private")
+	if err := os.Mkdir(private, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	readOnly(t, private)
+	os.Chmod(private, 0)
+	f.mu.Lock()
+	f.reader = true
+	f.mu.Unlock()
+	v.r.Put(t, v.ws, "new.txt", []byte("n"))
+	v.e.Sync(context.Background())
+	if !v.exists("new.txt") {
+		t.Fatal("a reader workspace's unreadable folder stopped the others")
+	}
+}
+
+// Certification round 1: held deletes stay held when the server grows past the threshold.
+func TestHeldDeletesStayHeldWhenTheServerGrows(t *testing.T) {
+	files := map[string]string{}
+	for i := range 40 {
+		files[strings.Repeat("f", i+1)+".txt"] = "x"
+	}
+	v := setup(t, files)
+	for i := range 30 {
+		os.Remove(v.path(strings.Repeat("f", i+1) + ".txt"))
+	}
+	v.sync()
+	for i := range 40 {
+		v.r.Put(t, v.ws, strings.Repeat("g", i+1)+".txt", []byte("n")) // no new folder: no snapshot
+	}
+	v.sync()
+	if n := len(v.r.Paths(t, v.ws)); n != 80 {
+		t.Fatalf("held deletes went through without confirmation: %d server files", n)
+	}
+}
+
+// Certification round 1: a move to another workspace whose old copy cannot go yet still
+// arrives once it can.
+func TestBlockedMoveBetweenWorkspacesArrives(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, map[string]string{"ro/Plan.txt": "plan"})
+	archive := second(t, v, "Archive") // synced before Docs
+	f.mu.Lock()
+	it := f.find(v.ws, "ro/Plan.txt")
+	it.ws, it.parent = archive, ""
+	f.record(v.ws, "file", it.id)
+	f.record(archive, "file", it.id)
+	f.mu.Unlock()
+	readOnly(t, v.path("ro"))
+	v.e.Sync(context.Background())
+	os.Chmod(v.path("ro"), 0o755)
+	v.sync()
+	v.sync()
+	if v.exists("ro/Plan.txt") {
+		t.Fatal("the old copy stayed")
+	}
+	if b, err := os.ReadFile(filepath.Join(v.root, "Archive", "Plan.txt")); err != nil || string(b) != "plan" {
+		t.Fatalf("never arrived: %q %v", b, err)
+	}
+}
+
+// Certification round 1: a connection lost in the middle of a body also ends the pass.
+func TestBodyCutEndsThePass(t *testing.T) {
+	v := setup(t, nil)
+	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
+		v.r.Put(t, v.ws, n, []byte("0123456789"))
+	}
+	target, _ := url.Parse(v.r.URL())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/download") {
+			w.Header().Set("Content-Length", "10")
+			w.Write([]byte("01234"))
+			c, _, _ := w.(http.Hijacker).Hijack()
+			c.Close()
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	v.e.API.Base = front.URL
+	if err := v.e.Sync(context.Background()); err == nil {
+		t.Fatal("a cut body passed as success")
+	}
+	a, _ := v.e.DB.Activity(0)
+	if n := len(slices.DeleteFunc(a, func(x Activity) bool { return x.Level != "warn" })); n != 1 {
+		t.Fatalf("%d warnings", n)
+	}
+}

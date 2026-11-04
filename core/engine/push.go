@@ -324,7 +324,9 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		w.Deletes, w.AllowDeletes = 0, false
 		return e.DB.PutWorkspace(w)
 	}
-	if !w.AllowDeletes && (folderGone || (count > 20 && count*2 > total)) {
+	// Once held, deletes stay held until confirmed or gone: files added on the server since
+	// must not dilute them below the threshold.
+	if !w.AllowDeletes && (folderGone || w.Deletes > 0 || (count > 20 && count*2 > total)) {
 		if w.Deletes != count {
 			e.warn("%d items were deleted from %s on this computer. Confirm to delete them from KyDrive too", count, w.Name)
 		}

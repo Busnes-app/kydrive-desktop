@@ -51,8 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setAgent(_ on: Bool) throws {
         if on {
-            // The agent runs its own core: stop the one this app started first.
-            if let p = process, p.isRunning { p.terminate(); p.waitUntilExit() }
+            // The agent runs its own core: stop the one this app started (launchd retries the
+            // agent's until it has exited).
+            if let p = process, p.isRunning { p.terminate() }
             process = nil
             try agent.register()
             if agent.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }

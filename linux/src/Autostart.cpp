@@ -40,7 +40,20 @@ bool Autostart::enabled() const
     // The portal's entry is on the host, out of the sandbox's sight: keep its last answer.
     if (m_flatpak)
         return QSettings().value(flatpakKey, false).toBool();
-    return QFileInfo::exists(m_file);
+    // A desktop's startup settings switch an entry off without deleting it.
+    QFile f(m_file);
+    if (!f.open(QIODevice::ReadOnly))
+        return false;
+    const QString entry = QString::fromUtf8(f.readAll());
+    return !entry.contains(QStringLiteral("\nHidden=true")) && !entry.contains(QStringLiteral("\nX-GNOME-Autostart-enabled=false"));
+}
+
+void Autostart::refresh()
+{
+    // The portal is the only judge of the host's entry: asking again with the last answer
+    // brings a permission revoked since back to off (no prompt once the user has decided).
+    if (m_flatpak && enabled())
+        setEnabled(true);
 }
 
 void Autostart::setEnabled(bool on)
