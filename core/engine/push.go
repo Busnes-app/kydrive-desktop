@@ -101,6 +101,10 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		case n.dir():
 		case it != nil && it.Kind != "file":
 		case it != nil && !e.changed(*it, n.p, n.fi):
+			var again bool
+			if again, err = e.rewritten(*it, n); err == nil && again {
+				err = e.upload(ctx, w, n, it)
+			}
 		case unsettled(n.fi.ModTime(), e.Settle):
 			e.Unsettled = true
 		default:
@@ -111,6 +115,21 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		}
 	}
 	return e.deletes(ctx, w, entries, false)
+}
+
+// rewritten reports a file written in place keeping its size and mtime (VeraCrypt does so by
+// default for its containers): its change time moved and its content is not what synced. A
+// change time that moved alone (permissions, a rename) is recorded, as is a first one.
+func (e *Engine) rewritten(it Item, n entry) (bool, error) {
+	c := ctime(n.p, n.fi)
+	if c == it.LocalCtime {
+		return false, nil
+	}
+	if it.LocalCtime != 0 && !sameContent(n.p, it.Digest) {
+		return true, nil
+	}
+	it.LocalCtime = c
+	return false, e.DB.PutItem(it)
 }
 
 // unsettled reports a file written within settle. A future mtime (an archive from another
@@ -243,7 +262,7 @@ func (e *Engine) upload(ctx context.Context, w Workspace, n entry, it *Item) err
 		return err
 	}
 	item := fileItem(w, sf, n.rel)
-	item.LocalSize, item.LocalMtime, item.LocalInode = fi.Size(), fi.ModTime().UnixNano(), inode(n.p, fi)
+	item.LocalSize, item.LocalMtime, item.LocalInode, item.LocalCtime = fi.Size(), fi.ModTime().UnixNano(), inode(n.p, fi), ctime(n.p, fi)
 	return e.DB.PutItem(item)
 }
 

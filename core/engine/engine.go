@@ -50,6 +50,9 @@ type Engine struct {
 // errOutside refuses a path that would leave the workspace folder.
 var errOutside = errors.New("path leaves the workspace folder")
 
+// errLinked refuses a path under a link (a folder moved elsewhere, a link left in its place).
+var errLinked = errors.New("a folder above it is a link")
+
 // dir is the workspace's folder under the root.
 func (e *Engine) dir(w Workspace) string { return filepath.Join(e.Root, w.Dir) }
 
@@ -73,7 +76,7 @@ func (e *Engine) abs(w Workspace, rel string) (string, error) {
 		p = filepath.Join(p, part)
 		// A Windows junction (a folder moved to another disk) is irregular, not a symlink.
 		if fi, err := os.Lstat(p); err == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
-			return "", errOutside
+			return "", errLinked
 		}
 	}
 	return filepath.Join(root, r), nil
@@ -274,6 +277,21 @@ func (e *Engine) readerEdits(w Workspace) error {
 			return err
 		}
 	}
+	// A synced copy deleted here comes back with a restore snapshot: kept as a pending
+	// delete, it would trash the file on the server once the user can edit.
+	if w, err = e.workspace(w.ID); err != nil || w.ID == "" {
+		return err
+	}
+	items, err := e.DB.Items(w.ID)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if p, err := e.abs(w, it.Path); err == nil && it.State == "synced" && missing(p) {
+			w.Cursor = -1
+			return e.DB.PutWorkspace(w)
+		}
+	}
 	return nil
 }
 
@@ -392,6 +410,11 @@ func (e *Engine) evict(w Workspace, rel string) error {
 			dirs = append(dirs, p)
 			return nil
 		}
+		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			// A synced folder moved elsewhere, a link left in its place: the walk does not
+			// follow it, so its synced copies are found by their records.
+			failed = errors.Join(failed, e.evictLinked(w, p))
+		}
 		// One file that cannot go (open elsewhere, no permission) does not keep the rest.
 		failed = errors.Join(failed, e.evictFile(w, p, d))
 		return nil
@@ -403,6 +426,40 @@ func (e *Engine) evict(w Workspace, rel string) error {
 		os.Remove(d)
 	}
 	return e.DB.DropTree(w.ID, rel)
+}
+
+// evictLinked deletes the synced copies recorded under link p whose content is still what
+// synced. A copy changed since stays where it is, and is announced.
+func (e *Engine) evictLinked(w Workspace, p string) error {
+	r, _ := filepath.Rel(e.dir(w), p)
+	r = filepath.ToSlash(r)
+	items, err := e.DB.Items(w.ID)
+	if err != nil {
+		return err
+	}
+	kept := 0
+	for _, it := range items {
+		sub, ok := strings.CutPrefix(it.Path, r+"/")
+		if r == "." {
+			sub, ok = it.Path, true
+		}
+		if !ok || it.Kind != "file" || it.State != "synced" {
+			continue
+		}
+		f := filepath.Join(p, filepath.FromSlash(sub))
+		if fi, err := os.Stat(f); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		if !sameContent(f, it.Digest) {
+			kept++
+		} else if err := os.Remove(f); err != nil {
+			return err
+		}
+	}
+	if kept > 0 {
+		e.warn("Kept %d changed files in %s, which links to another folder", kept, p)
+	}
+	return nil
 }
 
 func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -38,5 +39,123 @@ func TestFolderTrashWaitsForChangesSincePull(t *testing.T) {
 	}
 	if v.read("X/new.txt") != "colleague" || v.exists("X/a.txt") {
 		t.Fatal("local copies wrong")
+	}
+}
+
+// Sol R1 / Opus R5: the server replaces a file with a folder of the same name, or the reverse,
+// within one pull. The new item's record must not erase the old one's, whose removal frees
+// the name.
+func TestServerReplacesItemWithOtherKind(t *testing.T) {
+	v := setup(t, map[string]string{"Reports": "old", "X/a.txt": "a"})
+	v.r.Remove(t, v.ws, "Reports")
+	v.r.Put(t, v.ws, "Reports/q1.txt", []byte("q1"))
+	v.r.Remove(t, v.ws, "X")
+	v.r.Put(t, v.ws, "X", []byte("now a file"))
+	for range 3 {
+		v.sync()
+	}
+	if !v.exists("Reports/q1.txt") || v.read("X") != "now a file" {
+		t.Fatalf("local %v, server %v", tree(t, v.path("")), v.r.Paths(t, v.ws))
+	}
+}
+
+// Sol R2 / Opus R6: two folders that swap names on the server converge.
+func TestServerFolderSwapConverges(t *testing.T) {
+	v := setup(t, map[string]string{"A/a.txt": "a", "B/b.txt": "b"})
+	v.r.Rename(t, v.ws, "A", "T")
+	v.r.Rename(t, v.ws, "B", "A")
+	v.r.Rename(t, v.ws, "T", "B")
+	for range 3 {
+		v.sync()
+	}
+	if v.read("A/b.txt") != "b" || v.read("B/a.txt") != "a" || len(tree(t, v.path(""))) != 2 {
+		t.Fatalf("local %v, server %v", tree(t, v.path("")), v.r.Paths(t, v.ws))
+	}
+}
+
+// Opus R1: an item renamed on the server into a name this computer skips (Windows-invalid, a
+// case twin) is not uploaded again from its old place as a new item.
+func TestRenameIntoSkippedNameIsNotReuploaded(t *testing.T) {
+	v := setup(t, map[string]string{"a.txt": "a", "P/x.txt": "x", "Notes.txt": "n", "old.txt": "o"})
+	v.e.WinNames, v.e.CaseFold = true, true
+	v.r.Rename(t, v.ws, "a.txt", "a?.txt")
+	v.r.Rename(t, v.ws, "P", "P?")
+	v.r.Rename(t, v.ws, "old.txt", "notes.txt")
+	for range 3 {
+		v.sync()
+	}
+	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"Notes.txt", "P?/x.txt", "a?.txt", "notes.txt"}) {
+		t.Fatalf("server paths %v", got)
+	}
+	// A name this computer can hold again brings the file back.
+	v.r.Rename(t, v.ws, "a?.txt", "b.txt")
+	v.r.Rename(t, v.ws, "P?", "Q")
+	v.sync()
+	v.sync()
+	if v.read("b.txt") != "a" || v.read("Q/x.txt") != "x" {
+		t.Fatalf("local %v", tree(t, v.path("")))
+	}
+}
+
+// Opus R4: on a case-insensitive disk, a file deleted on the server and saved again under a
+// case variant of its name arrives.
+func TestDeleteThenReuseCaseVariant(t *testing.T) {
+	v := setup(t, map[string]string{"report.txt": "old"})
+	v.e.CaseFold = true
+	v.r.Remove(t, v.ws, "report.txt")
+	v.r.Put(t, v.ws, "Report.txt", []byte("new"))
+	for range 3 {
+		v.sync()
+	}
+	if v.read("Report.txt") != "new" {
+		t.Fatalf("local %v", tree(t, v.path("")))
+	}
+}
+
+// Opus R7: a file deleted locally in a reader workspace comes back, so it is not trashed on
+// the server once the user becomes an editor.
+func TestReaderDeleteIsRestored(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, map[string]string{"a.txt": "a", "b.txt": "b", "c.txt": "c"})
+	f.mu.Lock()
+	f.reader = true
+	f.mu.Unlock()
+	if err := os.Remove(v.path("a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	v.sync()
+	v.sync()
+	if v.read("a.txt") != "a" {
+		t.Fatal("a.txt not restored")
+	}
+	f.mu.Lock()
+	f.reader = false
+	f.mu.Unlock()
+	v.sync()
+	if got := v.r.Paths(t, v.ws); len(got) != 3 {
+		t.Fatalf("server paths %v", got)
+	}
+}
+
+// A state DB from 0.6 (no local_ctime) opens and gains the column.
+func TestOpenAddsChangeTime(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "state.db")
+	db, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(`ALTER TABLE items DROP COLUMN local_ctime`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if db, err = Open(p); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.PutItem(Item{ID: "f", Workspace: "w", Kind: "file", Path: "a", LocalCtime: 7, State: "synced"}); err != nil {
+		t.Fatal(err)
+	}
+	if it, err := db.Item("f"); err != nil || it.LocalCtime != 7 {
+		t.Fatalf("%v %v", it, err)
 	}
 }

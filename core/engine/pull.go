@@ -342,7 +342,7 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		if slices.ContainsFunc(sib, func(s Item) bool {
 			return s.ID != id && s.State != "skipped" && s.Name != name && strings.EqualFold(s.Name, name)
 		}) {
-			return rel, true, "another item here differs only in case", nil
+			return rel, true, caseTwin, nil
 		}
 	}
 	if e.WinNames && shortName(name) {
@@ -354,7 +354,10 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 			}
 		}
 	}
-	if _, err := e.abs(w, rel); err != nil {
+	if _, err := e.abs(w, rel); errors.Is(err, errLinked) {
+		// The folder may come back: the item waits in retries, its record untouched.
+		return rel, false, "", err
+	} else if err != nil {
 		return refused, true, fmt.Sprintf("%s would be written outside the workspace folder", rel), nil
 	}
 	return rel, false, "", nil
@@ -379,6 +382,31 @@ func (e *Engine) alias(w Workspace, id, rel, p string) (bool, error) {
 	return aerr != nil || berr != nil || !os.SameFile(a, b), nil
 }
 
+// caseTwin is why an item is skipped beside a sibling whose name differs only in case.
+const caseTwin = "another item here differs only in case"
+
+// skipPlaced records an item this computer skips. One synced elsewhere here (the server
+// renamed it into such a name) leaves its old place as a server removal would; its copy
+// would otherwise upload again as a new item. A case twin waits in retries: the other item
+// may be on its way out, removed or renamed later in the pull.
+func (e *Engine) skipPlaced(w Workspace, it Item, why string, f api.File) error {
+	old, err := e.DB.Item(it.ID)
+	if err != nil {
+		return err
+	}
+	if old != nil && old.Workspace == w.ID && old.State != "skipped" && old.Path != it.Path {
+		if err := e.remove(w, *old); err != nil {
+			return e.removeLater(w, *old, err)
+		}
+	}
+	if why == caseTwin {
+		if _, err := e.DB.AddRetry(w.ID, f); err != nil {
+			return err
+		}
+	}
+	return e.skip(w, it, why)
+}
+
 func (e *Engine) skip(w Workspace, it Item, why string) error {
 	old, err := e.DB.Item(it.ID)
 	if err != nil {
@@ -390,6 +418,14 @@ func (e *Engine) skip(w Workspace, it Item, why string) error {
 		}
 	}
 	it.State = "skipped"
+	// Another item's record holds the name (the server replaced a file with a folder of that
+	// name, or the reverse, its removal later in the pull): this one takes a placeholder path
+	// that never touches disk, so that record and its removal are not lost.
+	if o, err := e.DB.ItemAt(w.ID, it.Path); err != nil {
+		return err
+	} else if o != nil && o.ID != it.ID {
+		it.Path = ".kydrive-blocked-" + it.ID
+	}
 	return e.DB.PutItem(it)
 }
 
@@ -422,6 +458,21 @@ func (e *Engine) occupied(w Workspace, id, rel string) (bool, error) {
 		return true, fmt.Errorf("%s has changes here and waits to move first", rel)
 	}
 	return false, e.evict(w, rel)
+}
+
+// aside moves the folder recorded at rel to a placeholder name when that folder itself waits
+// in retries to move elsewhere (two folders swapped names on the server). Its retry then
+// moves it on from there, so the swap converges; nothing in it changes.
+func (e *Engine) aside(w Workspace, rel string) (bool, error) {
+	o, err := e.DB.ItemAt(w.ID, rel)
+	if err != nil || o == nil || o.Kind != "folder" || o.State == "skipped" {
+		return false, err
+	}
+	retries, err := e.DB.Retries(w.ID)
+	if err != nil || !slices.ContainsFunc(retries, func(f api.File) bool { return f.ID == o.ID && f.Name != "" && f.Digest == "" }) {
+		return false, err
+	}
+	return e.relocate(w, rel, ".kydrive-move-"+o.ID)
 }
 
 // relocate moves the local copy of an item from one path to another. It refuses, leaving
@@ -457,12 +508,23 @@ func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
 
 func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 	rel, skip, why, err := e.place(w, f.ID, f.Parent, f.Name)
+	if errors.Is(err, errLinked) {
+		// A recorded folder waits in retries for the link to go; a new one is not placed.
+		if old, err := e.DB.Item(f.ID); err != nil || old != nil && old.Workspace == w.ID && old.State != "skipped" {
+			if err == nil {
+				_, err = e.DB.AddRetry(w.ID, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
+			}
+			return err
+		}
+		return e.skip(w, Item{ID: f.ID, Workspace: w.ID, Kind: "folder", Parent: f.Parent, Name: f.Name, Path: ".kydrive-refused-" + f.ID},
+			rel+" is under a link")
+	}
 	if err != nil {
 		return err
 	}
 	it := Item{ID: f.ID, Workspace: w.ID, Kind: "folder", Parent: f.Parent, Name: f.Name, Path: rel, State: "synced"}
 	if skip {
-		return e.skip(w, it, why)
+		return e.skipPlaced(w, it, why, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
 	}
 	old, err := e.DB.Item(f.ID)
 	if err != nil {
@@ -470,6 +532,12 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 	}
 	if old != nil && old.State != "skipped" && old.Path != rel {
 		ok, err := e.relocate(w, old.Path, rel)
+		if err == nil && !ok {
+			// Two folders swapped names: the one holding this name moves aside first.
+			if ok, err = e.aside(w, rel); ok {
+				ok, err = e.relocate(w, old.Path, rel)
+			}
+		}
 		if !ok {
 			// Refused locally (occupied, a file open inside, no permission): the folder stays
 			// where it is and waits in retries, like a file. It must not stop the pass.
@@ -511,7 +579,7 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 		return err
 	}
 	if skip {
-		return e.skip(w, fileItem(w, f, rel), why)
+		return e.skipPlaced(w, fileItem(w, f, rel), why, f)
 	}
 	old, err := e.DB.Item(f.ID)
 	if err != nil {
@@ -557,10 +625,11 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 			// The server has nothing newer (often this computer's own upload coming back); a
 			// local change since is a pending upload, not a conflict.
 			it := fileItem(w, f, rel)
-			it.LocalSize, it.LocalMtime, it.LocalInode = old.LocalSize, old.LocalMtime, old.LocalInode
+			it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = old.LocalSize, old.LocalMtime, old.LocalInode, old.LocalCtime
 			return e.keep(it)
-		case old != nil && !e.changed(*old, p, fi) && sameContent(p, old.Digest):
-			// Hashed too: an edit written in place that kept the size and mtime is not replaced.
+		case old != nil && old.State == "synced" && sameContent(p, old.Digest):
+			// The synced copy, by content: an edit written in place that kept the size and
+			// mtime is not replaced, and a copy back from another disk (new file IDs) is.
 		case sameContent(p, f.Digest):
 			// fi and the file ID were read before hashing: a change during the hash shows later.
 			return e.record(w, f, rel, fi, id)
@@ -583,6 +652,12 @@ func fileItem(w Workspace, f api.File, rel string) Item {
 func (e *Engine) record(w Workspace, f api.File, rel string, fi fs.FileInfo, id uint64) error {
 	it := fileItem(w, f, rel)
 	it.LocalSize, it.LocalMtime, it.LocalInode = fi.Size(), fi.ModTime().UnixNano(), id
+	// Read now: a rename into place moves the change time.
+	if p, err := e.abs(w, rel); err == nil {
+		if cfi, err := os.Lstat(p); err == nil {
+			it.LocalCtime = ctime(p, cfi)
+		}
+	}
 	return e.keep(it)
 }
 
@@ -644,12 +719,12 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		return err
 	}
 	id := inode(tmp.Name(), tfi)
-	if fi, err := os.Lstat(p); err == nil {
+	if _, err := os.Lstat(p); err == nil {
 		old, err := e.DB.Item(f.ID)
 		if err != nil {
 			return err
 		}
-		if old == nil || old.Path != rel || e.changed(*old, p, fi) || !sameContent(p, old.Digest) {
+		if old == nil || old.Path != rel || old.State != "synced" || !sameContent(p, old.Digest) {
 			_, err := e.DB.AddRetry(w.ID, f) // changed meanwhile; the next pass decides again
 			return err
 		}
