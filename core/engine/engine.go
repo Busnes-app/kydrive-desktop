@@ -54,7 +54,8 @@ var errOutside = errors.New("path leaves the workspace folder")
 func (e *Engine) dir(w Workspace) string { return filepath.Join(e.Root, w.Dir) }
 
 // abs resolves rel inside the workspace folder. It refuses a rel that is not local, and one
-// with an ancestor that is a symlink, so no server name or local link can lead outside.
+// with an ancestor that is a symlink or a Windows junction, so no server name or local link
+// can lead outside.
 func (e *Engine) abs(w Workspace, rel string) (string, error) {
 	root := e.dir(w)
 	if rel == "" {
@@ -70,7 +71,8 @@ func (e *Engine) abs(w Workspace, rel string) (string, error) {
 			break
 		}
 		p = filepath.Join(p, part)
-		if fi, err := os.Lstat(p); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		// A Windows junction (a folder moved to another disk) is irregular, not a symlink.
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
 			return "", errOutside
 		}
 	}
@@ -418,7 +420,8 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 			return err
 		}
 		p = aside
-		if fi, err := os.Lstat(p); err == nil && !e.changed(*it, p, fi) {
+		// Hashed too: an edit written in place that kept the size and mtime is kept.
+		if fi, err := os.Lstat(p); err == nil && !e.changed(*it, p, fi) && sameContent(p, it.Digest) {
 			if err := os.Remove(p); err != nil {
 				return err
 			}
@@ -543,6 +546,13 @@ func ignored(name string) bool {
 	l := strings.ToLower(name)
 	return l == ".ds_store" || l == "thumbs.db" || l == "desktop.ini" ||
 		strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".~lock.") || strings.HasSuffix(l, ".tmp")
+}
+
+// shortName reports a name shaped like a Windows short (8.3) name, such as REPORT~1.TXT.
+func shortName(name string) bool {
+	stem, ext := splitName(name)
+	i := strings.LastIndex(stem, "~")
+	return i > 0 && i < len(stem)-1 && len(stem) <= 8 && len(ext) <= 4 && strings.Trim(stem[i+1:], "0123456789") == ""
 }
 
 // windowsName reports whether Windows can hold name.

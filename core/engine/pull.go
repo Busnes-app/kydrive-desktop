@@ -337,14 +337,46 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		if err != nil {
 			return "", false, "", err
 		}
-		if slices.ContainsFunc(sib, func(s Item) bool { return s.ID != id && s.State != "skipped" && strings.EqualFold(s.Name, name) }) {
+		// The very same name is another item's record the server renamed or removed (occupied
+		// waits for it), not a case twin.
+		if slices.ContainsFunc(sib, func(s Item) bool {
+			return s.ID != id && s.State != "skipped" && s.Name != name && strings.EqualFold(s.Name, name)
+		}) {
 			return rel, true, "another item here differs only in case", nil
+		}
+	}
+	if e.WinNames && shortName(name) {
+		// Windows opens REPORT~1.TXT as Report for 2026.txt: a new item with such a name is not
+		// placed over something already here.
+		if p, err := e.abs(w, rel); err == nil && !missing(p) {
+			if a, err := e.alias(w, id, rel, p); err != nil || a {
+				return rel, true, "on Windows this name can stand for another item here", err
+			}
 		}
 	}
 	if _, err := e.abs(w, rel); err != nil {
 		return refused, true, fmt.Sprintf("%s would be written outside the workspace folder", rel), nil
 	}
 	return rel, false, "", nil
+}
+
+// alias reports that p, a short-shaped name, opens neither a record at rel (a reused name,
+// which occupied handles) nor this item's own copy (a case-only rename).
+func (e *Engine) alias(w Workspace, id, rel, p string) (bool, error) {
+	if o, err := e.DB.ItemAt(w.ID, rel); err != nil || o != nil && o.State != "skipped" {
+		return false, err
+	}
+	it, err := e.DB.Item(id)
+	if err != nil || it == nil || it.Workspace != w.ID || it.State == "skipped" {
+		return err == nil, err
+	}
+	own, err := e.abs(w, it.Path)
+	if err != nil {
+		return true, nil
+	}
+	a, aerr := os.Lstat(own)
+	b, berr := os.Lstat(p)
+	return aerr != nil || berr != nil || !os.SameFile(a, b), nil
 }
 
 func (e *Engine) skip(w Workspace, it Item, why string) error {
@@ -361,6 +393,37 @@ func (e *Engine) skip(w Workspace, it Item, why string) error {
 	return e.DB.PutItem(it)
 }
 
+// occupied reports that rel is still recorded as another file, which the server moved or
+// removed: its own change, later in this pull or the next, frees the name. When that file
+// itself waits in retries to move (two names swapped), an unchanged copy of it is evicted
+// instead and downloads again in its new place; a changed one is announced and waited for.
+func (e *Engine) occupied(w Workspace, id, rel string) (bool, error) {
+	o, err := e.DB.ItemAt(w.ID, rel)
+	if err != nil || o == nil || o.ID == id || o.State == "skipped" || o.Kind != "file" {
+		return false, err
+	}
+	retries, err := e.DB.Retries(w.ID)
+	if err != nil || !slices.ContainsFunc(retries, func(f api.File) bool {
+		// A retry that puts it elsewhere (compared by path: an upload records the server's
+		// new name before the local copy moves).
+		dir := "."
+		if p, _ := e.DB.Item(f.Parent); f.Parent != "" && p != nil {
+			dir = p.Path
+		}
+		return f.ID == o.ID && f.Name != "" && path.Join(dir, f.Name) != o.Path
+	}) {
+		return true, err
+	}
+	p, err := e.abs(w, rel)
+	if err != nil {
+		return true, err
+	}
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() || e.changed(*o, p, fi) || !sameContent(p, o.Digest) {
+		return true, fmt.Errorf("%s has changes here and waits to move first", rel)
+	}
+	return false, e.evict(w, rel)
+}
+
 // relocate moves the local copy of an item from one path to another. It refuses, leaving
 // everything in place, when something already occupies the destination.
 func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
@@ -370,6 +433,10 @@ func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
 	}
 	dst, err := e.abs(w, to)
 	if err != nil {
+		return false, err
+	}
+	// Another item's record holds the destination until its own change moves it.
+	if o, err := e.DB.ItemAt(w.ID, to); err != nil || o != nil && o.State != "skipped" {
 		return false, err
 	}
 	sfi, serr := os.Lstat(src)
@@ -455,6 +522,12 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	if old != nil && (old.State == "skipped" || old.Workspace != w.ID) {
 		old = nil
 	}
+	if wait, err := e.occupied(w, f.ID, rel); err != nil || wait {
+		if err == nil {
+			_, err = e.DB.AddRetry(w.ID, f) // the other item's own change frees the name
+		}
+		return err // announced once by retryLater
+	}
 	if old != nil && old.Path != rel {
 		ok, err := e.relocate(w, old.Path, rel)
 		if err == nil && !ok {
@@ -486,7 +559,8 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 			it := fileItem(w, f, rel)
 			it.LocalSize, it.LocalMtime, it.LocalInode = old.LocalSize, old.LocalMtime, old.LocalInode
 			return e.keep(it)
-		case old != nil && !e.changed(*old, p, fi):
+		case old != nil && !e.changed(*old, p, fi) && sameContent(p, old.Digest):
+			// Hashed too: an edit written in place that kept the size and mtime is not replaced.
 		case sameContent(p, f.Digest):
 			// fi and the file ID were read before hashing: a change during the hash shows later.
 			return e.record(w, f, rel, fi, id)
@@ -575,7 +649,7 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		if err != nil {
 			return err
 		}
-		if old == nil || old.Path != rel || e.changed(*old, p, fi) {
+		if old == nil || old.Path != rel || e.changed(*old, p, fi) || !sameContent(p, old.Digest) {
 			_, err := e.DB.AddRetry(w.ID, f) // changed meanwhile; the next pass decides again
 			return err
 		}
