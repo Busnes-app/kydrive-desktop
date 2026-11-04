@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Busnes-app/kydrive-desktop/core/api"
 	"github.com/Busnes-app/kydrive-desktop/core/engine"
 	"github.com/Busnes-app/kydrive-desktop/core/link"
 	"github.com/zalando/go-keyring"
@@ -98,35 +100,82 @@ func deviceName(name string) string {
 	return cmp.Or(strings.TrimSpace(name), "computer")
 }
 
+// pending is a link waiting for the browser; CancelLink and Unlink end it.
+type pending struct{ cancel context.CancelFunc }
+
+// begin marks a link as waiting once ok allows it (called under d.mu); end clears the mark.
+func (c *Core) begin(ok func() error) (ctx context.Context, end func(), err error) {
+	d := c.d
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.linking != nil {
+		return nil, nil, errors.New("a link is already waiting for approval in the browser; cancel it first")
+	}
+	if err := ok(); err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(c.ctx)
+	p := &pending{cancel}
+	d.linking = p
+	return ctx, func() {
+		cancel()
+		d.mu.Lock()
+		if d.linking == p {
+			d.linking = nil
+		}
+		d.mu.Unlock()
+	}, nil
+}
+
+// cancelLink ends a link waiting for the browser. The caller holds d.mu.
+func (d *daemon) cancelLink() {
+	if d.linking != nil {
+		d.linking.cancel()
+		d.linking = nil
+	}
+}
+
+func linkErr(ctx context.Context, err error) error {
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return errors.New("linking was cancelled")
+	}
+	return err
+}
+
 // Link pairs this computer through the browser; it returns once approved, or fails after
-// ten minutes.
+// ten minutes or CancelLink.
 func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	d := c.d
 	server, err := serverOrigin(in.Server)
 	if err != nil {
 		return err
 	}
-	d.mu.Lock()
-	if d.token != "" || d.linking {
-		d.mu.Unlock()
-		return errors.New("already linked or linking; unlink first")
+	ctx, end, err := c.begin(func() error {
+		if d.token != "" {
+			return errors.New("already linked; unlink first")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	d.linking = true
-	d.mu.Unlock()
-	defer func() { d.mu.Lock(); d.linking = false; d.mu.Unlock() }()
+	defer end()
 	// A new link drops the old bindings, which an unfinished wipe still needs.
 	if err := d.finishWipe(); err != nil {
 		return err
 	}
 	host, _ := os.Hostname()
 	name := deviceName(cmp.Or(strings.TrimSpace(in.Name), host))
-	tok, err := link.Link(c.ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
+	tok, err := link.Link(ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
 	if err != nil {
-		return err
+		return linkErr(ctx, err)
 	}
 	// An approved link starts a new connection; retained files keep no old sync binding.
 	d.work.Lock()
 	defer d.work.Unlock()
+	if err := d.stillWanted(ctx, server, tok); err != nil {
+		return err
+	}
 	previous, err := d.db.Workspaces()
 	if err != nil {
 		return err
@@ -136,10 +185,15 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 			return err
 		}
 	}
+	return d.activate(server, name, tok)
+}
+
+// activate stores an approved credential and starts syncing with it. The caller holds d.work.
+func (d *daemon) activate(server, name string, tok api.Token) error {
 	if err := keyring.Set(keyringService, server, tok.Token); err != nil {
 		return errors.New("could not store the credential in the OS keyring: " + err.Error())
 	}
-	for k, v := range map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL} {
+	for k, v := range map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User} {
 		if err := d.db.Set(k, v); err != nil {
 			return err
 		}
@@ -148,9 +202,90 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 		return err
 	}
 	d.mu.Lock()
-	d.token, d.state, d.lastErr = tok.Token, "idle", ""
+	d.token, d.state, d.lastErr, d.backoff = tok.Token, "idle", "", 0
 	d.mu.Unlock()
 	d.trigger(true)
+	return nil
+}
+
+// SignIn links this computer again to the server and account it syncs, keeping its workspaces,
+// after KyDrive stopped accepting its credential. Another account is refused.
+func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
+	d := c.d
+	server, name := d.db.Get("server"), d.db.Get("device")
+	ctx, end, err := c.begin(func() error {
+		if server == "" || d.state != "signed_out" {
+			return errors.New("this computer is not signed out")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	defer end()
+	tok, err := link.Link(ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
+	if err != nil {
+		return linkErr(ctx, err)
+	}
+	if err := d.sameAccount(tok); err != nil {
+		d.revoke(server, tok)
+		return err
+	}
+	d.work.Lock()
+	defer d.work.Unlock()
+	if err := d.stillWanted(ctx, server, tok); err != nil {
+		return err
+	}
+	return d.activate(server, name, tok)
+}
+
+// sameAccount refuses a sign-in as any account but the one recorded at link. An install
+// linked before accounts were recorded cannot be checked, so it is refused too.
+func (d *daemon) sameAccount(tok api.Token) error {
+	switch was := d.db.Get("user"); {
+	case was == "":
+		return errors.New("this computer was linked before KyDrive recorded which account it syncs, so it cannot sign in again; unlink, then link it")
+	case tok.User != was:
+		return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
+	}
+	return nil
+}
+
+// stillWanted refuses an approval that arrived after CancelLink or Unlink, revoking it;
+// otherwise the link is committed and nothing is left to cancel. The caller holds d.work,
+// which Unlink takes after cancelling.
+func (d *daemon) stillWanted(ctx context.Context, server string, tok api.Token) error {
+	d.mu.Lock()
+	cancelled := ctx.Err() != nil
+	if !cancelled {
+		d.linking = nil
+	}
+	d.mu.Unlock()
+	if !cancelled {
+		return nil
+	}
+	d.revoke(server, tok)
+	return errors.New("linking was cancelled")
+}
+
+// revoke drops a credential the server issued but this computer will not use.
+func (d *daemon) revoke(server string, tok api.Token) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := (&api.Client{Base: server, Token: tok.Token, HTTP: d.http}).RevokeSelf(ctx); err != nil {
+		log.Printf("link: the server did not revoke an unused link: %v", err)
+	}
+}
+
+// CancelLink ends a link or sign-in waiting for approval in the browser. One already approved
+// and being saved cannot be cancelled.
+func (c *Core) CancelLink(_ struct{}, _ *struct{}) error {
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.linking == nil {
+		return errors.New("no link is waiting for approval")
+	}
+	c.d.cancelLink()
 	return nil
 }
 
@@ -165,13 +300,16 @@ func (d *daemon) finishWipe() error {
 }
 
 func wipeUnfinished(err error) error {
-	return errors.New("files from this computer's revoked link are not all removed yet; close any app using them and try again: " + err.Error())
+	return errors.New("files from this computer's previous link are not all removed yet; close any app using them and try again: " + err.Error())
 }
 
 // Unlink revokes this device on the server (best effort) and forgets the credential. Local
 // files stay unless RemoveFiles, which still keeps unuploaded edits in Unsynced/.
 func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	d := c.d
+	d.mu.Lock()
+	d.cancelLink()
+	d.mu.Unlock()
 	d.work.Lock()
 	defer d.work.Unlock()
 	// Unlink drops the bindings, which an unfinished wipe still needs.
@@ -185,25 +323,27 @@ func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 		}
 		cancel()
 	}
-	ws, err := d.db.Workspaces()
-	if err != nil {
-		return err
-	}
+	var wiped error
 	if in.RemoveFiles {
-		err = d.engine().Wipe()
+		// Recorded first, like a wipe the server asks for: a file that cannot go yet (open
+		// elsewhere) is removed by a later pass, and Link waits for it.
+		if err := d.engine().StartWipe(); err != nil {
+			wiped = wipeUnfinished(err)
+		}
 	} else {
+		ws, err := d.db.Workspaces()
 		for _, w := range ws {
 			err = errors.Join(err, d.db.DropWorkspace(w.ID))
 		}
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.forget()
 	d.state, d.lastErr = "unlinked", ""
-	return errors.Join(d.db.Set("server", ""), d.db.Set("devices_url", ""))
+	return errors.Join(wiped, d.db.Set("server", ""), d.db.Set("devices_url", ""), d.db.Set("user", ""))
 }
 
 type Choice struct {

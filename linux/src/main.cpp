@@ -58,15 +58,20 @@ int main(int argc, char* argv[])
     tray.setContextMenu(menu);
     QObject::connect(&tray, &KStatusNotifierItem::quitRequested, &app, &QCoreApplication::quit);
 
-    QObject::connect(&core, &CoreClient::statusChanged, &tray, [&] {
+    const auto tip = [&] {
         const QVariantMap s = core.status();
         pause->setChecked(s.value(QStringLiteral("Paused")).toBool());
+        // A core that stopped answering never shows its last state.
         tray.setToolTip(QStringLiteral("com.kysecurity.drive"), QStringLiteral("KyDrive"),
-                        s.value(QStringLiteral("Linked")).toBool() ? s.value(QStringLiteral("State")).toString() : i18n("Not linked"));
-    });
+                        !core.connected() ? i18n("Not running")
+                        : s.value(QStringLiteral("Linked")).toBool() ? s.value(QStringLiteral("State")).toString() : i18n("Not linked"));
+    };
+    QObject::connect(&core, &CoreClient::statusChanged, &tray, tip);
+    QObject::connect(&core, &CoreClient::connectedChanged, &tray, tip);
     QObject::connect(&core, &CoreClient::warning, &tray, [&](const QString& message) {
         tray.showMessage(QStringLiteral("KyDrive"), message, QStringLiteral("dialog-warning"));
     });
+
     // Launching the app again shows the running one's window.
     QObject::connect(&service, &KDBusService::activateRequested, window, [window] {
         window->show();

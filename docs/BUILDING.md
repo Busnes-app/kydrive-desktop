@@ -29,8 +29,8 @@ go build ./cmd/kydrive-sync
 ./kydrive-sync ctl Status
 ```
 
-`ctl` methods: `Status`, `Link`, `Unlink`, `Workspaces`, `Choose`, `Pause`, `Conflicts`,
-`Activity`, `ConfirmDeletes`. They are JSON-RPC 1.0 calls `Core.<Method>` on the socket at
+`ctl` methods: `Status`, `Link`, `SignIn`, `CancelLink`, `Unlink`, `Workspaces`, `Choose`, `Pause`,
+`Conflicts`, `Activity`, `ConfirmDeletes`. They are JSON-RPC 1.0 calls `Core.<Method>` on the socket at
 `$XDG_RUNTIME_DIR/kydrive/sync.sock` (Linux), `~/Library/Application Support/kydrive/sync.sock`
 (macOS) or `<user config dir>/kydrive/sync.sock`.
 

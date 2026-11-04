@@ -31,6 +31,9 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// KyDrive stopped accepting this computer's credential: sign in again to the same account.
+    var signedOut: Bool { status.state == "signed_out" && !status.server.isEmpty }
+
     var shownError: String? {
         let e = offline ?? (actionError.isEmpty ? status.error : actionError)
         return e.isEmpty ? nil : e
@@ -73,10 +76,15 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    /// Returns once the user approves in the browser the core opened, or after its ten-minute timeout.
-    func link(server: String, name: String) async {
+    /// Link and SignIn return once the user approves in the browser, after the core's
+    /// ten-minute timeout, or on CancelLink.
+    func link(server: String, name: String) async { await waitForBrowser("Link", ["Server": server, "Name": name]) }
+    func signIn() async { await waitForBrowser("SignIn", [:]) }
+    func cancelLink() async { await act("CancelLink", [:]) }
+
+    private func waitForBrowser(_ method: String, _ params: [String: Any]) async {
         linking = true
-        await act("Link", ["Server": server, "Name": name])
+        await act(method, params)
         linking = false
         if actionError.isEmpty { await loadWorkspaces() }
     }

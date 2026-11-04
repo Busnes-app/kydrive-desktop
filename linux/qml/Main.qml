@@ -11,6 +11,8 @@ Kirigami.ApplicationWindow {
     width: Kirigami.Units.gridUnit * 30
     height: Kirigami.Units.gridUnit * 36
     readonly property bool linked: Core.status.Linked === true
+    // KyDrive stopped accepting this computer's credential: sign in again to the same account.
+    readonly property bool signedOut: Core.status.State === "signed_out" && !!Core.status.Server
 
     onLinkedChanged: if (linked) Core.loadWorkspaces()
     function showAppearance() {
@@ -36,7 +38,7 @@ Kirigami.ApplicationWindow {
 
     pageStack.initialPage: Kirigami.ScrollablePage {
         id: page
-        title: root.linked ? Core.status.Server : i18n("Link this computer")
+        title: root.linked || root.signedOut ? Core.status.Server : i18n("Link this computer")
         background: Rectangle { color: theme.bg }
         Component.onCompleted: theme.paint(Kirigami.Theme, () => theme.bg)
         onGlobalToolBarItemChanged: if (globalToolBarItem) theme.paint(globalToolBarItem.Kirigami.Theme, () => theme.panel)
@@ -64,9 +66,10 @@ Kirigami.ApplicationWindow {
                 text: i18n("Unlink…")
                 icon.name: "network-disconnect"
                 icon.color: theme.danger
-                visible: root.linked
+                visible: root.linked || root.signedOut
                 onTriggered: unlinkDialog.open()
             },
+
             Kirigami.Action {
                 text: i18n("Appearance")
                 icon.name: "preferences-desktop-theme-global"
@@ -111,7 +114,7 @@ Kirigami.ApplicationWindow {
                 spacing: Kirigami.Units.smallSpacing * 2
                 Controls.Label {
                     Layout.fillWidth: true
-                    text: root.linked ? (Core.status.Server || "") : i18n("Link this computer")
+                    text: root.linked || root.signedOut ? (Core.status.Server || "") : i18n("Link this computer")
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                     font.pixelSize: theme.typeTitle
@@ -120,7 +123,7 @@ Kirigami.ApplicationWindow {
                 }
                 // A dot in the status colour beside the word, never colour alone.
                 RowLayout {
-                    visible: root.linked
+                    visible: root.linked || root.signedOut
                     spacing: Kirigami.Units.smallSpacing * 2
                     readonly property string state: Core.status.Paused ? "paused" : (Core.status.State || "")
                     Rectangle {
@@ -170,10 +173,40 @@ Kirigami.ApplicationWindow {
                 }
             }
 
+            // Signed out: the browser signs in to the same account; the workspaces stay.
+            Card {
+                theme: root.ky
+                visible: root.signedOut
+                Controls.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: theme.typeBody
+                    color: theme.inkStrong
+                    text: i18n("KyDrive no longer accepts this computer's sign-in. Sign in again with the same account to keep syncing your workspaces.")
+                }
+                RowLayout {
+                    Layout.topMargin: Kirigami.Units.gridUnit
+                    spacing: Kirigami.Units.smallSpacing * 2
+                    KyButton {
+                        theme: root.ky
+                        kind: "primary"
+                        text: Core.linking ? i18n("Waiting for approval in your browser…") : i18n("Sign in again")
+                        enabled: !Core.linking
+                        onClicked: Core.signIn()
+                    }
+                    KyButton {
+                        theme: root.ky
+                        visible: Core.linking
+                        text: i18n("Cancel")
+                        onClicked: Core.cancelLink()
+                    }
+                }
+            }
+
             // Not linked: the browser does the sign-in and approval.
             Card {
                 theme: root.ky
-                visible: !root.linked
+                visible: !root.linked && !root.signedOut
                 // Each label sits above its full-width field.
                 FieldLabel { theme: root.ky; text: i18n("KyDrive address") }
                 KyField {
@@ -193,13 +226,22 @@ Kirigami.ApplicationWindow {
                     placeholderText: i18n("This computer's name")
                     enabled: !Core.linking
                 }
-                KyButton {
+                RowLayout {
                     Layout.topMargin: Kirigami.Units.gridUnit * 1.5
-                    theme: root.ky
-                    kind: "primary"
-                    text: Core.linking ? i18n("Waiting for approval in your browser…") : i18n("Link")
-                    enabled: !Core.linking && server.text !== ""
-                    onClicked: Core.link(server.text, deviceName.text)
+                    spacing: Kirigami.Units.smallSpacing * 2
+                    KyButton {
+                        theme: root.ky
+                        kind: "primary"
+                        text: Core.linking ? i18n("Waiting for approval in your browser…") : i18n("Link")
+                        enabled: !Core.linking && server.text !== ""
+                        onClicked: Core.link(server.text, deviceName.text)
+                    }
+                    KyButton {
+                        theme: root.ky
+                        visible: Core.linking
+                        text: i18n("Cancel")
+                        onClicked: Core.cancelLink()
+                    }
                 }
             }
 
@@ -379,6 +421,7 @@ Kirigami.ApplicationWindow {
     Kirigami.PromptDialog {
         id: unlinkDialog
         title: i18n("Unlink this computer?")
+        onOpened: removeFiles.checked = false // removing files is chosen afresh each time
         subtitle: i18n("KyDrive stops syncing and this computer is revoked on the server.")
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [

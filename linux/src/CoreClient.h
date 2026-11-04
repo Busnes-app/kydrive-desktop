@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonValue>
 #include <QLocalSocket>
@@ -25,7 +26,7 @@ class CoreClient : public QObject
 public:
     using Reply = std::function<void(const QJsonValue& result, const QString& error)>;
 
-    // corePath, when set, is started once if nothing answers on socketPath.
+    // corePath, when set, is started (at most once a minute) if nothing answers on socketPath.
     explicit CoreClient(const QString& socketPath, const QString& corePath, QObject* parent = nullptr);
     ~CoreClient() override;
 
@@ -43,6 +44,8 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void loadWorkspaces();
     Q_INVOKABLE void link(const QString& server, const QString& name);
+    Q_INVOKABLE void signIn();
+    Q_INVOKABLE void cancelLink();
     Q_INVOKABLE void unlink(bool removeFiles);
     Q_INVOKABLE void choose(const QStringList& ids);
     Q_INVOKABLE void pause(bool paused);
@@ -65,6 +68,7 @@ private:
     void failAll(const QString& error);
     void setError(const QString& error);
     Reply reportErrors(Reply done = {});
+    void waitForBrowser(const QString& method, const QVariantMap& params);
 
     QString m_socketPath;
     QString m_corePath;
@@ -74,7 +78,7 @@ private:
     QHash<qint64, Reply> m_pending;
     qint64 m_nextId = 1;
     qint64 m_lastActivity = -1;
-    bool m_started = false;
+    QElapsedTimer m_started; // when the core was last started here
     bool m_linking = false;
     QVariantMap m_status;
     QVariantList m_workspaces;

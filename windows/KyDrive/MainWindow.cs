@@ -23,13 +23,20 @@ sealed class MainWindow : Window
     readonly bool notifications;
     Status? status;
     string coreError = "", actionError = "", heldKey = "", conflictKey = "";
-    bool busy, linking, started, shown, wasLinked, quitting;
+    bool busy, linking, shown, wasLinked, quitting;
+    DateTime started; // when this app last started the core
 
     readonly InfoBar errorBar = new() { Severity = InfoBarSeverity.Error, IsClosable = false };
     readonly StackPanel linkForm = new() { Spacing = 12 };
     readonly TextBox server = new() { Header = "KyDrive address", PlaceholderText = "https://drive.example.com" };
     readonly TextBox deviceName = new() { Header = "Computer name", PlaceholderText = "This computer's name" };
     readonly Button linkButton = new();
+    readonly Button cancelLink;
+    // Signed out: sign in again to the same account; the workspaces stay.
+    readonly StackPanel signInPanel = new() { Spacing = 12 };
+    readonly Button signInButton = new();
+    readonly Button cancelSignIn;
+    readonly Button signInUnlink;
     readonly StackPanel linked = new() { Spacing = 12 };
     readonly TextBlock serverText = Plain("");
     readonly TextBlock stateText = Plain("");
@@ -58,10 +65,17 @@ sealed class MainWindow : Window
         };
 
         server.TextChanged += (_, _) => Render();
-        linkButton.Click += (_, _) => Link();
+        linkButton.Click += (_, _) => WaitForBrowser(c => c.Link(server.Text, deviceName.Text));
+        cancelLink = Act("Cancel", () => Run(c => c.CancelLink()));
         linkForm.Children.Add(server);
         linkForm.Children.Add(deviceName);
-        linkForm.Children.Add(linkButton);
+        linkForm.Children.Add(Row(linkButton, cancelLink));
+
+        signInButton.Click += (_, _) => WaitForBrowser(c => c.SignIn());
+        cancelSignIn = Act("Cancel", () => Run(c => c.CancelLink()));
+        signInUnlink = Act("Unlink…", ConfirmUnlink);
+        signInPanel.Children.Add(Plain("KyDrive no longer accepts this computer's sign-in. Sign in again with the same account to keep syncing your workspaces."));
+        signInPanel.Children.Add(Row(signInButton, cancelSignIn, signInUnlink));
 
         pauseButton.Click += (_, _) => TogglePause();
         var actions = Row(Act("Open folder", OpenFolder), Act("Open in browser", OpenInBrowser), pauseButton, Act("Unlink…", ConfirmUnlink));
@@ -74,6 +88,7 @@ sealed class MainWindow : Window
 
         var page = new StackPanel { Spacing = 16, Padding = new Thickness(24) };
         page.Children.Add(errorBar);
+        page.Children.Add(signInPanel);
         page.Children.Add(linkForm);
         page.Children.Add(linked);
         Content = new ScrollViewer { Content = page };
@@ -139,10 +154,10 @@ sealed class MainWindow : Window
         catch (CoreNotRunningException e)
         {
             coreError = e.Message;
-            // Nothing listening: start the bundled core once, then let the next poll retry.
-            if (!started)
+            // Nothing listening: start the bundled core, at most once a minute; the next poll retries.
+            if (DateTime.UtcNow - started > TimeSpan.FromMinutes(1))
             {
-                started = true;
+                started = DateTime.UtcNow;
                 StartCore();
             }
             else if (!shown)
@@ -170,15 +185,22 @@ sealed class MainWindow : Window
         errorBar.Message = error;
         errorBar.IsOpen = error != "";
 
-        linkForm.Visibility = Show(s != null && !isLinked);
+        var signedOut = s?.State == "signed_out" && !string.IsNullOrEmpty(s.Server);
+        signInPanel.Visibility = Show(signedOut);
+        signInButton.Content = linking ? "Waiting for approval in your browser…" : "Sign in again";
+        signInButton.IsEnabled = !linking;
+        signInUnlink.Visibility = Show(!isLinked);
+        linkForm.Visibility = Show(s != null && !isLinked && !signedOut);
         server.IsEnabled = deviceName.IsEnabled = !linking;
         linkButton.Content = linking ? "Waiting for approval in your browser…" : "Link";
         linkButton.IsEnabled = !linking && server.Text.Trim() != "";
+        cancelLink.Visibility = cancelSignIn.Visibility = Show(linking);
         // An empty list is one that did not load: applying it would remove every workspace.
         apply.IsEnabled = choices.Children.Count > 0;
 
         linked.Visibility = Show(isLinked);
-        tray.ToolTipText = isLinked ? "KyDrive: " + s!.State : "KyDrive: not linked";
+        // A core that stopped answering never shows its last state.
+        tray.ToolTipText = coreError != "" ? "KyDrive: not running" : isLinked ? "KyDrive: " + s!.State : "KyDrive: not linked";
         if (s == null)
             return;
         serverText.Text = s.Server ?? "";
@@ -253,19 +275,20 @@ sealed class MainWindow : Window
         {
             actionError = e.Message;
         }
-        if (reload)
+        // After a failure the list keeps the user's choice and the error stays up.
+        if (reload && actionError == "")
             LoadWorkspaces();
         await Refresh();
     }
 
-    async void Link()
+    // Link or SignIn: the core opens the browser; this returns once the user approves there.
+    async void WaitForBrowser(Func<CoreClient, Task> call)
     {
         linking = true;
         Render();
         try
         {
-            // The core opens the browser; this returns once the user approves there.
-            await core.Link(server.Text, deviceName.Text);
+            await call(core);
             actionError = "";
         }
         catch (CoreException e)

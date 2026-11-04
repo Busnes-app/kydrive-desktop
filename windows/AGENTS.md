@@ -3,7 +3,7 @@ The Windows shell: a WinUI 3 (Windows App SDK) tray app (`KyDrive.exe`, package 
 
 ## Ownership
 - `KyDrive.Client/` — `CoreClient` (JSON-RPC 1.0 over the core's AF_UNIX socket, one connection per call), `Paths.SocketPath`, `Safe` (http/https check, toast XML), `Warnings`. Plain `net10.0`, no UI: everything testable lives here.
-- `KyDrive/` — `Program.cs` (single instance via `AppInstance`), `App.xaml(.cs)` (resources, toast registration), `MainWindow.cs` (window built in code, tray icon), `Package.appxmanifest`, `Assets/` (from `linux/packaging/icons`).
+- `KyDrive/` — `Program.cs` (single instance via `AppInstance`), `App.xaml(.cs)` (resources, toast registration), `MainWindow.cs` (window built in code, tray icon; link form with Cancel, sign-in-again panel when `signed_out`), `Package.appxmanifest`, `Assets/` (from `linux/packaging/icons`).
 - `launch-check.ps1` — CI: launches a build and waits, via UI Automation, for the link form.
 - `KyDrive.Tests/` — xUnit: IPC against `FakeCore` on a real AF_UNIX socket, the socket path against the real core, link and toast safety, a plain-text guard over the app sources.
 
@@ -13,7 +13,7 @@ The Windows shell: a WinUI 3 (Windows App SDK) tray app (`KyDrive.exe`, package 
 - **MSIX AppData write virtualization stays disabled** (`desktop6:FileSystemWriteVirtualization`, `unvirtualizedResources`). Under it the core's `bind()` lands in the package's `LocalCache` and the shell's `connect()` to the contract path fails (seen on CI: "An invalid argument was supplied"); it would also give the MSIX and the zip separate state over one `~/KyDrive`.
 - **Server and core strings are plain text:** `TextBlock.Text`, `InfoBar.Message` and other string properties only; no `RichTextBlock`, `XamlReader`, `Hyperlink`, `Inlines` or WebView (`SafetyTests.AppRendersPlainTextOnly`). Toasts are built as an XML tree by `Safe.ToastXml`, never by string concatenation or `AppNotificationBuilder`.
 - **Links:** only `http`/`https` URIs from `Safe.WebUri` reach `Launcher`. Open folder starts `%WINDIR%\explorer.exe` by full path with an existing absolute directory, never `UseShellExecute`.
-- **The core** is `kydrive-sync.exe` beside `KyDrive.exe`. If nothing answers, the app starts it once as a hidden per-user process; it keeps running after the app quits. The csproj fails without `windows/build/core/<Platform>/kydrive-sync.exe`.
+- **The core** is `kydrive-sync.exe` beside `KyDrive.exe`. If nothing answers, the app starts it as a hidden per-user process, at most once a minute, and the tray says "not running"; it keeps running after the app quits. The csproj fails without `windows/build/core/<Platform>/kydrive-sync.exe`.
 - **Tray:** `H.NotifyIcon.WinUI` (MIT), native popup menu (`ContextMenuMode.PopupMenu`); its commands may arrive off the UI thread, so `Command` enqueues on the window's dispatcher.
 
 ## Work Guidance

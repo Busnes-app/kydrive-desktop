@@ -67,6 +67,7 @@ type Snapshot struct {
 
 type Token struct {
 	Token      string `json:"token"`
+	User       string `json:"user"` // the account that approved the link
 	DevicesURL string `json:"devices_url"`
 }
 

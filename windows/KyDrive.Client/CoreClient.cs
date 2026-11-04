@@ -31,8 +31,11 @@ public sealed class CoreClient(string socketPath)
     public async Task<Choice[]> Workspaces(CancellationToken ct = default) => await Call<Choice[]?>("Workspaces", null, ct) ?? [];
     public async Task<Issue[]> Conflicts(CancellationToken ct = default) => await Call<Issue[]?>("Conflicts", null, ct) ?? [];
     public async Task<Activity[]> Activity(long after, CancellationToken ct = default) => await Call<Activity[]?>("Activity", new { After = after }, ct) ?? [];
-    // Returns once the user approves in the browser, or after the core's ten-minute timeout.
+    // Link and SignIn return once the user approves in the browser, after the core's ten-minute
+    // timeout, or on CancelLink.
     public Task Link(string server, string name, CancellationToken ct = default) => Call<object>("Link", new { Server = server, Name = name }, ct);
+    public Task SignIn(CancellationToken ct = default) => Call<object>("SignIn", null, ct);
+    public Task CancelLink(CancellationToken ct = default) => Call<object>("CancelLink", null, ct);
     public Task Unlink(bool removeFiles, CancellationToken ct = default) => Call<object>("Unlink", new { RemoveFiles = removeFiles }, ct);
     public Task Choose(IEnumerable<string> ids, CancellationToken ct = default) => Call<object>("Choose", new { IDs = ids.ToArray() }, ct);
     public Task Pause(bool paused, CancellationToken ct = default) => Call<object>("Pause", new { Paused = paused }, ct);

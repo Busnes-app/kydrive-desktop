@@ -109,6 +109,18 @@ private slots:
         show(core, socket, QStringLiteral("unlinked"));
     }
 
+    // A plain 401, or no credential in the keyring: the sign-in card instead of the link form.
+    void signedOut()
+    {
+        QTemporaryDir dir;
+        const QString socket = dir.filePath(QStringLiteral("s"));
+        FakeCore core(socket);
+        core.status = {{QStringLiteral("Linked"), false}, {QStringLiteral("State"), QStringLiteral("signed_out")},
+                       {QStringLiteral("Server"), QStringLiteral("https://drive.example.com")}};
+        core.conflicts = {};
+        show(core, socket, QStringLiteral("signed-out"));
+    }
+
     void linked()
     {
         QTemporaryDir dir;

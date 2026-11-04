@@ -234,6 +234,14 @@ func (d *DB) AddIssue(workspace, path, kind, detail string) error {
 	return err
 }
 
+// AddIssueOnce adds an issue unless the same one is already listed.
+func (d *DB) AddIssueOnce(workspace, path, kind, detail string) error {
+	_, err := d.db.Exec(`INSERT INTO issues(workspace,path,kind,detail,created) SELECT ?,?,?,?,?
+		WHERE NOT EXISTS (SELECT 1 FROM issues WHERE workspace=? AND path=? AND kind=?)`,
+		workspace, path, kind, detail, time.Now().Unix(), workspace, path, kind)
+	return err
+}
+
 func (d *DB) Issues() ([]Issue, error) {
 	rows, err := d.db.Query(`SELECT id,workspace,path,kind,detail,created FROM issues ORDER BY id DESC LIMIT 500`)
 	if err != nil {

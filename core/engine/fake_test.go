@@ -31,6 +31,7 @@ type fake struct {
 	revoked  bool
 	wipe     bool
 	corrupt  bool // serve bytes that do not match the digest
+	reader   bool // every workspace is listed with the reader role
 }
 
 type fitem struct {
@@ -140,7 +141,11 @@ func (f *fake) workspaces(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for id, name := range f.names {
 		if f.access[id] {
-			out = append(out, map[string]any{"id": id, "name": name, "kind": "shared", "role": "editor", "head": f.head(id)})
+			role := "editor"
+			if f.reader {
+				role = "reader"
+			}
+			out = append(out, map[string]any{"id": id, "name": name, "kind": "shared", "role": role, "head": f.head(id)})
 		}
 	}
 	reply(w, 200, out)

@@ -242,23 +242,29 @@ func TestBlockedRemoteRenameRetries(t *testing.T) {
 	}
 }
 
-// An unchoose that cannot remove one file keeps the workspace, but the files it did remove
-// must not read as local deletes on the next pass.
+// An unchoose that cannot remove one file still unchooses: the file stays on disk unsynced,
+// and nothing it removed is trashed on the server or downloaded again (council pass 2 O-R4).
 func TestPartialEvictDoesNotTrash(t *testing.T) {
 	v := setup(t, map[string]string{"a/x.txt": "x", "z.txt": "z"})
 	readOnly(t, v.path("a"))
-	if err := v.e.Choose(context.Background(), nil); err == nil {
-		t.Fatal("unchoose reported success with a file left behind")
+	if err := v.e.Choose(context.Background(), nil); err != nil {
+		t.Fatal(err)
 	}
-	if v.exists("z.txt") {
-		t.Fatal("the evict stopped at the first file it could not remove")
+	if v.exists("z.txt") || !v.exists("a/x.txt") {
+		t.Fatalf("local tree %v", tree(t, v.path("")))
+	}
+	if ws, _ := v.e.DB.Workspaces(); len(ws) != 0 {
+		t.Fatalf("still chosen: %+v", ws)
 	}
 	v.sync()
 	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"a/x.txt", "z.txt"}) {
 		t.Fatalf("server paths %v; an evicted copy was trashed", got)
 	}
-	if v.read("z.txt") != "z" {
-		t.Fatal("the still-chosen workspace did not get its removed file back")
+	if v.exists("z.txt") {
+		t.Fatal("an unchosen workspace's file came back")
+	}
+	if a, _ := v.e.DB.Activity(0); !slices.ContainsFunc(a, func(x Activity) bool { return strings.Contains(x.Message, "could not be removed") }) {
+		t.Fatal("the file left behind was not reported")
 	}
 }
 
@@ -321,5 +327,35 @@ func TestFolderRetryEndsWithItsFolder(t *testing.T) {
 	}
 	if r, _ := v.e.DB.Retries(v.ws); len(r) != 0 {
 		t.Fatalf("retries left: %+v", r)
+	}
+}
+
+// Q4: a reader workspace sends nothing, but files edited or added there are listed once each.
+func TestReaderEditsAreListed(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, map[string]string{"doc.txt": "v1", "same.txt": "v1"})
+	f.mu.Lock()
+	f.reader = true
+	f.mu.Unlock()
+	v.write("doc.txt", "edited")
+	v.write("new.txt", "added")
+	v.sync()
+	v.sync()
+	if v.remote("doc.txt") != "v1" {
+		t.Fatal("a reader workspace uploaded an edit")
+	}
+	issues, err := v.e.DB.Issues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, i := range issues {
+		if i.Kind == "readonly" {
+			got = append(got, i.Path)
+		}
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"doc.txt", "new.txt"}) {
+		t.Fatalf("listed %v", got)
 	}
 }
