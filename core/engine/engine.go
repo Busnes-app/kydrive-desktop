@@ -418,7 +418,8 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 			return err
 		}
 		p = aside
-		if fi, err := os.Lstat(p); err == nil && !e.changed(*it, p, fi) {
+		// Hashed too: an edit written in place that kept the size and mtime is kept.
+		if fi, err := os.Lstat(p); err == nil && !e.changed(*it, p, fi) && sameContent(p, it.Digest) {
 			if err := os.Remove(p); err != nil {
 				return err
 			}

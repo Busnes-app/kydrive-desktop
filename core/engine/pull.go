@@ -361,6 +361,22 @@ func (e *Engine) skip(w Workspace, it Item, why string) error {
 	return e.DB.PutItem(it)
 }
 
+// occupied reports that rel is still recorded as another file, which the server moved or
+// removed: its own change, later in this pull or the next, frees the name. When that file
+// waits in retries for this item's name in turn (two names swapped), its copy is evicted
+// instead, and downloads again in its new place.
+func (e *Engine) occupied(w Workspace, id, rel string) (bool, error) {
+	o, err := e.DB.ItemAt(w.ID, rel)
+	if err != nil || o == nil || o.ID == id || o.State == "skipped" {
+		return false, err
+	}
+	retries, err := e.DB.Retries(w.ID)
+	if err != nil || o.Kind != "file" || !slices.ContainsFunc(retries, func(f api.File) bool { return f.ID == o.ID && f.Name != "" }) {
+		return true, err
+	}
+	return false, e.evict(w, rel)
+}
+
 // relocate moves the local copy of an item from one path to another. It refuses, leaving
 // everything in place, when something already occupies the destination.
 func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
@@ -370,6 +386,10 @@ func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
 	}
 	dst, err := e.abs(w, to)
 	if err != nil {
+		return false, err
+	}
+	// Another item's record holds the destination until its own change moves it.
+	if o, err := e.DB.ItemAt(w.ID, to); err != nil || o != nil && o.State != "skipped" {
 		return false, err
 	}
 	sfi, serr := os.Lstat(src)
@@ -455,6 +475,12 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	if old != nil && (old.State == "skipped" || old.Workspace != w.ID) {
 		old = nil
 	}
+	if wait, err := e.occupied(w, f.ID, rel); err != nil || wait {
+		if err == nil {
+			_, err = e.DB.AddRetry(w.ID, f) // the other item's own change frees the name
+		}
+		return err
+	}
 	if old != nil && old.Path != rel {
 		ok, err := e.relocate(w, old.Path, rel)
 		if err == nil && !ok {
@@ -486,7 +512,8 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 			it := fileItem(w, f, rel)
 			it.LocalSize, it.LocalMtime, it.LocalInode = old.LocalSize, old.LocalMtime, old.LocalInode
 			return e.keep(it)
-		case old != nil && !e.changed(*old, p, fi):
+		case old != nil && !e.changed(*old, p, fi) && sameContent(p, old.Digest):
+			// Hashed too: an edit written in place that kept the size and mtime is not replaced.
 		case sameContent(p, f.Digest):
 			// fi and the file ID were read before hashing: a change during the hash shows later.
 			return e.record(w, f, rel, fi, id)

@@ -308,8 +308,23 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 			continue
 		}
 		total++
-		if dir, ok := at[it.Path]; it.State != "synced" || (ok && dir == (it.Kind == "folder")) {
+		dir, ok := at[it.Path]
+		if it.State != "synced" || (ok && dir == (it.Kind == "folder")) {
 			continue
+		}
+		if !ok && !folderGone {
+			// Not listed but not missing: a link or special file took its place (a folder moved
+			// to another disk, a link left behind), or a link above it. Not a local delete.
+			p, err := e.abs(w, it.Path)
+			if err != nil {
+				continue
+			}
+			if _, err := os.Lstat(p); err == nil {
+				if err := e.DB.AddIssueOnce(w.ID, it.Path, "skipped", "a link or special file is in its place; not synced"); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		count++
 		if len(top) == 0 || !strings.HasPrefix(it.Path, top[len(top)-1].Path+"/") {

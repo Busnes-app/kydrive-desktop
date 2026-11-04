@@ -181,7 +181,11 @@ func (d *DB) Tree(workspace, path string) ([]Item, error) {
 }
 
 // MoveTree rewrites the paths of the item at from and everything below it.
+// A skipped record there (a case twin, a refused name) gives way; its own change re-adds it.
 func (d *DB) MoveTree(workspace, from, to string) error {
+	if _, err := d.db.Exec(`DELETE FROM items WHERE state='skipped' AND `+under, workspace, to, to, to); err != nil {
+		return err
+	}
 	_, err := d.db.Exec(`UPDATE items SET path=?||substr(path,length(?)+1) WHERE `+under, to, from, workspace, from, from, from)
 	return err
 }
