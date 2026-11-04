@@ -67,7 +67,8 @@ type Snapshot struct {
 
 type Token struct {
 	Token      string `json:"token"`
-	User       string `json:"user"` // the account that approved the link
+	UserID     string `json:"user_id"` // immutable account identity; absent on older servers
+	User       string `json:"user"`    // the account that approved the link
 	DevicesURL string `json:"devices_url"`
 }
 
@@ -143,6 +144,29 @@ func (c *Client) call(ctx context.Context, method, path string, in, out any) err
 		return nil
 	}
 	return json.NewDecoder(res.Body).Decode(out)
+}
+
+// Account is the account a device credential belongs to. User is its current username.
+type Account struct {
+	UserID string `json:"user_id"`
+	User   string `json:"user"`
+}
+
+// DeviceAccount is unavailable (404) on older servers. A malformed success is not an old server.
+func (c *Client) DeviceAccount(ctx context.Context) (Account, error) {
+	var out Account
+	res, err := c.do(ctx, "GET", "/api/drive/device", nil, nil)
+	if err != nil {
+		return out, err
+	}
+	defer res.Body.Close()
+	if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&out); err != nil {
+		return out, err
+	}
+	if out.UserID == "" || out.User == "" {
+		return out, errors.New("KyDrive did not confirm this computer's account identity")
+	}
+	return out, nil
 }
 
 func (c *Client) Workspaces(ctx context.Context) ([]Workspace, error) {
@@ -253,8 +277,21 @@ func (c *Client) TrashFile(ctx context.Context, id string, revision int64) error
 	return c.call(ctx, "PUT", "/api/drive/files/"+url.PathEscape(id)+"/trash", map[string]any{"revision": revision, "trashed": true}, nil)
 }
 
-func (c *Client) TrashFolder(ctx context.Context, id string) error {
-	return c.call(ctx, "PUT", "/api/drive/folders/"+url.PathEscape(id)+"/trash", map[string]bool{"trashed": true}, nil)
+func (c *Client) TrashFolder(ctx context.Context, id string, head int64) error {
+	path := "/api/drive/folders/" + url.PathEscape(id) + "/trash"
+	err := c.call(ctx, "PUT", path, map[string]any{"trashed": true, "head": head}, nil)
+	if Status(err) != http.StatusBadRequest {
+		return err
+	}
+	// Old servers reject unknown JSON fields. Only a missing device-account route
+	// identifies that legacy surface; never retry a 409 or downgrade a modern server.
+	if _, probe := c.DeviceAccount(ctx); Status(probe) != http.StatusNotFound {
+		if probe != nil {
+			return probe
+		}
+		return err
+	}
+	return c.call(ctx, "PUT", path, map[string]bool{"trashed": true}, nil)
 }
 
 // RevokeSelf revokes this device on the server without a wipe. An already revoked device

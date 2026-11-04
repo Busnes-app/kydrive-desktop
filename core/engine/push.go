@@ -410,7 +410,7 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 			continue
 		}
 		if it.Kind == "folder" {
-			err = e.API.TrashFolder(ctx, it.ID)
+			err = e.API.TrashFolder(ctx, it.ID, w.Cursor)
 		} else {
 			err = e.API.TrashFile(ctx, it.ID, it.Revision)
 		}
@@ -420,6 +420,10 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 				return err
 			}
 		case s == 409:
+			if it.Kind == "folder" {
+				busy[it.ID] = true // preserve its synced record and confirmation; pull again before deciding
+				continue
+			}
 			// Changed on the server since; its version comes back with the next pull.
 			it.State = "stale"
 			if err := e.DB.PutItem(it); err != nil {

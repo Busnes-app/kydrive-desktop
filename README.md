@@ -56,6 +56,10 @@ a computer or unlinking has deliberate local-copy behavior; review pending edits
 Files kept when unlinking stay separate: newly selected workspaces use fresh folders, adding
 ` (2)` or another number when a name is already on disk. Retained files are never automatically
 uploaded to the newly linked account.
+**Sign in again** keeps the chosen workspaces after an expired credential, including when the account was renamed on an updated server. After upgrading, leave an existing linked app connected for one successful sync so it can record the server’s immutable account identity. Older servers without that account route still refuse Sign in again for links made before the client recorded an account; unlinking instead keeps local files and requires choosing fresh workspace folders as described above.
+
+On an updated server, a colleague’s file change arriving while a local folder deletion is being sent makes the server refuse that deletion. The next sync pulls the change before deciding again. Older servers keep the earlier feed check and its small final request window; upgrade the server for the atomic protection.
+
 The real-server script `scripts/smoke.sh` requires an actual compatible test server and
 disposable account/data. Unit tests and fake-core shell tests are separate from this gate.
 CI runs the full engine suite and the built-daemon smoke test against a pinned public

@@ -73,7 +73,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Busnes-app/kydrive-server
-          ref: a949b9ac016090a604d2ecc2bd9631f921fffad4
+          ref: 6a7ed323608e382be73559097e7fe17ea45360ce
           path: .ci/kydrive-server
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
