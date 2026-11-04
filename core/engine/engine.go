@@ -194,6 +194,12 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 			}
 			continue
 		}
+		// The workspace folder moved elsewhere with a link (a Windows junction) left in its place:
+		// nothing syncs through it, or what the scan cannot see would be trashed.
+		if fi, err := os.Lstat(e.dir(w)); err == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			failed = errors.Join(failed, fmt.Errorf("%s: %s is a link; KyDrive does not sync through links. Move the folder back to sync it", w.Name, e.dir(w)))
+			continue
+		}
 		if w.Cursor >= 0 && !w.AllowDeletes && list[i].Role != "reader" && missing(e.dir(w)) {
 			// A pull would recreate the folder and the push then trash what is missing from it,
 			// so the guard is armed first. Confirmed deletes still pull first: the server may
