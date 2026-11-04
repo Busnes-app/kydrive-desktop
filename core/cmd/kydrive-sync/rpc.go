@@ -193,7 +193,7 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 	if err := keyring.Set(keyringService, server, tok.Token); err != nil {
 		return errors.New("could not store the credential in the OS keyring: " + err.Error())
 	}
-	for k, v := range map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User} {
+	for k, v := range map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User, "user_id": tok.UserID} {
 		if err := d.db.Set(k, v); err != nil {
 			return err
 		}
@@ -244,8 +244,14 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 }
 
 // sameAccount refuses a sign-in as any account but the one recorded at link. An install
-// linked before accounts were recorded cannot be checked, so it is refused too.
+// with no immutable ID uses the legacy username check; with neither identity it is refused.
 func (d *daemon) sameAccount(tok api.Token) error {
+	if id := d.db.Get("user_id"); id != "" {
+		if tok.UserID == id {
+			return nil
+		}
+		return errors.New("the sign-in did not confirm the same KyDrive account; sign in with the original account, or unlink to use another account")
+	}
 	switch was := d.db.Get("user"); {
 	case was == "":
 		return errors.New("this computer was linked before KyDrive recorded which account it syncs, so it cannot sign in again; unlink, then link it")

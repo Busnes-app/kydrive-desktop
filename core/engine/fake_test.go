@@ -365,7 +365,10 @@ func (f *fake) moveFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fake) trash(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Revision int64 }
+	var in struct {
+		Revision int64
+		Head     *int64
+	}
 	decode(r, &in)
 	it := f.file(w, r.PathValue("id"))
 	if it == nil {
@@ -374,6 +377,23 @@ func (f *fake) trash(w http.ResponseWriter, r *http.Request) {
 	if it.kind == "file" && it.rev != in.Revision {
 		reply(w, 409, map[string]string{"error": "revision conflict"})
 		return
+	}
+	if it.kind == "folder" && in.Head != nil {
+		for i, c := range f.log {
+			if int64(i+1) <= *in.Head || c.ws != it.ws {
+				continue
+			}
+			changed := f.items[c.id]
+			if changed == nil || !f.live(changed) {
+				continue
+			}
+			for x := changed; x != nil; x = f.items[x.parent] {
+				if x.id == it.id {
+					reply(w, 409, map[string]string{"error": "folder changed since head"})
+					return
+				}
+			}
+		}
 	}
 	it.trashed = true
 	f.record(it.ws, it.kind, it.id)

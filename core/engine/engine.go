@@ -183,6 +183,21 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 	if err != nil {
 		return err
 	}
+	// Upgrade a previously linked computer using its existing device credential. Keep
+	// the old refusal when an older server has no account route; other errors fail closed.
+	if e.DB.Get("user_id") == "" {
+		account, err := e.API.DeviceAccount(ctx)
+		if err == nil {
+			if err := e.DB.Set("user_id", account.UserID); err != nil {
+				return err
+			}
+			if err := e.DB.Set("user", account.User); err != nil {
+				return err
+			}
+		} else if api.Status(err) != 404 {
+			return err
+		}
+	}
 	ws, err := e.DB.Workspaces()
 	if err != nil {
 		return err
