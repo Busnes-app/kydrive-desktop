@@ -17,6 +17,9 @@ import (
 	"syscall"
 )
 
+// version is this release; docs/RELEASING.md lists it with the shells' version fields.
+const version = "0.6.0"
+
 func main() {
 	log.SetFlags(0)
 	dir, root, sock, err := paths()
@@ -103,7 +106,7 @@ func moveState(old, dir string) error {
 
 func ctl(sock string, args []string) int {
 	if len(args) == 0 || len(args) > 2 {
-		fmt.Fprintln(os.Stderr, "usage: kydrive-sync ctl METHOD [JSON-PARAMS]\nmethods: Status Link Unlink Workspaces Choose Pause Conflicts Activity ConfirmDeletes")
+		fmt.Fprintln(os.Stderr, "usage: kydrive-sync ctl METHOD [JSON-PARAMS]\nmethods: Status Link SignIn CancelLink Unlink Workspaces Choose Pause Conflicts Activity ConfirmDeletes Quit")
 		return 2
 	}
 	params := "{}"

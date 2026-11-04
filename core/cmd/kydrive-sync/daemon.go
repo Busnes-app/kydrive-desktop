@@ -37,6 +37,7 @@ type daemon struct {
 	db              *engine.DB
 	http            *http.Client
 	open            func(url string) error
+	exit            func(code int) // os.Exit; Quit calls it
 
 	lock   *os.File       // held for the daemon's life: one core per state directory
 	memory *engine.Memory // retry backoff and announced failures, across passes
@@ -62,7 +63,7 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, kick: make(chan bool, 1), state: "unlinked", memory: engine.NewMemory(),
+	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, exit: os.Exit, kick: make(chan bool, 1), state: "unlinked", memory: engine.NewMemory(),
 		http: &http.Client{
 			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute},
 			// Never send a token or link verifier to a redirected origin or HTTP downgrade.
