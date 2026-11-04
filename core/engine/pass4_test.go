@@ -147,7 +147,7 @@ func TestCaseOnlyRenameOverSkippedTwin(t *testing.T) {
 // server version.
 func TestSameMetadataEditIsKept(t *testing.T) {
 	v := setup(t, map[string]string{"vault.bin": "AAAA", "doc.txt": "1111"})
-	inPlace := func(n string) {
+	for _, n := range []string{"vault.bin", "doc.txt"} {
 		fi, err := os.Stat(v.path(n))
 		if err != nil {
 			t.Fatal(err)
@@ -160,10 +160,8 @@ func TestSameMetadataEditIsKept(t *testing.T) {
 		f.Close()
 		os.Chtimes(v.path(n), fi.ModTime(), fi.ModTime())
 	}
-	inPlace("doc.txt")
 	v.r.Put(t, v.ws, "doc.txt", []byte("2222"))
 	v.sync()
-	inPlace("vault.bin") // not uploaded yet when the workspace is unchosen
 	if v.read("doc.txt") != "2222" || !slices.ContainsFunc(tree(t, v.path("")), func(p string) bool {
 		return strings.HasPrefix(p, "doc (conflict")
 	}) {

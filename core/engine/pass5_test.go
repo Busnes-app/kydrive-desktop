@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -134,29 +133,6 @@ func TestReaderDeleteIsRestored(t *testing.T) {
 	v.sync()
 	if got := v.r.Paths(t, v.ws); len(got) != 3 {
 		t.Fatalf("server paths %v", got)
-	}
-}
-
-// A state DB from 0.6 (no local_ctime) opens and gains the column.
-func TestOpenAddsChangeTime(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "state.db")
-	db, err := Open(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.db.Exec(`ALTER TABLE items DROP COLUMN local_ctime`); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-	if db, err = Open(p); err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.PutItem(Item{ID: "f", Workspace: "w", Kind: "file", Path: "a", LocalCtime: 7, State: "synced"}); err != nil {
-		t.Fatal(err)
-	}
-	if it, err := db.Item("f"); err != nil || it.LocalCtime != 7 {
-		t.Fatalf("%v %v", it, err)
 	}
 }
 

@@ -643,7 +643,7 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 			// The server has nothing newer (often this computer's own upload coming back); a
 			// local change since is a pending upload, not a conflict.
 			it := fileItem(w, f, rel)
-			it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = old.LocalSize, old.LocalMtime, old.LocalInode, old.LocalCtime
+			it.LocalSize, it.LocalMtime, it.LocalInode = old.LocalSize, old.LocalMtime, old.LocalInode
 			return e.keep(it)
 		case old != nil && old.State == "synced" && sameContent(p, old.Digest):
 			// The synced copy, by content: an edit written in place that kept the size and
@@ -670,12 +670,6 @@ func fileItem(w Workspace, f api.File, rel string) Item {
 func (e *Engine) record(w Workspace, f api.File, rel string, fi fs.FileInfo, id uint64) error {
 	it := fileItem(w, f, rel)
 	it.LocalSize, it.LocalMtime, it.LocalInode = fi.Size(), fi.ModTime().UnixNano(), id
-	// Read now: a rename into place moves the change time.
-	if p, err := e.abs(w, rel); err == nil {
-		if cfi, err := os.Lstat(p); err == nil {
-			it.LocalCtime = ctime(p, cfi)
-		}
-	}
 	return e.keep(it)
 }
 

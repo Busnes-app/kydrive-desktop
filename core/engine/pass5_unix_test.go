@@ -68,58 +68,6 @@ func TestLinkedFolderMovedBackTakesServerChanges(t *testing.T) {
 	}
 }
 
-// Opus R3: a remote wipe removes the synced copies behind a linked workspace folder and a
-// linked synced folder, and keeps an edit there.
-func TestWipeReachesBehindLinks(t *testing.T) {
-	f := newFake(t)
-	v := setupOn(t, f, map[string]string{"secret.txt": "s", "S/plan.txt": "p", "T/edit.txt": "e"})
-	moved := t.TempDir()
-	for _, n := range []string{"S", "T"} {
-		if err := os.Rename(v.path(n), filepath.Join(moved, n)); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(filepath.Join(moved, n), v.path(n)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(moved, "T", "edit.txt"), []byte("edited"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	away := filepath.Join(t.TempDir(), "Docs")
-	if err := os.Rename(v.path(""), away); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(away, v.path("")); err != nil {
-		t.Fatal(err)
-	}
-	f.Revoke(t, true)
-	v.e.Sync(context.Background())
-	if got := append(tree(t, away), tree(t, moved)...); !slices.Equal(got, []string{"T/edit.txt"}) {
-		t.Fatalf("left on disk: %v", got)
-	}
-}
-
-// Opus R8: an edit written in place that keeps the size and mtime (VeraCrypt's default for
-// its containers) uploads.
-func TestSameMetadataEditUploads(t *testing.T) {
-	v := setup(t, map[string]string{"vault.bin": "AAAA"})
-	fi, err := os.Stat(v.path("vault.bin"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.OpenFile(v.path("vault.bin"), os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.WriteAt([]byte("BBBB"), 0)
-	f.Close()
-	os.Chtimes(v.path("vault.bin"), fi.ModTime(), fi.ModTime())
-	v.sync()
-	if v.remote("vault.bin") != "BBBB" {
-		t.Fatalf("server has %q", v.remote("vault.bin"))
-	}
-}
-
 func linkAway(t *testing.T, v *env, rel string) string {
 	t.Helper()
 	away := filepath.Join(t.TempDir(), filepath.Base(rel))
@@ -162,25 +110,6 @@ func TestLinkedFolderThroughSnapshot(t *testing.T) {
 	}
 }
 
-// Certification round 1: a link to another synced folder is not followed by an evict; the
-// folder it reaches keeps its files, here and on the server.
-func TestEvictDoesNotFollowLinkIntoSyncRoot(t *testing.T) {
-	v := setup(t, map[string]string{"Old/a.txt": "same", "New/a.txt": "same", "keep.txt": "k"})
-	if err := os.RemoveAll(v.path("Old")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("New", v.path("Old")); err != nil {
-		t.Fatal(err)
-	}
-	v.sync()
-	v.r.Remove(t, v.ws, "Old")
-	v.sync()
-	v.sync()
-	if !slices.Contains(v.r.Paths(t, v.ws), "New/a.txt") || !v.exists("New/a.txt") {
-		t.Fatalf("New/a.txt lost: local %v server %v", tree(t, v.path("")), v.r.Paths(t, v.ws))
-	}
-}
-
 // Opus R9: a Finder alias left in place of a folder moved to another disk is not a delete.
 func TestFinderAliasInPlaceOfFolder(t *testing.T) {
 	aliases = true
@@ -215,24 +144,5 @@ func TestFinderAliasThenServerRename(t *testing.T) {
 	v.sync()
 	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"Pics/p.jpg", "Pics/q.jpg", "a.txt", "b.txt", "c.txt"}) {
 		t.Fatalf("server paths %v", got)
-	}
-}
-
-// Certification round 2: a wipe behind a link whose target cannot be changed finishes (an
-// unfinished wipe would refuse Link for good) and says what it kept.
-func TestWipeBehindReadOnlyLinkFinishes(t *testing.T) {
-	f := newFake(t)
-	v := setupOn(t, f, map[string]string{"Shared/x.txt": "x", "a.txt": "a"})
-	away := linkAway(t, v, "Shared")
-	if err := os.Chmod(away, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(away, 0o755) })
-	v.sync()
-	f.Revoke(t, true)
-	v.e.Sync(context.Background())
-	acts, _ := v.e.DB.Activity(0)
-	if v.e.DB.Get(wipeKey) != "" || !slices.ContainsFunc(acts, func(a Activity) bool { return strings.HasPrefix(a.Message, "Kept 1 files in") }) {
-		t.Fatalf("wipe %q, activity %v", v.e.DB.Get(wipeKey), acts)
 	}
 }

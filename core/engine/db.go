@@ -21,7 +21,6 @@ type Item struct {
 	LocalSize                         int64
 	LocalMtime                        int64 // UnixNano
 	LocalInode                        uint64
-	LocalCtime                        int64  // change time; 0 when not yet recorded
 	State                             string // synced, stale (local copy not ours) or skipped
 }
 
@@ -68,15 +67,6 @@ func Open(path string) (*DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
-	}
-	// Added in 0.7: an older core writing items leaves it 0, which reads as not yet recorded.
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='local_ctime'`).Scan(&n); err == nil && n == 0 {
-		_, err = db.Exec(`ALTER TABLE items ADD COLUMN local_ctime INTEGER NOT NULL DEFAULT 0`)
-		if err != nil {
-			db.Close()
-			return nil, err
-		}
 	}
 	return &DB{db}, nil
 }
@@ -129,7 +119,7 @@ func (d *DB) DropWorkspace(id string) error {
 	return err
 }
 
-const itemCols = `id,workspace,kind,parent,name,revision,digest,size,mtime,path,local_size,local_mtime,local_inode,local_ctime,state`
+const itemCols = `id,workspace,kind,parent,name,revision,digest,size,mtime,path,local_size,local_mtime,local_inode,state`
 
 func scanItems(rows *sql.Rows, err error) ([]Item, error) {
 	if err != nil {
@@ -139,7 +129,7 @@ func scanItems(rows *sql.Rows, err error) ([]Item, error) {
 	var out []Item
 	for rows.Next() {
 		var i Item
-		if err := rows.Scan(&i.ID, &i.Workspace, &i.Kind, &i.Parent, &i.Name, &i.Revision, &i.Digest, &i.Size, &i.Mtime, &i.Path, &i.LocalSize, &i.LocalMtime, &i.LocalInode, &i.LocalCtime, &i.State); err != nil {
+		if err := rows.Scan(&i.ID, &i.Workspace, &i.Kind, &i.Parent, &i.Name, &i.Revision, &i.Digest, &i.Size, &i.Mtime, &i.Path, &i.LocalSize, &i.LocalMtime, &i.LocalInode, &i.State); err != nil {
 			return nil, err
 		}
 		out = append(out, i)
@@ -172,8 +162,8 @@ func (d *DB) Siblings(workspace, parent string) ([]Item, error) {
 }
 
 func (d *DB) PutItem(i Item) error {
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO items(`+itemCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		i.ID, i.Workspace, i.Kind, i.Parent, i.Name, i.Revision, i.Digest, i.Size, i.Mtime, i.Path, i.LocalSize, i.LocalMtime, i.LocalInode, i.LocalCtime, i.State)
+	_, err := d.db.Exec(`INSERT OR REPLACE INTO items(`+itemCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		i.ID, i.Workspace, i.Kind, i.Parent, i.Name, i.Revision, i.Digest, i.Size, i.Mtime, i.Path, i.LocalSize, i.LocalMtime, i.LocalInode, i.State)
 	return err
 }
 
