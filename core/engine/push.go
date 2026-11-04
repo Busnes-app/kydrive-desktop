@@ -319,7 +319,9 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 			if err != nil {
 				continue
 			}
-			if _, err := os.Lstat(p); err == nil {
+			// A regular file or folder answering here is a case variant on a case-insensitive
+			// disk (Budget.xlsx deleted, budget.xlsx saved): that is a delete.
+			if fi, err := os.Lstat(p); err == nil && !fi.Mode().IsRegular() && !fi.IsDir() {
 				if err := e.DB.AddIssueOnce(w.ID, it.Path, "skipped", "a link or special file is in its place; not synced"); err != nil {
 					return err
 				}

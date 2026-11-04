@@ -546,6 +546,13 @@ func ignored(name string) bool {
 		strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".~lock.") || strings.HasSuffix(l, ".tmp")
 }
 
+// shortName reports a name shaped like a Windows short (8.3) name, such as REPORT~1.TXT.
+func shortName(name string) bool {
+	stem, ext := splitName(name)
+	i := strings.LastIndex(stem, "~")
+	return i > 0 && i < len(stem)-1 && len(stem) <= 8 && len(ext) <= 4 && strings.Trim(stem[i+1:], "0123456789") == ""
+}
+
 // windowsName reports whether Windows can hold name.
 func windowsName(name string) bool {
 	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") || strings.ContainsAny(name, `<>:"|?*`) {

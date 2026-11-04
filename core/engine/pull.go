@@ -337,8 +337,21 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		if err != nil {
 			return "", false, "", err
 		}
-		if slices.ContainsFunc(sib, func(s Item) bool { return s.ID != id && s.State != "skipped" && strings.EqualFold(s.Name, name) }) {
+		// The very same name is another item's record the server renamed or removed (occupied
+		// waits for it), not a case twin.
+		if slices.ContainsFunc(sib, func(s Item) bool {
+			return s.ID != id && s.State != "skipped" && s.Name != name && strings.EqualFold(s.Name, name)
+		}) {
 			return rel, true, "another item here differs only in case", nil
+		}
+	}
+	if e.WinNames && shortName(name) {
+		// Windows opens REPORT~1.TXT as Report for 2026.txt: a new item with such a name is not
+		// placed over something already here.
+		if p, err := e.abs(w, rel); err == nil && !missing(p) {
+			if it, err := e.DB.Item(id); err != nil || it == nil || it.Path != rel || it.State == "skipped" {
+				return rel, true, "on Windows this name can stand for another item here", err
+			}
 		}
 	}
 	if _, err := e.abs(w, rel); err != nil {
@@ -363,16 +376,25 @@ func (e *Engine) skip(w Workspace, it Item, why string) error {
 
 // occupied reports that rel is still recorded as another file, which the server moved or
 // removed: its own change, later in this pull or the next, frees the name. When that file
-// waits in retries for this item's name in turn (two names swapped), its copy is evicted
-// instead, and downloads again in its new place.
+// itself waits in retries to move (two names swapped), an unchanged copy of it is evicted
+// instead and downloads again in its new place; a changed one is announced and waited for.
 func (e *Engine) occupied(w Workspace, id, rel string) (bool, error) {
 	o, err := e.DB.ItemAt(w.ID, rel)
-	if err != nil || o == nil || o.ID == id || o.State == "skipped" {
+	if err != nil || o == nil || o.ID == id || o.State == "skipped" || o.Kind != "file" {
 		return false, err
 	}
 	retries, err := e.DB.Retries(w.ID)
-	if err != nil || o.Kind != "file" || !slices.ContainsFunc(retries, func(f api.File) bool { return f.ID == o.ID && f.Name != "" }) {
+	if err != nil || !slices.ContainsFunc(retries, func(f api.File) bool {
+		return f.ID == o.ID && f.Name != "" && (f.Name != o.Name || f.Parent != o.Parent)
+	}) {
 		return true, err
+	}
+	p, err := e.abs(w, rel)
+	if err != nil {
+		return true, err
+	}
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() || e.changed(*o, p, fi) || !sameContent(p, o.Digest) {
+		return true, fmt.Errorf("%s has changes here and waits to move first", rel)
 	}
 	return false, e.evict(w, rel)
 }
@@ -479,7 +501,7 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 		if err == nil {
 			_, err = e.DB.AddRetry(w.ID, f) // the other item's own change frees the name
 		}
-		return err
+		return err // announced once by retryLater
 	}
 	if old != nil && old.Path != rel {
 		ok, err := e.relocate(w, old.Path, rel)
@@ -602,7 +624,7 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		if err != nil {
 			return err
 		}
-		if old == nil || old.Path != rel || e.changed(*old, p, fi) {
+		if old == nil || old.Path != rel || e.changed(*old, p, fi) || !sameContent(p, old.Digest) {
 			_, err := e.DB.AddRetry(w.ID, f) // changed meanwhile; the next pass decides again
 			return err
 		}
