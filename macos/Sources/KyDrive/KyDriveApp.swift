@@ -9,7 +9,7 @@ struct KyDriveApp: App {
 
     var body: some Scene {
         MenuBarExtra("KyDrive", systemImage: "externaldrive.badge.icloud") {
-            MenuContent(model: delegate.model)
+            ScrollingMenu { MenuContent(model: delegate.model) }
         }
         .menuBarExtraStyle(.window)
         Settings { AppearanceSettings() }
@@ -33,15 +33,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onWarning = { message in
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: notice(message), trigger: nil))
         }
+        model.version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         model.onNotRunning = { [weak self] in self?.startCoreOnce() }
         model.start()
     }
 
     // Without the launch agent (off, or disabled in Login Items) the app starts the core itself,
     // at most once a minute. Never alongside the agent: two cores would fight over one socket.
+    // With it, launchd is asked to start the agent's core: it does not restart one that exited
+    // cleanly (an older core's Quit after an upgrade, a plain SIGTERM).
     private func startCoreOnce() {
-        guard started.map({ Date().timeIntervalSince($0) > 60 }) ?? true, agent.status != .enabled,
-              let core = Bundle.main.url(forAuxiliaryExecutable: "kydrive-sync") else { return }
+        guard started.map({ Date().timeIntervalSince($0) > 60 }) ?? true else { return }
+        if agent.status == .enabled {
+            started = Date()
+            let launchctl = Process()
+            launchctl.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            launchctl.arguments = ["kickstart", "gui/\(getuid())/com.kysecurity.drive.sync"]
+            do { try launchctl.run() } catch { NSLog("KyDrive: could not start the launch agent: %@", String(describing: error)) }
+            return
+        }
+        guard let core = Bundle.main.url(forAuxiliaryExecutable: "kydrive-sync") else { return }
         started = Date()
         let process = Process()
         process.executableURL = core

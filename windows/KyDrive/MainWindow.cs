@@ -26,6 +26,7 @@ sealed class MainWindow : Window
     string coreError = "", actionError = "", heldKey = "", conflictKey = "";
     bool busy, linking, shown, wasLinked, quitting;
     DateTime started; // when this app last started the core
+    DateTime quitAsked; // when an older core was last asked to quit
 
     readonly InfoBar errorBar = new() { Severity = InfoBarSeverity.Error, IsClosable = false };
     readonly StackPanel linkForm = new() { Spacing = 12 };
@@ -146,6 +147,21 @@ sealed class MainWindow : Window
         {
             status = await core.Status();
             coreError = "";
+            // An older core (from before an upgrade) is asked to quit, at most once a minute; it
+            // refuses while it syncs. The next poll finds none and starts this build's core.
+            if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!) && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(1))
+            {
+                quitAsked = DateTime.UtcNow;
+                try
+                {
+                    await core.Quit();
+                    started = DateTime.MinValue;
+                }
+                catch (CoreException)
+                {
+                    // Refused while it syncs: asked again in a minute.
+                }
+            }
             RenderConflicts(await core.Conflicts());
             foreach (var message in warnings.Next(await core.Activity(warnings.After)))
                 Notify(message);

@@ -21,6 +21,10 @@ public final class AppModel: ObservableObject {
     /// user turns it on.
     public var startsAtLogin: () -> Bool = { false }
     public var setStartsAtLogin: (Bool) throws -> Void = { _ in }
+    /// This app's release. A running core older than it (left from before an upgrade) is asked to
+    /// quit, at most once a minute (it refuses while it syncs), so the app's own core replaces it.
+    public var version = ""
+    private var quitAsked: Date?
 
     let core: CoreClient
     private var lastActivity: Int64 = -1
@@ -54,6 +58,11 @@ public final class AppModel: ObservableObject {
             let wasLinked = status.linked
             status = s
             offline = nil
+            if !s.version.isEmpty, !version.isEmpty, s.version.compare(version, options: .numeric) == .orderedAscending,
+               quitAsked.map({ Date().timeIntervalSince($0) > 60 }) ?? true {
+                quitAsked = Date()
+                _ = try? await core.call("Quit") as Empty
+            }
             conflicts = try await core.call("Conflicts")
             announce(try await core.call("Activity", ["After": max(lastActivity, 0)]))
             if s.linked && !wasLinked { await loadWorkspaces() }

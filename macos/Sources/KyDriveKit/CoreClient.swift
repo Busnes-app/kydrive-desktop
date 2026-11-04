@@ -29,6 +29,7 @@ public enum CoreError: LocalizedError, Equatable {
 }
 
 public struct Status: Decodable, Equatable {
+    var version = "" // the core's release; empty from a core older than Core.Quit
     var linked = false
     var server = "", devicesURL = "", root = "", state = "", error = ""
     var paused = false
@@ -36,7 +37,7 @@ public struct Status: Decodable, Equatable {
     var workspaces: [WorkspaceStatus]? = nil // null when none are chosen
 
     enum CodingKeys: String, CodingKey {
-        case linked = "Linked", server = "Server", devicesURL = "DevicesURL", root = "Root", state = "State",
+        case version = "Version", linked = "Linked", server = "Server", devicesURL = "DevicesURL", root = "Root", state = "State",
              error = "Error", paused = "Paused", lastSync = "LastSync", workspaces = "Workspaces"
     }
 }
