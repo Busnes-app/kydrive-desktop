@@ -28,14 +28,49 @@ func noConflicts(t *testing.T, v *env) {
 
 // O-R1: a server rename that frees a name a new file then takes, seen through a snapshot
 // (any new server folder forces one), is not a conflict.
-// foldBoth runs f with CaseFold off and on (the Windows and macOS rule for case twins).
+// foldBoth runs f with exact names, with case twins folded (macOS), and with the Windows
+// name rules too.
 func foldBoth(t *testing.T, files map[string]string, f func(t *testing.T, v *env)) {
-	for _, fold := range []bool{false, true} {
-		t.Run(map[bool]string{false: "exact", true: "casefold"}[fold], func(t *testing.T) {
+	for _, mode := range []string{"exact", "casefold", "windows"} {
+		t.Run(mode, func(t *testing.T) {
 			v := setup(t, files)
-			v.e.CaseFold = fold
+			v.e.CaseFold, v.e.WinNames = mode != "exact", mode == "windows"
 			f(t, v)
 		})
+	}
+}
+
+// A real file with a short-shaped name is reused and renamed in case like any other.
+func TestShortShapedNameReuseAndCaseRename(t *testing.T) {
+	foldBoth(t, map[string]string{"REPORT~1.TXT": "old", "NOTES~2.TXT": "n"}, func(t *testing.T, v *env) {
+		v.r.Remove(t, v.ws, "REPORT~1.TXT")
+		v.r.Put(t, v.ws, "REPORT~1.TXT", []byte("new"))
+		v.r.Rename(t, v.ws, "NOTES~2.TXT", "notes~2.txt")
+		v.sync()
+		v.sync()
+		noConflicts(t, v)
+		if v.read("REPORT~1.TXT") != "new" || v.read("notes~2.txt") != "n" {
+			t.Fatalf("local %v", tree(t, v.path("")))
+		}
+		if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"REPORT~1.TXT", "notes~2.txt"}) {
+			t.Fatalf("server paths %v", got)
+		}
+	})
+}
+
+// A folder moved onto a path still recorded for a folder deleted here and on the server waits
+// for that record to go, instead of failing the pull with a UNIQUE error.
+func TestFolderMoveOntoARecordedPathWaits(t *testing.T) {
+	v := setup(t, map[string]string{"F/x.txt": "x", "G/y.txt": "y"})
+	if err := os.RemoveAll(v.path("F")); err != nil {
+		t.Fatal(err)
+	}
+	v.r.Remove(t, v.ws, "F")
+	v.r.Rename(t, v.ws, "G", "F")
+	v.sync()
+	v.sync()
+	if got := tree(t, v.path("")); !slices.Equal(got, []string{"F/y.txt"}) {
+		t.Fatalf("local %v", got)
 	}
 }
 
@@ -237,4 +272,26 @@ func TestSameMetadataEditDuringDownloadIsKept(t *testing.T) {
 	if !kept || v.read("doc.txt") != "2222" {
 		t.Fatalf("the edit was replaced: %v", tree(t, v.path("")))
 	}
+}
+
+// Certification round 2: a swap where both copies have edits not yet uploaded converges too;
+// both edits reach the files they belong to.
+func TestServerSwapWithBothEdited(t *testing.T) {
+	foldBoth(t, map[string]string{"a.txt": "A", "b.txt": "B"}, func(t *testing.T, v *env) {
+		v.write("a.txt", "A-edited")
+		v.write("b.txt", "B-edited")
+		v.r.Rename(t, v.ws, "a.txt", "t.txt")
+		v.r.Rename(t, v.ws, "b.txt", "a.txt")
+		v.r.Rename(t, v.ws, "t.txt", "b.txt")
+		for range 5 {
+			v.sync()
+		}
+		noConflicts(t, v)
+		if got := tree(t, v.root); slices.ContainsFunc(got, func(p string) bool { return strings.HasPrefix(p, "Unsynced") }) {
+			t.Fatalf("an edit left syncing: %v", got)
+		}
+		if v.remote("b.txt") != "A-edited" || v.remote("a.txt") != "B-edited" || v.read("b.txt") != "A-edited" || v.read("a.txt") != "B-edited" {
+			t.Fatalf("server a %q b %q; local a %q b %q", v.remote("a.txt"), v.remote("b.txt"), v.read("a.txt"), v.read("b.txt"))
+		}
+	})
 }

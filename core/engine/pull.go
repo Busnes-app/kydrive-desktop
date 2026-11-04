@@ -349,7 +349,7 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		// Windows opens REPORT~1.TXT as Report for 2026.txt: a new item with such a name is not
 		// placed over something already here.
 		if p, err := e.abs(w, rel); err == nil && !missing(p) {
-			if it, err := e.DB.Item(id); err != nil || it == nil || it.Path != rel || it.State == "skipped" {
+			if a, err := e.alias(w, id, rel, p); err != nil || a {
 				return rel, true, "on Windows this name can stand for another item here", err
 			}
 		}
@@ -358,6 +358,25 @@ func (e *Engine) place(w Workspace, id, parent, name string) (rel string, skip b
 		return refused, true, fmt.Sprintf("%s would be written outside the workspace folder", rel), nil
 	}
 	return rel, false, "", nil
+}
+
+// alias reports that p, a short-shaped name, opens neither a record at rel (a reused name,
+// which occupied handles) nor this item's own copy (a case-only rename).
+func (e *Engine) alias(w Workspace, id, rel, p string) (bool, error) {
+	if o, err := e.DB.ItemAt(w.ID, rel); err != nil || o != nil && o.State != "skipped" {
+		return false, err
+	}
+	it, err := e.DB.Item(id)
+	if err != nil || it == nil || it.Workspace != w.ID || it.State == "skipped" {
+		return err == nil, err
+	}
+	own, err := e.abs(w, it.Path)
+	if err != nil {
+		return true, nil
+	}
+	a, aerr := os.Lstat(own)
+	b, berr := os.Lstat(p)
+	return aerr != nil || berr != nil || !os.SameFile(a, b), nil
 }
 
 func (e *Engine) skip(w Workspace, it Item, why string) error {
@@ -385,7 +404,13 @@ func (e *Engine) occupied(w Workspace, id, rel string) (bool, error) {
 	}
 	retries, err := e.DB.Retries(w.ID)
 	if err != nil || !slices.ContainsFunc(retries, func(f api.File) bool {
-		return f.ID == o.ID && f.Name != "" && (f.Name != o.Name || f.Parent != o.Parent)
+		// A retry that puts it elsewhere (compared by path: an upload records the server's
+		// new name before the local copy moves).
+		dir := "."
+		if p, _ := e.DB.Item(f.Parent); f.Parent != "" && p != nil {
+			dir = p.Path
+		}
+		return f.ID == o.ID && f.Name != "" && path.Join(dir, f.Name) != o.Path
 	}) {
 		return true, err
 	}

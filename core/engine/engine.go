@@ -54,7 +54,8 @@ var errOutside = errors.New("path leaves the workspace folder")
 func (e *Engine) dir(w Workspace) string { return filepath.Join(e.Root, w.Dir) }
 
 // abs resolves rel inside the workspace folder. It refuses a rel that is not local, and one
-// with an ancestor that is a symlink, so no server name or local link can lead outside.
+// with an ancestor that is a symlink or a Windows junction, so no server name or local link
+// can lead outside.
 func (e *Engine) abs(w Workspace, rel string) (string, error) {
 	root := e.dir(w)
 	if rel == "" {
@@ -70,7 +71,8 @@ func (e *Engine) abs(w Workspace, rel string) (string, error) {
 			break
 		}
 		p = filepath.Join(p, part)
-		if fi, err := os.Lstat(p); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		// A Windows junction (a folder moved to another disk) is irregular, not a symlink.
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
 			return "", errOutside
 		}
 	}

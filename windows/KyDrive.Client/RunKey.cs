@@ -31,7 +31,8 @@ public sealed class RunKey(string exe,
     public void Adopt()
     {
         using var key = Registry.CurrentUser.OpenSubKey(run, true);
-        if (key?.GetValue(Name) is string v && v.EndsWith(@"\KyDrive.exe""", StringComparison.OrdinalIgnoreCase)
+        if (key?.GetValue(Name) is string v && v.StartsWith('"') && v.IndexOf('"', 1) == v.Length - 1
+            && v.EndsWith(@"\KyDrive.exe""", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(v, Command, StringComparison.OrdinalIgnoreCase))
             key.SetValue(Name, Command);
     }

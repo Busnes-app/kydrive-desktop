@@ -38,6 +38,11 @@ public class RunKeyTests
             Assert.True(moved.Enabled);
             key.Adopt();
             Assert.True(key.Enabled);
+            // Only a value that is just a quoted KyDrive.exe is adopted.
+            using (var run = Registry.CurrentUser.OpenSubKey(root + @"\Run", true))
+                run!.SetValue("KyDrive", "\"C:\\Tools\\backup.exe\" \"D:\\old\\KyDrive.exe\"");
+            key.Adopt();
+            Assert.False(key.Enabled);
             key.Set(false);
             key.Adopt();
             Assert.False(key.Enabled);
