@@ -24,9 +24,9 @@ CoreClient::CoreClient(const QString& socketPath, const QString& corePath, QObje
     connect(&m_socket, &QLocalSocket::errorOccurred, this, [this](QLocalSocket::LocalSocketError) {
         if (m_socket.state() == QLocalSocket::ConnectedState)
             return;
-        // Nothing listening: start the core once, then let the next call retry.
-        if (!m_started && !m_corePath.isEmpty()) {
-            m_started = true;
+        // Nothing listening: start the core, at most once a minute, then let the next call retry.
+        if (!m_corePath.isEmpty() && (!m_started.isValid() || m_started.hasExpired(60000))) {
+            m_started.start();
             QProcess::startDetached(m_corePath, {});
         }
         failAll(tr("KyDrive sync is not running"));

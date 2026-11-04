@@ -24,7 +24,8 @@ sealed class MainWindow : Window
     readonly bool notifications;
     Status? status;
     string coreError = "", actionError = "", heldKey = "", conflictKey = "";
-    bool busy, linking, started, shown, wasLinked, quitting;
+    bool busy, linking, shown, wasLinked, quitting;
+    DateTime started; // when this app last started the core
 
     readonly InfoBar errorBar = new() { Severity = InfoBarSeverity.Error, IsClosable = false };
     readonly StackPanel linkForm = new() { Spacing = 12 };
@@ -163,10 +164,10 @@ sealed class MainWindow : Window
         catch (CoreNotRunningException e)
         {
             coreError = e.Message;
-            // Nothing listening: start the bundled core once, then let the next poll retry.
-            if (!started)
+            // Nothing listening: start the bundled core, at most once a minute; the next poll retries.
+            if (DateTime.UtcNow - started > TimeSpan.FromMinutes(1))
             {
-                started = true;
+                started = DateTime.UtcNow;
                 StartCore();
             }
             else if (!shown)
@@ -208,7 +209,8 @@ sealed class MainWindow : Window
         apply.IsEnabled = choices.Children.Count > 0;
 
         linked.Visibility = Show(isLinked);
-        tray.ToolTipText = isLinked ? "KyDrive: " + s!.State : "KyDrive: not linked";
+        // A core that stopped answering never shows its last state.
+        tray.ToolTipText = coreError != "" ? "KyDrive: not running" : isLinked ? "KyDrive: " + s!.State : "KyDrive: not linked";
         if (s == null)
             return;
         serverText.Text = s.Server ?? "";
@@ -283,7 +285,8 @@ sealed class MainWindow : Window
         {
             actionError = e.Message;
         }
-        if (reload)
+        // After a failure the list keeps the user's choice and the error stays up.
+        if (reload && actionError == "")
             LoadWorkspaces();
         await Refresh();
     }

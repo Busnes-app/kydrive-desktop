@@ -87,7 +87,10 @@ public struct MenuContent: View {
     }
 
     @ViewBuilder private var unlinkControl: some View {
-        if unlinking { unlinkConfirm } else { Button("Unlink…") { unlinking = true }.buttonStyle(KyButtonStyle(kind: .danger)) }
+        if unlinking { unlinkConfirm } else {
+            // Removing files is chosen afresh each time.
+            Button("Unlink…") { removeFiles = false; unlinking = true }.buttonStyle(KyButtonStyle(kind: .danger))
+        }
     }
 
     @ViewBuilder private var linked: some View {

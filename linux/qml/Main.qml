@@ -430,6 +430,7 @@ Kirigami.ApplicationWindow {
     Kirigami.PromptDialog {
         id: unlinkDialog
         title: i18n("Unlink this computer?")
+        onOpened: removeFiles.checked = false // removing files is chosen afresh each time
         subtitle: i18n("KyDrive stops syncing and this computer is revoked on the server.")
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [

@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel(core: CoreClient(socketPath: (try? SocketPath.default()) ?? ""))
     // The bundled core runs as this per-user launch agent (Contents/Library/LaunchAgents).
     private let agent = SMAppService.agent(plistName: "com.kysecurity.drive.sync.plist")
-    private var started = false
+    private var started: Date? // when this app last started the core
     private var process: Process? // the core this app started, without the agent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,11 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.start()
     }
 
-    // Without the launch agent (refused, or disabled in Login Items) the app starts the core
-    // itself, once. Never alongside the agent: two cores would fight over one socket.
+    // Without the launch agent (off, or disabled in Login Items) the app starts the core itself,
+    // at most once a minute. Never alongside the agent: two cores would fight over one socket.
     private func startCoreOnce() {
-        guard !started, agent.status != .enabled, let core = Bundle.main.url(forAuxiliaryExecutable: "kydrive-sync") else { return }
-        started = true
+        guard started.map({ Date().timeIntervalSince($0) > 60 }) ?? true, agent.status != .enabled,
+              let core = Bundle.main.url(forAuxiliaryExecutable: "kydrive-sync") else { return }
+        started = Date()
         let process = Process()
         process.executableURL = core
         do { try process.run() } catch { NSLog("KyDrive: could not start kydrive-sync: %@", String(describing: error)) }
@@ -53,7 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // The agent runs its own core: stop the one this app started first.
             if let p = process, p.isRunning { p.terminate(); p.waitUntilExit() }
             process = nil
-            started = false
             try agent.register()
             if agent.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
         } else {

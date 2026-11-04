@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonValue>
 #include <QLocalSocket>
@@ -25,7 +26,7 @@ class CoreClient : public QObject
 public:
     using Reply = std::function<void(const QJsonValue& result, const QString& error)>;
 
-    // corePath, when set, is started once if nothing answers on socketPath.
+    // corePath, when set, is started (at most once a minute) if nothing answers on socketPath.
     explicit CoreClient(const QString& socketPath, const QString& corePath, QObject* parent = nullptr);
     ~CoreClient() override;
 
@@ -77,7 +78,7 @@ private:
     QHash<qint64, Reply> m_pending;
     qint64 m_nextId = 1;
     qint64 m_lastActivity = -1;
-    bool m_started = false;
+    QElapsedTimer m_started; // when the core was last started here
     bool m_linking = false;
     QVariantMap m_status;
     QVariantList m_workspaces;
