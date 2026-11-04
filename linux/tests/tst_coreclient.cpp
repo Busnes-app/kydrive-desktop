@@ -2,6 +2,8 @@
 #include "FakeCore.h"
 
 #include <QDir>
+#include <QFileInfo>
+#include <QProcess>
 #include <QJsonArray>
 #include <QStandardPaths>
 #include <QJsonDocument>
@@ -113,6 +115,51 @@ private slots:
             QTest::qWait(100);
             QCOMPARE(core.methods.count(QStringLiteral("Core.Quit")), quits ? 1 : 0);
         }
+    }
+
+    // Q8: an idle unversioned (0.6.0) core that is not this user's kydrive-sync (here, the test
+    // itself) is never signalled; the user is told to log out. A syncing one is left alone.
+    void unversionedCoreThatCannotEndLeavesNotice()
+    {
+        for (const bool syncing : {false, true}) {
+            QTemporaryDir dir;
+            FakeCore core(dir.filePath(QStringLiteral("sync.sock")));
+            if (syncing)
+                core.status[QStringLiteral("State")] = QStringLiteral("syncing");
+            CoreClient client(dir.filePath(QStringLiteral("sync.sock")), QStringLiteral("/nonexistent/kydrive-sync"));
+            QSignalSpy status(&client, &CoreClient::statusChanged);
+            client.refresh();
+            QVERIFY(status.wait());
+            QCOMPARE(client.error().startsWith(QStringLiteral("An older KyDrive is still running")), !syncing);
+            core.status[QStringLiteral("Version")] = QStringLiteral("999.0.0");
+            client.refresh();
+            QVERIFY(status.wait());
+            QCOMPARE(client.error(), QString());
+        }
+    }
+
+    // Q8 against the released core: KYDRIVE_OLD_SYNC_BIN, a kydrive-sync built from v0.6.0, is
+    // ended by the shell while idle.
+    void releasedUnversionedCoreIsEnded()
+    {
+        const QString bin = qEnvironmentVariable("KYDRIVE_OLD_SYNC_BIN");
+        if (bin.isEmpty())
+            QSKIP("KYDRIVE_OLD_SYNC_BIN not set");
+        QTemporaryDir home;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("HOME"), home.path());
+        env.insert(QStringLiteral("XDG_RUNTIME_DIR"), home.path());
+        env.insert(QStringLiteral("XDG_CONFIG_HOME"), home.filePath(QStringLiteral("config")));
+        QProcess old;
+        old.setProcessEnvironment(env);
+        old.start(bin, {});
+        const QString sock = home.filePath(QStringLiteral("kydrive/sync.sock"));
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(sock), 10000);
+        CoreClient client(sock, QStringLiteral("/nonexistent/kydrive-sync"));
+        client.refresh();
+        QTRY_COMPARE_WITH_TIMEOUT(old.state(), QProcess::NotRunning, 10000);
+        QCOMPARE(old.exitStatus(), QProcess::NormalExit);
+        QCOMPARE(client.error().startsWith(QStringLiteral("An older KyDrive")), false);
     }
 
     // A shell upgraded alone starts the same older core again: it is not asked to quit again.

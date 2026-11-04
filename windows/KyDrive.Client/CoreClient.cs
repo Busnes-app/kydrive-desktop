@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -21,6 +22,33 @@ public static class Upgrade
 {
     public static bool Older(string? core, Version shell) =>
         Version.TryParse(core, out var v) && Plain(v) < Plain(shell);
+
+    public const string OlderRunning = "An older KyDrive is still running. Log out and back in to finish the upgrade.";
+
+    // Q8: the released 0.6.0 core reports no version and has no Quit. This user's core running
+    // from another folder (an older zip or MSIX) is ended; true if one was.
+    public static bool EndOtherCore(string bundled, string name = "kydrive-sync")
+    {
+        var session = Process.GetCurrentProcess().SessionId;
+        var ended = false;
+        foreach (var p in Process.GetProcessesByName(name))
+            using (p)
+            {
+                try
+                {
+                    if (p.SessionId != session || p.MainModule?.FileName is not { } exe
+                        || string.Equals(Path.GetFullPath(exe), Path.GetFullPath(bundled), StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    p.Kill();
+                    ended |= p.WaitForExit(5000);
+                }
+                catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+                {
+                    // Another user's (access denied) or already gone.
+                }
+            }
+        return ended;
+    }
 
     // 0.6.0 and 0.6.0.0 are one release.
     static Version Plain(Version v) => new(v.Major, v.Minor, Math.Max(v.Build, 0));

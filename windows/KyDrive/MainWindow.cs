@@ -28,6 +28,8 @@ sealed class MainWindow : Window
     DateTime started; // when this app last started the core
     DateTime quitAsked; // when an older core was last asked to quit
     string? quitVersion; // an older core that quit; if it answers again, it is the one on disk
+    DateTime unversionedEnded; // when an unversioned (0.6.0) core was ended here
+    bool olderRunning; // an unversioned core could not be ended
 
     readonly InfoBar errorBar = new() { Severity = InfoBarSeverity.Error, IsClosable = false };
     readonly StackPanel linkForm = new() { Spacing = 12 };
@@ -167,6 +169,21 @@ sealed class MainWindow : Window
                     // Refused while it syncs: asked again in a minute.
                 }
             }
+            // Q8: the released 0.6.0 core reports no version and cannot quit. While idle it is
+            // ended, once; if none could be, or one still answers a minute later, the user is told.
+            if (string.IsNullOrEmpty(status.Version) && !olderRunning && status.State != "syncing")
+            {
+                if (unversionedEnded == default)
+                {
+                    unversionedEnded = DateTime.UtcNow;
+                    olderRunning = !Upgrade.EndOtherCore(Path.Join(AppContext.BaseDirectory, "kydrive-sync.exe"));
+                    started = DateTime.MinValue;
+                }
+                else if (DateTime.UtcNow - unversionedEnded > TimeSpan.FromMinutes(1))
+                    olderRunning = true;
+            }
+            if (olderRunning && string.IsNullOrEmpty(status.Version))
+                coreError = Upgrade.OlderRunning;
             RenderConflicts(await core.Conflicts());
             foreach (var message in warnings.Next(await core.Activity(warnings.After)))
                 Notify(message);

@@ -143,6 +143,28 @@ final class CoreClientTests: XCTestCase {
         }
     }
 
+    // Q8: an idle core with no version (the released 0.6.0) is ended once; if it cannot be,
+    // the user is told. A syncing one is left alone.
+    func testUnversionedCoreIsEnded() async {
+        var ends = 0
+        model.endUnversionedCore = { ends += 1; return false }
+        var status = FakeCore.status
+        status["State"] = "syncing"
+        fake.answer("Core.Status", status)
+        await model.refresh()
+        XCTAssertEqual(ends, 0)
+        status["State"] = "idle"
+        fake.answer("Core.Status", status)
+        await model.refresh()
+        await model.refresh()
+        XCTAssertEqual(ends, 1)
+        XCTAssertEqual(model.shownError, "An older KyDrive is still running. Log out and back in to finish the upgrade.")
+        status["Version"] = "9.9.9"
+        fake.answer("Core.Status", status)
+        await model.refresh()
+        XCTAssertNil(model.shownError)
+    }
+
     func testStartAtLogin() async {
         var on = false
         model.startsAtLogin = { on }
