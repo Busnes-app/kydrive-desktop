@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             started = Date()
             let launchctl = Process()
             launchctl.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            launchctl.arguments = ["kickstart", "gui/\(getuid())/com.kysecurity.drive.sync"]
+            launchctl.arguments = ["kickstart", "gui/" + String(getuid()) + "/com.kysecurity.drive.sync"]
             do { try launchctl.run() } catch { NSLog("KyDrive: could not start the launch agent: %@", String(describing: error)) }
             return
         }

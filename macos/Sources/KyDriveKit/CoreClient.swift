@@ -29,7 +29,7 @@ public enum CoreError: LocalizedError, Equatable {
 }
 
 public struct Status: Decodable, Equatable {
-    var version = "" // the core's release; empty from a core older than Core.Quit
+    var version: String? = nil // the core's release; absent from a core older than Core.Quit
     var linked = false
     var server = "", devicesURL = "", root = "", state = "", error = ""
     var paused = false

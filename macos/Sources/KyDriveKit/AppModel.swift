@@ -58,7 +58,7 @@ public final class AppModel: ObservableObject {
             let wasLinked = status.linked
             status = s
             offline = nil
-            if !s.version.isEmpty, !version.isEmpty, s.version.compare(version, options: .numeric) == .orderedAscending,
+            if let running = s.version, !running.isEmpty, !version.isEmpty, running.compare(version, options: .numeric) == .orderedAscending,
                quitAsked.map({ Date().timeIntervalSince($0) > 60 }) ?? true {
                 quitAsked = Date()
                 _ = try? await core.call("Quit") as Empty
