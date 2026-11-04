@@ -323,3 +323,33 @@ func TestFolderRetryEndsWithItsFolder(t *testing.T) {
 		t.Fatalf("retries left: %+v", r)
 	}
 }
+
+// Q4: a reader workspace sends nothing, but files edited or added there are listed once each.
+func TestReaderEditsAreListed(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, map[string]string{"doc.txt": "v1", "same.txt": "v1"})
+	f.mu.Lock()
+	f.reader = true
+	f.mu.Unlock()
+	v.write("doc.txt", "edited")
+	v.write("new.txt", "added")
+	v.sync()
+	v.sync()
+	if v.remote("doc.txt") != "v1" {
+		t.Fatal("a reader workspace uploaded an edit")
+	}
+	issues, err := v.e.DB.Issues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, i := range issues {
+		if i.Kind == "readonly" {
+			got = append(got, i.Path)
+		}
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"doc.txt", "new.txt"}) {
+		t.Fatalf("listed %v", got)
+	}
+}

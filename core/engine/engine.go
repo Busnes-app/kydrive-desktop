@@ -217,8 +217,15 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		if err != nil {
 			return err
 		}
-		if !local || list[i].Role == "reader" {
-			continue // a reader has nothing to send
+		if !local {
+			continue
+		}
+		if list[i].Role == "reader" {
+			// A reader sends nothing; its local edits are listed so they are not lost unseen.
+			if err := e.readerEdits(w); err != nil {
+				return err
+			}
+			continue
 		}
 		if w, err := e.workspace(w.ID); err != nil {
 			return err
@@ -226,6 +233,30 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 			if err := e.push(ctx, w); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// readerEdits lists files added or edited in a reader workspace, once each: they never upload.
+func (e *Engine) readerEdits(w Workspace) error {
+	entries, err := e.scan(w)
+	if err != nil {
+		return err
+	}
+	for _, n := range entries {
+		if n.dir() {
+			continue
+		}
+		it, err := e.DB.ItemAt(w.ID, n.rel)
+		if err != nil {
+			return err
+		}
+		if it != nil && (it.State == "skipped" || it.Kind != "file" || !e.changed(*it, n.p, n.fi)) {
+			continue
+		}
+		if err := e.DB.AddIssueOnce(w.ID, n.rel, "readonly", "read-only workspace; not uploaded"); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -251,7 +282,6 @@ func (e *Engine) fail(err error) error {
 		return err
 	}
 	if !ae.Revoked() {
-		e.warn("KyDrive refused this computer's credentials; syncing stopped")
 		return ErrSignedOut
 	}
 	if ae.Wipe {

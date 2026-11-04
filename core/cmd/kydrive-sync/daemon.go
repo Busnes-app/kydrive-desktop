@@ -45,8 +45,12 @@ type daemon struct {
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
 	lastSync int64
-	linking  bool
+	linking  *pending
 	kick     chan bool // true asks for a local scan as well
+	// While signed_out, the keyring is read again and the server retried at retryAt, each
+	// failure doubling backoff.
+	retryAt time.Time
+	backoff time.Duration
 }
 
 func newDaemon(dir, root, sock string) (*daemon, error) {
@@ -66,7 +70,7 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	if server := db.Get("server"); server != "" {
 		tok, err := keyring.Get(keyringService, server)
 		if err != nil {
-			d.state, d.lastErr = "signed_out", "the keyring holds no KyDrive credential; link again"
+			d.state, d.lastErr = "signed_out", "the keyring holds no KyDrive credential; sign in again"
 		} else {
 			d.token, d.state = tok, "idle"
 		}
@@ -201,6 +205,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	if err := d.engine().ResumeWipe(); err != nil {
 		log.Printf("wipe: %v", err)
 	}
+	retried := d.retry()
 	d.mu.Lock()
 	if d.token == "" || d.db.Get("paused") != "" || d.state == "revoked" || d.state == "signed_out" {
 		d.mu.Unlock()
@@ -228,12 +233,42 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		d.forget()
 	case errors.Is(err, engine.ErrSignedOut):
 		d.state, d.lastErr = "signed_out", err.Error()
+		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
+		d.retryAt = time.Now().Add(d.backoff)
+		if !retried {
+			d.db.Log("warn", "KyDrive refused this computer's credentials; syncing stopped until you sign in again")
+		}
 	case err != nil:
 		d.state, d.lastErr = "error", err.Error()
 		log.Printf("sync: %v", err)
 	default:
-		d.state, d.lastErr, d.lastSync = "idle", "", time.Now().Unix()
+		d.state, d.lastErr, d.lastSync, d.backoff = "idle", "", time.Now().Unix(), 0
 	}
+}
+
+// retry, once a signed-out core's backoff has passed, reads the keyring again (it may have
+// been locked, or the credential restored) so the pass tries the server with it. The caller
+// holds d.work.
+func (d *daemon) retry() bool {
+	d.mu.Lock()
+	due := d.state == "signed_out" && d.linking == nil && d.db.Get("paused") == "" && !time.Now().Before(d.retryAt)
+	d.mu.Unlock()
+	if !due {
+		return false
+	}
+	tok, err := keyring.Get(keyringService, d.db.Get("server"))
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.state != "signed_out" {
+		return false
+	}
+	if err != nil {
+		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
+		d.retryAt = time.Now().Add(d.backoff)
+		return false
+	}
+	d.token, d.state = tok, "syncing"
+	return true
 }
 
 // forget deletes the credential from the keyring. The caller holds d.mu.

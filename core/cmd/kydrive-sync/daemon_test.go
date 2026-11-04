@@ -59,6 +59,11 @@ func start(t *testing.T, srv *httptest.Server) (*daemon, func(method string, par
 	}
 }
 
+// redeemUser is the account the test server's token exchange answers with.
+var redeemUser atomic.Value
+
+func init() { redeemUser.Store("alice") }
+
 // selfRevoked counts DELETE /api/devices/self calls.
 var selfRevoked atomic.Int32
 
@@ -72,7 +77,7 @@ func server(t *testing.T) *httptest.Server {
 				http.Error(w, "{}", 400)
 				return
 			}
-			io.WriteString(w, `{"token":"kyd_SECRETTOKEN","devices_url":"`+"http://"+r.Host+`/account"}`)
+			io.WriteString(w, `{"token":"kyd_SECRETTOKEN","user":"`+redeemUser.Load().(string)+`","devices_url":"`+"http://"+r.Host+`/account"}`)
 		case "/api/devices/self":
 			if r.Method != "DELETE" || r.Header.Get("Authorization") != "Bearer kyd_SECRETTOKEN" {
 				http.Error(w, "{}", 401)
