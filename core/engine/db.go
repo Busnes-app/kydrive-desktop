@@ -21,7 +21,7 @@ type Item struct {
 	LocalSize                         int64
 	LocalMtime                        int64 // UnixNano
 	LocalInode                        uint64
-	LocalCtime                        int64 // change time; 0 when not yet recorded
+	LocalCtime                        int64  // change time; 0 when not yet recorded
 	State                             string // synced, stale (local copy not ours) or skipped
 }
 

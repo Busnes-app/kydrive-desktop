@@ -385,23 +385,27 @@ func (e *Engine) alias(w Workspace, id, rel, p string) (bool, error) {
 // caseTwin is why an item is skipped beside a sibling whose name differs only in case.
 const caseTwin = "another item here differs only in case"
 
-// skipPlaced records an item this computer skips. One synced elsewhere here (the server
-// renamed it into such a name) leaves its old place as a server removal would; its copy
-// would otherwise upload again as a new item. A case twin waits in retries: the other item
-// may be on its way out, removed or renamed later in the pull.
+// skipPlaced records an item this computer skips. A case twin waits in retries, since the
+// other item may be on its way out (removed or renamed later in the pull); a synced copy of
+// it stays where it is, recorded, until then. Any other item synced elsewhere here (the
+// server renamed it into a name this computer cannot hold) leaves its old place as a server
+// removal would; its copy would otherwise upload again as a new item.
 func (e *Engine) skipPlaced(w Workspace, it Item, why string, f api.File) error {
 	old, err := e.DB.Item(it.ID)
 	if err != nil {
 		return err
 	}
-	if old != nil && old.Workspace == w.ID && old.State != "skipped" && old.Path != it.Path {
-		if err := e.remove(w, *old); err != nil {
-			return e.removeLater(w, *old, err)
-		}
-	}
+	moved := old != nil && old.Workspace == w.ID && old.State != "skipped" && old.Path != it.Path
 	if why == caseTwin {
 		if _, err := e.DB.AddRetry(w.ID, f); err != nil {
 			return err
+		}
+		if moved {
+			return e.DB.AddIssueOnce(w.ID, it.Path, "skipped", why)
+		}
+	} else if moved {
+		if err := e.remove(w, *old); err != nil {
+			return e.removeLater(w, *old, err)
 		}
 	}
 	return e.skip(w, it, why)
@@ -516,6 +520,9 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 			}
 			return err
 		}
+		if _, err := e.DB.AddRetry(w.ID, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name}); err != nil {
+			return err
+		}
 		return e.skip(w, Item{ID: f.ID, Workspace: w.ID, Kind: "folder", Parent: f.Parent, Name: f.Name, Path: ".kydrive-refused-" + f.ID},
 			rel+" is under a link")
 	}
@@ -562,6 +569,9 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 		// pull; the folder syncs once it is moved away.
 		if _, err := e.DB.AddRetry(w.ID, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name}); err != nil {
 			return err
+		}
+		if old != nil && old.State == "synced" && old.Path == rel && lerr == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return nil // this folder, moved elsewhere with a link left: its record and its files' wait
 		}
 		return e.skip(w, it, "a local file or link has this name")
 	}
@@ -719,12 +729,13 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		return err
 	}
 	id := inode(tmp.Name(), tfi)
-	if _, err := os.Lstat(p); err == nil {
+	if fi, err := os.Lstat(p); err == nil {
 		old, err := e.DB.Item(f.ID)
 		if err != nil {
 			return err
 		}
-		if old == nil || old.Path != rel || old.State != "synced" || !sameContent(p, old.Digest) {
+		// Never opened unless a regular file: a FIFO put there would block the hash.
+		if old == nil || old.Path != rel || old.State != "synced" || !fi.Mode().IsRegular() || !sameContent(p, old.Digest) {
 			_, err := e.DB.AddRetry(w.ID, f) // changed meanwhile; the next pass decides again
 			return err
 		}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -116,5 +117,83 @@ func TestSameMetadataEditUploads(t *testing.T) {
 	v.sync()
 	if v.remote("vault.bin") != "BBBB" {
 		t.Fatalf("server has %q", v.remote("vault.bin"))
+	}
+}
+
+func linkAway(t *testing.T, v *env, rel string) string {
+	t.Helper()
+	away := filepath.Join(t.TempDir(), filepath.Base(rel))
+	if err := os.Rename(v.path(rel), away); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(away, v.path(rel)); err != nil {
+		t.Fatal(err)
+	}
+	return away
+}
+
+func moveBack(t *testing.T, v *env, rel, away string) {
+	t.Helper()
+	if err := os.Remove(v.path(rel)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(away, v.path(rel)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Certification round 1: a snapshot while the folder is linked away (a new server folder
+// forces one), and a new server folder under the link, still come right once it is back.
+func TestLinkedFolderThroughSnapshot(t *testing.T) {
+	v := setup(t, map[string]string{"a.txt": "a", "Shared/x.txt": "x1", "Shared/y.txt": "y"})
+	away := linkAway(t, v, "Shared")
+	v.sync()
+	v.r.Put(t, v.ws, "Shared/x.txt", []byte("x2-server"))
+	v.r.Put(t, v.ws, "Shared/Sub/s.txt", []byte("s"))
+	v.r.Put(t, v.ws, "Other/o.txt", []byte("o"))
+	v.sync()
+	moveBack(t, v, "Shared", away)
+	for range 3 {
+		v.sync()
+	}
+	noConflicts(t, v)
+	if v.read("Shared/x.txt") != "x2-server" || v.read("Shared/Sub/s.txt") != "s" || v.read("Shared/y.txt") != "y" {
+		t.Fatalf("local %v", tree(t, v.path("")))
+	}
+}
+
+// Certification round 1: a link to another synced folder is not followed by an evict; the
+// folder it reaches keeps its files, here and on the server.
+func TestEvictDoesNotFollowLinkIntoSyncRoot(t *testing.T) {
+	v := setup(t, map[string]string{"Old/a.txt": "same", "New/a.txt": "same", "keep.txt": "k"})
+	if err := os.RemoveAll(v.path("Old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("New", v.path("Old")); err != nil {
+		t.Fatal(err)
+	}
+	v.sync()
+	v.r.Remove(t, v.ws, "Old")
+	v.sync()
+	v.sync()
+	if !slices.Contains(v.r.Paths(t, v.ws), "New/a.txt") || !v.exists("New/a.txt") {
+		t.Fatalf("New/a.txt lost: local %v server %v", tree(t, v.path("")), v.r.Paths(t, v.ws))
+	}
+}
+
+// Opus R9: a Finder alias left in place of a folder moved to another disk is not a delete.
+func TestFinderAliasInPlaceOfFolder(t *testing.T) {
+	aliases = true
+	t.Cleanup(func() { aliases = runtime.GOOS == "darwin" })
+	v := setup(t, map[string]string{"Photos/p.jpg": "p", "a.txt": "a"})
+	linkAway(t, v, "Photos")
+	if err := os.Remove(v.path("Photos")); err != nil {
+		t.Fatal(err)
+	}
+	v.write("Photos", "book\x00\x00\x00\x00mark\x00\x00\x00\x00alias data")
+	v.sync()
+	v.sync()
+	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"Photos/p.jpg", "a.txt"}) {
+		t.Fatalf("server paths %v", got)
 	}
 }

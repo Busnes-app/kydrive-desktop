@@ -154,9 +154,9 @@ sealed class MainWindow : Window
             // An older core (from before an upgrade) is asked to quit, at most once a minute; it
             // refuses while it syncs. The next poll finds none and starts this build's core.
             // One that comes back after quitting (an older KyDrive still running started it again)
-            // is kept, not restarted every minute.
-            if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!) && status.Version != quitVersion
-                && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(1))
+            // is asked again only every 10 minutes, once the user may have quit that KyDrive.
+            if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!)
+                && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(status.Version != quitVersion ? 1 : 10))
             {
                 quitAsked = DateTime.UtcNow;
                 try
@@ -178,7 +178,8 @@ sealed class MainWindow : Window
                 if (unversionedEnded == default)
                 {
                     unversionedEnded = DateTime.UtcNow;
-                    olderRunning = !Upgrade.EndOtherCore(Path.Join(AppContext.BaseDirectory, "kydrive-sync.exe"));
+                    var bundled = Path.Join(AppContext.BaseDirectory, "kydrive-sync.exe");
+                    olderRunning = !await Task.Run(() => Upgrade.EndOtherCore(bundled));
                     started = DateTime.MinValue;
                 }
                 else if (DateTime.UtcNow - unversionedEnded > TimeSpan.FromMinutes(1))

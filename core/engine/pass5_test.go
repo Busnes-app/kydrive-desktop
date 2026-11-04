@@ -159,3 +159,19 @@ func TestOpenAddsChangeTime(t *testing.T) {
 		t.Fatalf("%v %v", it, err)
 	}
 }
+
+// Certification round 1: a pending edit of a file the server renames into a case twin that
+// then goes away still reaches the server, not Unsynced.
+func TestCaseTwinRenameKeepsPendingEdit(t *testing.T) {
+	v := setup(t, map[string]string{"a.txt": "a", "b.txt": "b"})
+	v.e.CaseFold = true
+	v.write("b.txt", "b-edited")
+	v.r.Rename(t, v.ws, "b.txt", "A.txt")
+	v.r.Rename(t, v.ws, "a.txt", "z.txt")
+	for range 3 {
+		v.sync()
+	}
+	if v.remote("A.txt") != "b-edited" || v.read("A.txt") != "b-edited" {
+		t.Fatalf("local %v, server %v", tree(t, v.root), v.r.Paths(t, v.ws))
+	}
+}

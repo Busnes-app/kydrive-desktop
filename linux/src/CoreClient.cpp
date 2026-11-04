@@ -12,6 +12,7 @@
 
 #include <csignal>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 CoreClient::CoreClient(const QString& socketPath, const QString& corePath, QObject* parent)
@@ -192,16 +193,22 @@ void CoreClient::endUnversioned()
     if (!m_unversionedEnded) {
         ucred peer{};
         socklen_t len = sizeof peer;
-        char exe[4096];
-        ssize_t n = -1;
-        if (getsockopt(int(m_socket.socketDescriptor()), SOL_SOCKET, SO_PEERCRED, &peer, &len) == 0 && peer.pid > 0 && peer.uid == getuid())
-            n = readlink(QStringLiteral("/proc/%1/exe").arg(peer.pid).toLocal8Bit().constData(), exe, sizeof exe - 1);
-        // An upgraded package leaves "/usr/bin/kydrive-sync (deleted)".
-        if (n > 0 && QFileInfo(QString::fromLocal8Bit(exe, n)).fileName().startsWith(QStringLiteral("kydrive-sync"))
-            && kill(peer.pid, SIGTERM) == 0) {
-            m_unversionedEnded = true;
-            m_quitAsked.start();
-            return;
+        if (getsockopt(int(m_socket.socketDescriptor()), SOL_SOCKET, SO_PEERCRED, &peer, &len) == 0 && peer.pid > 0 && peer.uid == getuid()) {
+            // The pidfd pins the process: the one checked is the one signalled.
+            const int pidfd = int(syscall(SYS_pidfd_open, peer.pid, 0));
+            char exe[4096];
+            const ssize_t n = pidfd < 0 ? -1 : readlink(QStringLiteral("/proc/%1/exe").arg(peer.pid).toLocal8Bit().constData(), exe, sizeof exe - 1);
+            // An upgraded package leaves "/usr/bin/kydrive-sync (deleted)".
+            const QString name = n > 0 ? QFileInfo(QString::fromLocal8Bit(exe, n)).fileName() : QString();
+            const bool ended = (name == QStringLiteral("kydrive-sync") || name == QStringLiteral("kydrive-sync (deleted)"))
+                && syscall(SYS_pidfd_send_signal, pidfd, SIGTERM, nullptr, 0) == 0;
+            if (pidfd >= 0)
+                close(pidfd);
+            if (ended) {
+                m_unversionedEnded = true;
+                m_quitAsked.start();
+                return;
+            }
         }
     }
     setError(olderRunning());

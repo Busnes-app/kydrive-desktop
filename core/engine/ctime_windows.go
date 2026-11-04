@@ -8,7 +8,7 @@ import (
 
 var getFileInformationByHandleEx = syscall.NewLazyDLL("kernel32.dll").NewProc("GetFileInformationByHandleEx")
 
-// ctime is the NTFS ChangeTime (any write or metadata change), in 100 ns units; 0 when unknown.
+// ctime is the NTFS ChangeTime (any write or metadata change), UnixNano; 0 when unknown.
 func ctime(p string, _ fs.FileInfo) int64 {
 	name, err := syscall.UTF16PtrFromString(p)
 	if err != nil {
@@ -30,5 +30,8 @@ func ctime(p string, _ fs.FileInfo) int64 {
 	if r, _, _ := getFileInformationByHandleEx.Call(uintptr(h), fileBasicInfo, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info)); r == 0 {
 		return 0
 	}
-	return info.ChangeTime
+	if info.ChangeTime == 0 {
+		return 0
+	}
+	return (info.ChangeTime - 116444736000000000) * 100 // from 100 ns units since 1601
 }

@@ -22,9 +22,16 @@ public class UpgradeTests
         var dir = Directory.CreateTempSubdirectory("kyd-upgrade").FullName;
         var exe = Path.Join(dir, "kyd-test-sync.exe");
         File.Copy(Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.System), "PING.EXE"), exe);
-        using var old = Process.Start(new ProcessStartInfo(exe, "-n 120 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false })!;
+        var start = () => Process.Start(new ProcessStartInfo(exe, "-n 120 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false })!;
+        using var old = start();
+        using var another = start();
         try
         {
+            // Two copies running: which one answered cannot be told, so neither is ended.
+            Assert.False(Upgrade.EndOtherCore(Path.Join(dir, "new", "kydrive-sync.exe"), "kyd-test-sync"));
+            Assert.False(old.HasExited || another.HasExited);
+            another.Kill();
+            another.WaitForExit();
             Assert.False(Upgrade.EndOtherCore(exe, "kyd-test-sync"));
             Assert.False(old.HasExited);
             Assert.True(Upgrade.EndOtherCore(Path.Join(dir, "new", "kydrive-sync.exe"), "kyd-test-sync"));
@@ -33,6 +40,7 @@ public class UpgradeTests
         finally
         {
             if (!old.HasExited) old.Kill();
+            if (!another.HasExited) another.Kill();
         }
     }
 }

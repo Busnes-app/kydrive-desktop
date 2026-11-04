@@ -26,28 +26,44 @@ public static class Upgrade
     public const string OlderRunning = "An older KyDrive is still running. Log out and back in to finish the upgrade.";
 
     // Q8: the released 0.6.0 core reports no version and has no Quit. This user's core running
-    // from another folder (an older zip or MSIX) is ended; true if one was.
+    // from another folder (an older zip or MSIX) is ended; true if it was. More than one such
+    // process (another copy in use) is left alone: which one answered cannot be told.
     public static bool EndOtherCore(string bundled, string name = "kydrive-sync")
     {
         var session = Process.GetCurrentProcess().SessionId;
-        var ended = false;
+        var others = new List<Process>();
         foreach (var p in Process.GetProcessesByName(name))
-            using (p)
+        {
+            try
             {
-                try
+                if (p.SessionId == session && p.MainModule?.FileName is { } exe
+                    && !string.Equals(Path.GetFullPath(exe), Path.GetFullPath(bundled), StringComparison.OrdinalIgnoreCase))
                 {
-                    if (p.SessionId != session || p.MainModule?.FileName is not { } exe
-                        || string.Equals(Path.GetFullPath(exe), Path.GetFullPath(bundled), StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    p.Kill();
-                    ended |= p.WaitForExit(5000);
-                }
-                catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
-                {
-                    // Another user's (access denied) or already gone.
+                    others.Add(p);
+                    continue;
                 }
             }
-        return ended;
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
+            {
+                // Another user's (access denied) or already gone.
+            }
+            p.Dispose();
+        }
+        try
+        {
+            if (others.Count != 1)
+                return false;
+            others[0].Kill();
+            return others[0].WaitForExit(5000);
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
+        finally
+        {
+            others.ForEach(p => p.Dispose());
+        }
     }
 
     // 0.6.0 and 0.6.0.0 are one release.

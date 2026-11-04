@@ -45,6 +45,8 @@ type Engine struct {
 
 	// Unsettled is set by a pass that skipped a file still being written.
 	Unsettled bool
+
+	wiping bool // a wipe reaches synced copies behind links too
 }
 
 // errOutside refuses a path that would leave the workspace folder.
@@ -270,8 +272,16 @@ func (e *Engine) readerEdits(w Workspace) error {
 		if err != nil {
 			return err
 		}
-		if it != nil && (it.State == "skipped" || it.Kind != "file" || !e.changed(*it, n.p, n.fi)) {
+		if it != nil && (it.State == "skipped" || it.Kind != "file") {
 			continue
+		}
+		if it != nil && !e.changed(*it, n.p, n.fi) {
+			if again, err := e.rewritten(*it, n); err != nil || !again {
+				if err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		if err := e.DB.AddIssueOnce(w.ID, n.rel, "readonly", "read-only workspace; not uploaded"); err != nil {
 			return err
@@ -286,7 +296,15 @@ func (e *Engine) readerEdits(w Workspace) error {
 	if err != nil {
 		return err
 	}
+	retries, err := e.DB.Retries(w.ID)
+	if err != nil {
+		return err
+	}
 	for _, it := range items {
+		// One waiting in retries (a download backing off) comes with its retry instead.
+		if slices.ContainsFunc(retries, func(f api.File) bool { return f.ID == it.ID }) {
+			continue
+		}
 		if p, err := e.abs(w, it.Path); err == nil && it.State == "synced" && missing(p) {
 			w.Cursor = -1
 			return e.DB.PutWorkspace(w)
@@ -337,6 +355,8 @@ func (e *Engine) Wipe() error {
 		return err
 	}
 	var failed error
+	e.wiping = true
+	defer func() { e.wiping = false }()
 	for _, w := range ws {
 		if err := e.evict(w, ""); err != nil {
 			failed = errors.Join(failed, err) // the other workspaces still go
@@ -410,10 +430,13 @@ func (e *Engine) evict(w Workspace, rel string) error {
 			dirs = append(dirs, p)
 			return nil
 		}
-		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+		if e.wiping && d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
 			// A synced folder moved elsewhere, a link left in its place: the walk does not
-			// follow it, so its synced copies are found by their records.
-			failed = errors.Join(failed, e.evictLinked(w, p))
+			// follow it, so a wipe finds its synced copies by their records.
+			if err := e.evictLinked(w, p); err != nil {
+				failed = errors.Join(failed, err) // the link and its records stay for the next try
+				return nil
+			}
 		}
 		// One file that cannot go (open elsewhere, no permission) does not keep the rest.
 		failed = errors.Join(failed, e.evictFile(w, p, d))
@@ -428,11 +451,23 @@ func (e *Engine) evict(w Workspace, rel string) error {
 	return e.DB.DropTree(w.ID, rel)
 }
 
-// evictLinked deletes the synced copies recorded under link p whose content is still what
-// synced. A copy changed since stays where it is, and is announced.
+// evictLinked deletes, for a wipe, the synced copies recorded under link p whose content is
+// still what synced. A copy changed since stays where it is, and is announced. A link into
+// the sync root is left: what it reaches is evicted, if synced, in its own place.
 func (e *Engine) evictLinked(w Workspace, p string) error {
 	r, _ := filepath.Rel(e.dir(w), p)
 	r = filepath.ToSlash(r)
+	target, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return nil // a dangling link reaches nothing
+	}
+	root, err := filepath.EvalSymlinks(e.Root)
+	if err != nil {
+		return err
+	}
+	if in, err := filepath.Rel(root, target); err == nil && filepath.IsLocal(in) || target == root {
+		return nil
+	}
 	items, err := e.DB.Items(w.ID)
 	if err != nil {
 		return err
@@ -446,13 +481,27 @@ func (e *Engine) evictLinked(w Workspace, p string) error {
 		if !ok || it.Kind != "file" || it.State != "synced" {
 			continue
 		}
-		f := filepath.Join(p, filepath.FromSlash(sub))
-		if fi, err := os.Stat(f); err != nil || !fi.Mode().IsRegular() {
+		f := filepath.Join(target, filepath.FromSlash(sub))
+		if fi, err := os.Lstat(f); err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
-		if !sameContent(f, it.Digest) {
-			kept++
-		} else if err := os.Remove(f); err != nil {
+		// Moved aside first, as evictFile does: an editor's save landing at f after the
+		// check is never deleted.
+		aside := filepath.Join(filepath.Dir(f), fmt.Sprintf(".kydrive-aside-%d", time.Now().UnixNano()))
+		if err := os.Rename(f, aside); err != nil {
+			return err
+		}
+		if fi, err := os.Lstat(aside); err == nil && fi.Mode().IsRegular() && sameContent(aside, it.Digest) {
+			if err := os.Remove(aside); err != nil {
+				return err
+			}
+			continue
+		}
+		kept++
+		if _, err := os.Lstat(f); err == nil {
+			continue // saved meanwhile: both stay
+		}
+		if err := os.Rename(aside, f); err != nil {
 			return err
 		}
 	}

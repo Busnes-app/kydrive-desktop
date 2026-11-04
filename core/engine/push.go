@@ -3,11 +3,14 @@ package engine
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -103,10 +106,19 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		case it != nil && !e.changed(*it, n.p, n.fi):
 			var again bool
 			if again, err = e.rewritten(*it, n); err == nil && again {
-				err = e.upload(ctx, w, n, it)
+				if unsettled(time.Unix(0, ctime(n.p, n.fi)), e.Settle) {
+					e.Unsettled = true
+				} else {
+					err = e.upload(ctx, w, n, it)
+				}
 			}
 		case unsettled(n.fi.ModTime(), e.Settle):
 			e.Unsettled = true
+		case it != nil && it.State == "synced" && n.fi.Size() == it.Size && sameContent(n.p, it.Digest):
+			// The synced content with new metadata (copied back from another disk): recorded
+			// again, not uploaded again.
+			it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = n.fi.Size(), n.fi.ModTime().UnixNano(), n.inode, ctime(n.p, n.fi)
+			err = e.DB.PutItem(*it)
 		default:
 			err = e.upload(ctx, w, n, it)
 		}
@@ -130,6 +142,24 @@ func (e *Engine) rewritten(it Item, n entry) (bool, error) {
 	}
 	it.LocalCtime = c
 	return false, e.DB.PutItem(it)
+}
+
+// aliases is whether Finder aliases exist here (macOS); a variable for tests.
+var aliases = runtime.GOOS == "darwin"
+
+// finderAlias reports a Finder alias: a bookmark file, which starts "book\0\0\0\0mark".
+func finderAlias(p string) bool {
+	if !aliases {
+		return false
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := make([]byte, 12)
+	_, err = io.ReadFull(f, b)
+	return err == nil && string(b) == "book\x00\x00\x00\x00mark"
 }
 
 // unsettled reports a file written within settle. A future mtime (an archive from another
@@ -321,6 +351,7 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		return err
 	}
 	var top []Item
+	var aliased []string
 	count, total := 0, 0
 	for _, it := range items {
 		if it.State == "skipped" {
@@ -329,6 +360,18 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		total++
 		dir, ok := at[it.Path]
 		if it.State != "synced" || (ok && dir == (it.Kind == "folder")) {
+			continue
+		}
+		if slices.ContainsFunc(aliased, func(a string) bool { return strings.HasPrefix(it.Path, a+"/") }) {
+			continue
+		}
+		if ok && it.Kind == "folder" && finderAlias(filepath.Join(e.dir(w), filepath.FromSlash(it.Path))) {
+			// A Finder alias in its place (the folder moved to another disk, Option-Command
+			// dragged back): a link, not a delete, nor is anything recorded below it.
+			aliased = append(aliased, it.Path)
+			if err := e.DB.AddIssueOnce(w.ID, it.Path, "skipped", "a link or special file is in its place; not synced"); err != nil {
+				return err
+			}
 			continue
 		}
 		if !ok && !folderGone {
