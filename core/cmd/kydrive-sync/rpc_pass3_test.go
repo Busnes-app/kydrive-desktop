@@ -94,3 +94,17 @@ func TestQuit(t *testing.T) {
 		t.Fatal("the work lock was let go before the exit")
 	}
 }
+
+// Q7 (pass 3), the part needing no server change: a username whose case the directory changed
+// is still the same account.
+func TestSignInIgnoresUsernameCase(t *testing.T) {
+	srv := server(t)
+	d, ctl := start(t, srv)
+	signedOut(t, d, ctl, srv.URL)
+	redeemUser.Store("Alice")
+	defer redeemUser.Store("alice")
+	var out struct{}
+	if err := ctl("SignIn", struct{}{}, &out); err != nil {
+		t.Fatal(err)
+	}
+}

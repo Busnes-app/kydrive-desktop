@@ -249,7 +249,7 @@ func (d *daemon) sameAccount(tok api.Token) error {
 	switch was := d.db.Get("user"); {
 	case was == "":
 		return errors.New("this computer was linked before KyDrive recorded which account it syncs, so it cannot sign in again; unlink, then link it")
-	case tok.User != was:
+	case !strings.EqualFold(tok.User, was): // the server's usernames are unique regardless of case
 		return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
 	}
 	return nil
