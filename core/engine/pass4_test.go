@@ -111,7 +111,9 @@ func TestSameMetadataEditIsKept(t *testing.T) {
 	if err := v.e.Choose(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(tree(t, v.root), "Unsynced/Docs/vault.bin") {
-		t.Fatalf("the edit was deleted: %v", tree(t, v.root))
+	// Only the edit is kept; the synced copies (the conflict copy this computer uploaded too)
+	// match their digests and go.
+	if got := tree(t, v.root); !slices.Equal(got, []string{"Unsynced/Docs/vault.bin"}) {
+		t.Fatalf("after unchoose: %v", got)
 	}
 }
