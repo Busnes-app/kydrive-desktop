@@ -12,6 +12,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <memory>
+
 class TestCoreClient : public QObject
 {
     Q_OBJECT
@@ -111,6 +113,30 @@ private slots:
             QTest::qWait(100);
             QCOMPARE(core.methods.count(QStringLiteral("Core.Quit")), quits ? 1 : 0);
         }
+    }
+
+    // A shell upgraded alone starts the same older core again: it is not asked to quit again.
+    void sameOlderCoreIsKept()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("sync.sock"));
+        auto core = std::make_unique<FakeCore>(path);
+        core->status[QStringLiteral("Version")] = QStringLiteral("0.0.1");
+        CoreClient client(path, QStringLiteral("/nonexistent/kydrive-sync"));
+        QSignalSpy status(&client, &CoreClient::statusChanged);
+        client.refresh();
+        QTRY_COMPARE(core->methods.count(QStringLiteral("Core.Quit")), 1);
+        QTest::qWait(100);
+        core.reset(); // it quit
+        core = std::make_unique<FakeCore>(path); // the core at corePath, still 0.0.1
+        core->status[QStringLiteral("Version")] = QStringLiteral("0.0.1");
+        client.refresh();
+        QTRY_VERIFY(status.count() >= 2);
+        QTest::qWait(61000); // past the once-a-minute limit
+        client.refresh();
+        QVERIFY(status.wait());
+        QTest::qWait(100);
+        QCOMPARE(core->methods.count(QStringLiteral("Core.Quit")), 0);
     }
 
     void missingCoreReportsError()

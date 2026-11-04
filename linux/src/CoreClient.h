@@ -81,6 +81,7 @@ private:
     qint64 m_lastActivity = -1;
     QElapsedTimer m_started; // when the core was last started here
     QElapsedTimer m_quitAsked; // when an older core was last asked to quit
+    QString m_quitVersion; // the version it reported: one that comes back is the installed core
     bool m_linking = false;
     QVariantMap m_status;
     QVariantList m_workspaces;

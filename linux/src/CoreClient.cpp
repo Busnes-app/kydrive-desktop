@@ -155,15 +155,20 @@ void CoreClient::refresh()
 
 // A core older than this shell (still running from before an upgrade) is asked to quit, at most
 // once a minute; it refuses while it syncs. The next call then finds none and starts this
-// shell's own core. A core without a version cannot quit.
+// shell's own core. A core without a version cannot quit. If the same older version answers
+// again, that is the core installed at corePath (the shell was upgraded alone): it is kept.
 void CoreClient::replaceIfOlder()
 {
-    const QVersionNumber running = QVersionNumber::fromString(m_status.value(QStringLiteral("Version")).toString());
+    const QString version = m_status.value(QStringLiteral("Version")).toString();
+    const QVersionNumber running = QVersionNumber::fromString(version);
     if (m_corePath.isEmpty() || running.isNull() || running >= QVersionNumber::fromString(QStringLiteral(KYDRIVE_VERSION))
-        || (m_quitAsked.isValid() && !m_quitAsked.hasExpired(60000)))
+        || version == m_quitVersion || (m_quitAsked.isValid() && !m_quitAsked.hasExpired(60000)))
         return;
     m_quitAsked.start();
-    call(QStringLiteral("Quit"), {});
+    call(QStringLiteral("Quit"), {}, [this, version](const QJsonValue&, const QString& error) {
+        if (error.isEmpty())
+            m_quitVersion = version;
+    });
 }
 
 void CoreClient::loadWorkspaces()
