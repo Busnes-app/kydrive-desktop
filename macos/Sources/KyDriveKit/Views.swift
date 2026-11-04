@@ -30,6 +30,7 @@ public struct MenuContent: View {
             if let error = model.shownError { ErrorBanner(text: error, fill: true) }
             if model.signedOut { signInForm }
             if model.status.linked { linked } else if !model.signedOut { linkForm }
+            Toggle("Start at login", isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) }))
             Hairline()
             HStack {
                 SettingsButton().buttonStyle(KyButtonStyle())

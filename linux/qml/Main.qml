@@ -69,7 +69,16 @@ Kirigami.ApplicationWindow {
                 visible: root.linked || root.signedOut
                 onTriggered: unlinkDialog.open()
             },
-
+            Kirigami.Action {
+                text: i18n("Start at login")
+                checkable: true
+                checked: Autostart.enabled
+                displayHint: Kirigami.DisplayHint.AlwaysHide
+                onTriggered: {
+                    Autostart.setEnabled(checked)
+                    checked = Qt.binding(() => Autostart.enabled)
+                }
+            },
             Kirigami.Action {
                 text: i18n("Appearance")
                 icon.name: "preferences-desktop-theme-global"

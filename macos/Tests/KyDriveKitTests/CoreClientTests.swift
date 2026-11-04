@@ -125,6 +125,21 @@ final class CoreClientTests: XCTestCase {
         XCTAssertFalse(model.linking)
     }
 
+    // Start at login shows the real state, and a refused change says so.
+    func testStartAtLogin() async {
+        var on = false
+        model.startsAtLogin = { on }
+        model.setStartsAtLogin = { on = $0 }
+        await model.refresh()
+        XCTAssertFalse(model.startAtLogin)
+        model.setStartAtLogin(true)
+        XCTAssertTrue(model.startAtLogin)
+        model.setStartsAtLogin = { _ in throw CoreError.message("refused") }
+        model.setStartAtLogin(false)
+        XCTAssertTrue(model.startAtLogin)
+        XCTAssertEqual(model.shownError, "Could not change Start at login: refused")
+    }
+
     // The first activity read only sets the baseline; later warnings are announced once.
     func testWarnsOnNewActivityOnly() async {
         var warnings: [String] = []

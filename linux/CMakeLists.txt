@@ -14,17 +14,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_link_options(-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Qml Quick QuickControls2 Test)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core DBus Gui Widgets Network Qml Quick QuickControls2 Test)
 find_package(KF6Kirigami REQUIRED)
 find_package(KF6I18n REQUIRED)
 find_package(KF6StatusNotifierItem REQUIRED)
 find_package(KF6DBusAddons REQUIRED)
 include(GNUInstallDirs)
 
-# CoreClient and Appearance have no QML or KF6 dependency, so the tests link them alone.
-add_library(coreclient STATIC src/CoreClient.cpp src/Appearance.cpp)
+# CoreClient, Appearance and Autostart have no QML or KF6 dependency, so the tests link them alone.
+add_library(coreclient STATIC src/CoreClient.cpp src/Appearance.cpp src/Autostart.cpp)
 target_include_directories(coreclient PUBLIC src)
-target_link_libraries(coreclient PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
+target_link_libraries(coreclient PUBLIC Qt6::Core Qt6::DBus Qt6::Gui Qt6::Network)
+target_compile_definitions(coreclient PRIVATE KYDRIVE_VERSION="${PROJECT_VERSION}")
 
 add_executable(kydrive-desktop src/main.cpp qml/qml.qrc)
 target_link_libraries(kydrive-desktop PRIVATE coreclient Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2
@@ -49,6 +50,15 @@ if(BUILD_TESTING)
   add_executable(tst_appearance tests/tst_appearance.cpp)
   target_link_libraries(tst_appearance PRIVATE coreclient Qt6::Test)
   add_test(NAME appearance COMMAND tst_appearance)
+  add_executable(tst_autostart tests/tst_autostart.cpp)
+  target_link_libraries(tst_autostart PRIVATE coreclient Qt6::Test)
+  # The Flatpak case talks to a fake portal on a private session bus.
+  find_program(DBUS_RUN_SESSION dbus-run-session)
+  if(DBUS_RUN_SESSION)
+    add_test(NAME autostart COMMAND ${DBUS_RUN_SESSION} -- $<TARGET_FILE:tst_autostart>)
+  else()
+    add_test(NAME autostart COMMAND tst_autostart)
+  endif()
   set_tests_properties(appearance PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
   add_executable(tst_qml tests/tst_qml.cpp qml/qml.qrc)
   target_link_libraries(tst_qml PRIVATE coreclient Qt6::Test Qt6::Widgets Qt6::Qml Qt6::Quick KF6::Kirigami KF6::I18nQml)

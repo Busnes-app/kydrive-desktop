@@ -115,7 +115,7 @@ jobs:
             libkf6dbusaddons-dev libkf6statusnotifieritem-dev \
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-workerscript \
-            qml6-module-org-kde-kirigami
+            qml6-module-org-kde-kirigami dbus-daemon
       - run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure

@@ -93,6 +93,26 @@ private slots:
         QCOMPARE(warning.first().first().toString(), QStringLiteral("Lost access to &lt;img src=&quot;http://x/&quot;&gt;"));
     }
 
+    // Q5: a core older than this shell is asked to quit; a newer or unversioned one is not.
+    void olderCoreIsAskedToQuit()
+    {
+        for (const auto& [version, quits] : {std::pair{QStringLiteral("0.0.1"), true}, {QStringLiteral("999.0.0"), false}, {QString(), false}}) {
+            QTemporaryDir dir;
+            FakeCore core(dir.filePath(QStringLiteral("sync.sock")));
+            if (!version.isEmpty())
+                core.status[QStringLiteral("Version")] = version;
+            CoreClient client(dir.filePath(QStringLiteral("sync.sock")), QStringLiteral("/nonexistent/kydrive-sync"));
+            QSignalSpy status(&client, &CoreClient::statusChanged);
+            client.refresh();
+            QVERIFY(status.wait());
+            QTest::qWait(100);
+            client.refresh(); // asked once a minute, not on every refresh
+            QVERIFY(status.wait());
+            QTest::qWait(100);
+            QCOMPARE(core.methods.count(QStringLiteral("Core.Quit")), quits ? 1 : 0);
+        }
+    }
+
     void missingCoreReportsError()
     {
         QTemporaryDir dir;

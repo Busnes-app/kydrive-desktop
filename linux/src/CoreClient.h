@@ -68,6 +68,7 @@ private:
     void failAll(const QString& error);
     void setError(const QString& error);
     Reply reportErrors(Reply done = {});
+    void replaceIfOlder();
     void waitForBrowser(const QString& method, const QVariantMap& params);
 
     QString m_socketPath;
@@ -79,6 +80,7 @@ private:
     qint64 m_nextId = 1;
     qint64 m_lastActivity = -1;
     QElapsedTimer m_started; // when the core was last started here
+    QElapsedTimer m_quitAsked; // when an older core was last asked to quit
     bool m_linking = false;
     QVariantMap m_status;
     QVariantList m_workspaces;

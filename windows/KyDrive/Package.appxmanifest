@@ -6,7 +6,8 @@
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
-  IgnorableNamespaces="uap rescap com desktop desktop6">
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  IgnorableNamespaces="uap rescap com desktop desktop6 uap5">
 
   <!-- The OID marks an unsigned package (Add-AppxPackage -AllowUnsigned). Signing replaces
        Publisher with the certificate's subject; see windows/AGENTS.md. -->
@@ -45,6 +46,10 @@
         <desktop:Extension Category="windows.toastNotificationActivation">
           <desktop:ToastNotificationActivation ToastActivatorCLSID="FB82D9DF-731A-4723-A134-E977567D6CAF" />
         </desktop:Extension>
+        <!-- Start at login: off until the user turns it on in the app. -->
+        <uap5:Extension Category="windows.startupTask">
+          <uap5:StartupTask TaskId="KyDriveStartup" Enabled="false" DisplayName="KyDrive" />
+        </uap5:Extension>
       </Extensions>
     </Application>
   </Applications>

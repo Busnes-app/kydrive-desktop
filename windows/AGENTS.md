@@ -2,8 +2,8 @@
 The Windows shell: a WinUI 3 (Windows App SDK) tray app (`KyDrive.exe`, package `com.kysecurity.drive`) that drives `kydrive-sync.exe` and renders its state. It ships as an MSIX and as an unpackaged zip, both self-contained (.NET and the Windows App SDK bundled).
 
 ## Ownership
-- `KyDrive.Client/` — `CoreClient` (JSON-RPC 1.0 over the core's AF_UNIX socket, one connection per call), `Paths.SocketPath`, `Safe` (http/https check, toast XML), `Warnings`. Plain `net10.0`, no UI: everything testable lives here.
-- `KyDrive/` — `Program.cs` (single instance via `AppInstance`), `App.xaml(.cs)` (resources, toast registration), `MainWindow.cs` (window built in code, tray icon; link form with Cancel, sign-in-again panel when `signed_out`), `Package.appxmanifest`, `Assets/` (from `linux/packaging/icons`).
+- `KyDrive.Client/` — `CoreClient` (JSON-RPC 1.0 over the core's AF_UNIX socket, one connection per call), `Paths.SocketPath`, `Safe` (http/https check, toast XML), `Warnings`, `RunKey` (the zip's Start at login: HKCU `Run` value `KyDrive`, off when Task Manager's `StartupApproved` byte is odd). Plain `net10.0`, no UI: everything testable lives here.
+- `KyDrive/` — `Program.cs` (single instance via `AppInstance`), `App.xaml(.cs)` (resources, toast registration), `MainWindow.cs` (window built in code, tray icon; link form with Cancel, sign-in-again panel when `signed_out`, Start at login checkbox), `Package.appxmanifest` (StartupTask `KyDriveStartup`, `Enabled="false"`), `Assets/` (from `linux/packaging/icons`).
 - `launch-check.ps1` — CI: launches a build and waits, via UI Automation, for the link form.
 - `KyDrive.Tests/` — xUnit: IPC against `FakeCore` on a real AF_UNIX socket, the socket path against the real core, link and toast safety, a plain-text guard over the app sources.
 
