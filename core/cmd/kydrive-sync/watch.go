@@ -64,6 +64,10 @@ func (d *daemon) watch(ctx context.Context) {
 			if name := filepath.Base(ev.Name); strings.HasPrefix(name, ".kydrive-") {
 				continue // our own downloads
 			}
+			if dir := filepath.Dir(ev.Name); counts[dir] > 1 && (ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename)) {
+				counts[dir]--
+				used--
+			}
 			if ev.Has(fsnotify.Create) {
 				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
 					add(ev.Name)

@@ -180,22 +180,19 @@ func TestUnlinkRemovingFilesResumes(t *testing.T) {
 	}
 }
 
-// Q3: an install linked before the account was recorded signs in only as an account that
-// sees every workspace it syncs.
-func TestSignInWithoutRecordedAccount(t *testing.T) {
-	for _, bound := range []string{"w1", "w9"} {
-		t.Run(bound, func(t *testing.T) {
-			srv := server(t)
-			d, ctl := start(t, srv)
-			signedOut(t, d, ctl, srv.URL)
-			d.db.Set("user", "")
-			d.db.DropWorkspace("w1")
-			d.db.PutWorkspace(engine.Workspace{ID: bound, Name: "Docs", Dir: "Docs", Cursor: 7})
-			var out struct{}
-			err := ctl("SignIn", struct{}{}, &out)
-			if (bound == "w1") != (err == nil) {
-				t.Fatalf("bound %s: %v", bound, err)
-			}
-		})
+// Q3: an install linked before the account was recorded cannot tell another account from its
+// own, so it is refused and keeps its bindings.
+func TestSignInWithoutRecordedAccountRefused(t *testing.T) {
+	srv := server(t)
+	d, ctl := start(t, srv)
+	signedOut(t, d, ctl, srv.URL)
+	d.db.Set("user", "")
+	selfRevoked.Store(0)
+	var out struct{}
+	if err := ctl("SignIn", struct{}{}, &out); err == nil || !strings.Contains(err.Error(), "unlink") {
+		t.Fatalf("legacy sign in answered %v", err)
+	}
+	if ws, _ := d.db.Workspaces(); len(ws) != 1 || selfRevoked.Load() != 1 {
+		t.Fatalf("bindings %+v, revoked %d", ws, selfRevoked.Load())
 	}
 }

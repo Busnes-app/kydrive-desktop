@@ -56,7 +56,8 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 			err = e.DB.DropRetry(f.ID)
 		}
 		if err != nil && !errors.Is(err, errSnapshot) {
-			return err
+			// A pass the network ended still backs this retry off.
+			return errors.Join(err, e.Memory.tried(e.DB, w.ID, tried))
 		}
 	}
 	if err := e.Memory.tried(e.DB, w.ID, tried); err != nil {
@@ -165,7 +166,7 @@ func (e *Engine) removeLater(w Workspace, it Item, err error) error {
 // file system refuses) from stopping the pass: the file waits in retries for the next pull.
 // Server, network and cancellation errors still end the pass.
 func (e *Engine) retryLater(ctx context.Context, w Workspace, f api.File, err error) error {
-	if err == nil || errors.Is(err, errSnapshot) || ctx.Err() != nil || api.Status(err) != 0 || lostNetwork(err) {
+	if err == nil || errors.Is(err, errSnapshot) || ctx.Err() != nil || api.Status(err) != 0 || errors.As(err, new(*url.Error)) {
 		return err
 	}
 	fresh, aerr := e.DB.AddRetry(w.ID, f)
@@ -174,6 +175,9 @@ func (e *Engine) retryLater(ctx context.Context, w Workspace, f api.File, err er
 	}
 	return aerr
 }
+
+// networkKey is the Memory key of the announced lost network.
+const networkKey = "\x00network"
 
 // lostNetwork reports a connection that failed or broke off mid-transfer.
 func lostNetwork(err error) bool {
@@ -259,6 +263,11 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		}
 		if cur, err := e.DB.Item(it.ID); err != nil || cur == nil {
 			continue // already gone with its folder
+		}
+		if ws, err := e.DB.RetryWorkspace(it.ID); err != nil {
+			return err
+		} else if ws != "" && ws != w.ID {
+			continue // moved to another workspace, whose retry removes this copy
 		}
 		if err := e.removeLater(w, it, e.remove(w, it)); err != nil {
 			return err
@@ -522,14 +531,11 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		return ctx.Err()
 	}
 	if err != nil {
+		// Every failed download waits in retries and never holds up the rest. A lost
+		// network fails them all in turn, so it is announced once until a download succeeds.
 		fresh, aerr := e.DB.AddRetry(w.ID, f)
-		if fresh {
+		if fresh && (!lostNetwork(err) || e.Memory.once(networkKey)) {
 			e.warn("Download of %s failed: %v", rel, err)
-		}
-		// A lost network ends the pass rather than failing every file in turn; a file the
-		// server cannot serve (5xx) only waits, so it never holds up the rest.
-		if lostNetwork(err) {
-			return errors.Join(err, aerr)
 		}
 		return aerr
 	}
@@ -561,6 +567,7 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if err := os.Rename(tmp.Name(), p); err != nil {
 		return err
 	}
+	e.Memory.clear(networkKey)
 	return e.record(w, f, rel, tfi, id)
 }
 

@@ -52,13 +52,16 @@ void Autostart::refresh()
 {
     // The portal is the only judge of the host's entry: asking again with the last answer
     // brings a permission revoked since back to off (no prompt once the user has decided).
-    if (m_flatpak && enabled())
+    if (m_flatpak && enabled()) {
+        m_quiet = true;
         setEnabled(true);
+    }
 }
 
 void Autostart::setEnabled(bool on)
 {
     if (m_flatpak) {
+        m_asked = on;
         QDBusConnection bus = QDBusConnection::sessionBus();
         const QString token = QStringLiteral("kydrive%1").arg(QRandomGenerator::global()->generate());
         // Subscribe before asking: the answer can arrive before the call returns.
@@ -100,7 +103,10 @@ void Autostart::portalResponse(uint response, const QVariantMap& results)
                                              QStringLiteral("Response"), this, SLOT(portalResponse(uint, QVariantMap)));
     if (response == 0)
         QSettings().setValue(flatpakKey, results.value(QStringLiteral("autostart")).toBool());
-    else
+    else if (m_asked) // refused: it is not on
+        QSettings().setValue(flatpakKey, false);
+    if (response != 0 && !m_quiet)
         emit failed(tr("Start at login was not changed."));
+    m_quiet = false;
     emit enabledChanged();
 }

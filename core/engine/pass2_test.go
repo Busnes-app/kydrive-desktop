@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -78,9 +79,10 @@ func TestForeign404DownloadIsRetried(t *testing.T) {
 	v := setup(t, nil)
 	target, _ := url.Parse(v.r.URL())
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	broken := true
+	var broken atomic.Bool
+	broken.Store(true)
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if broken && strings.HasSuffix(r.URL.Path, "/download") {
+		if broken.Load() && strings.HasSuffix(r.URL.Path, "/download") {
 			http.Error(w, "<html>Not Found</html>", 404)
 			return
 		}
@@ -90,7 +92,7 @@ func TestForeign404DownloadIsRetried(t *testing.T) {
 	v.e.API.Base = front.URL
 	v.r.Put(t, v.ws, "new.txt", []byte("hello"))
 	v.e.Sync(context.Background())
-	broken = false
+	broken.Store(false)
 	v.sync()
 	if !v.exists("new.txt") || v.read("new.txt") != "hello" {
 		t.Fatal("a file whose download met a proxy 404 never arrived")
@@ -192,10 +194,10 @@ func TestFailingDownloadBacksOff(t *testing.T) {
 	v.e.Memory = NewMemory()
 	target, _ := url.Parse(v.r.URL())
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	downloads := 0
+	var downloads atomic.Int32
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/download") {
-			downloads++
+			downloads.Add(1)
 		}
 		proxy.ServeHTTP(w, r)
 	}))
@@ -205,21 +207,25 @@ func TestFailingDownloadBacksOff(t *testing.T) {
 	for range 4 {
 		v.sync()
 	}
-	if downloads > 2 {
-		t.Fatalf("downloaded %d times in 4 passes", downloads)
+	if n := downloads.Load(); n > 2 {
+		t.Fatalf("downloaded %d times in 4 passes", n)
 	}
 }
 
-// O-R10: a dropped network ends the pass at the first failed download, with one warning.
-func TestNetworkFailureEndsThePass(t *testing.T) {
+// O-R10: a dropped network fails the remaining downloads with one warning, and they arrive
+// once it is back.
+func TestNetworkFailureWarnsOnce(t *testing.T) {
 	v := setup(t, nil)
+	v.e.Memory = NewMemory()
 	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
 		v.r.Put(t, v.ws, n, []byte(n))
 	}
 	target, _ := url.Parse(v.r.URL())
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	var down atomic.Bool
+	down.Store(true)
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/download") {
+		if down.Load() && strings.HasSuffix(r.URL.Path, "/download") {
 			c, _, _ := w.(http.Hijacker).Hijack()
 			c.Close()
 			return
@@ -228,12 +234,16 @@ func TestNetworkFailureEndsThePass(t *testing.T) {
 	}))
 	defer front.Close()
 	v.e.API.Base = front.URL
-	if err := v.e.Sync(context.Background()); err == nil {
-		t.Fatal("a dropped network passed as success")
-	}
+	v.sync()
 	a, _ := v.e.DB.Activity(0)
 	if n := len(slices.DeleteFunc(a, func(x Activity) bool { return x.Level != "warn" })); n != 1 {
 		t.Fatalf("%d warnings", n)
+	}
+	down.Store(false)
+	v.e.Memory = NewMemory() // the backoff has passed
+	v.sync()
+	if !v.exists("c.txt") {
+		t.Fatal("the downloads did not arrive once the network was back")
 	}
 }
 
@@ -387,12 +397,11 @@ func TestBlockedMoveBetweenWorkspacesArrives(t *testing.T) {
 	}
 }
 
-// Certification round 1: a connection lost in the middle of a body also ends the pass.
-func TestBodyCutEndsThePass(t *testing.T) {
-	v := setup(t, nil)
-	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
-		v.r.Put(t, v.ws, n, []byte("0123456789"))
-	}
+// Certification rounds 1-2: a file whose body is always cut mid-transfer warns once and
+// never holds up the rest.
+func TestBodyCutFileDoesNotStopSync(t *testing.T) {
+	v := setup(t, map[string]string{"keep.txt": "v1"})
+	v.e.Memory = NewMemory()
 	target, _ := url.Parse(v.r.URL())
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -407,11 +416,45 @@ func TestBodyCutEndsThePass(t *testing.T) {
 	}))
 	defer front.Close()
 	v.e.API.Base = front.URL
-	if err := v.e.Sync(context.Background()); err == nil {
-		t.Fatal("a cut body passed as success")
+	v.r.Put(t, v.ws, "a.bin", []byte("0123456789"))
+	v.r.Put(t, v.ws, "b.bin", []byte("0123456789"))
+	v.write("keep.txt", "v2")
+	v.sync()
+	v.sync()
+	if v.remote("keep.txt") != "v2" {
+		t.Fatal("a cut download held up the upload")
 	}
 	a, _ := v.e.DB.Activity(0)
 	if n := len(slices.DeleteFunc(a, func(x Activity) bool { return x.Level != "warn" })); n != 1 {
 		t.Fatalf("%d warnings", n)
+	}
+}
+
+// Certification round 2: a source workspace that re-snapshots (410) while the old copy of a
+// moved file cannot go yet does not strand the move.
+func TestBlockedMoveSurvivesASourceSnapshot(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, map[string]string{"ro/Plan.txt": "plan"})
+	archive := second(t, v, "Archive") // synced before Docs
+	f.mu.Lock()
+	it := f.find(v.ws, "ro/Plan.txt")
+	it.ws, it.parent = archive, ""
+	f.record(v.ws, "file", it.id)
+	f.record(archive, "file", it.id)
+	f.floor = int64(len(f.log)) + 1 // every cursor gets 410: Docs snapshots
+	f.mu.Unlock()
+	readOnly(t, v.path("ro"))
+	v.e.Sync(context.Background())
+	f.mu.Lock()
+	f.floor = 0
+	f.mu.Unlock()
+	os.Chmod(v.path("ro"), 0o755)
+	v.sync()
+	v.sync()
+	if v.exists("ro/Plan.txt") {
+		t.Fatal("the old copy stayed")
+	}
+	if b, err := os.ReadFile(filepath.Join(v.root, "Archive", "Plan.txt")); err != nil || string(b) != "plan" {
+		t.Fatalf("never arrived: %q %v", b, err)
 	}
 }

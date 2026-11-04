@@ -227,7 +227,7 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	if err != nil {
 		return linkErr(ctx, err)
 	}
-	if err := d.sameAccount(ctx, server, tok); err != nil {
+	if err := d.sameAccount(tok); err != nil {
 		d.revoke(server, tok)
 		return err
 	}
@@ -239,36 +239,29 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	return d.activate(server, name, tok)
 }
 
-// sameAccount refuses a sign-in as another account. An install linked before the account was
-// recorded checks instead that the new credential sees every workspace it syncs.
-func (d *daemon) sameAccount(ctx context.Context, server string, tok api.Token) error {
-	was := d.db.Get("user")
-	if was != "" {
-		if tok.User != was {
-			return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
-		}
-		return nil
-	}
-	bound, err := d.db.Workspaces()
-	if err != nil {
-		return err
-	}
-	list, err := (&api.Client{Base: server, Token: tok.Token, HTTP: d.http}).Workspaces(ctx)
-	if err != nil {
-		return err
-	}
-	for _, w := range bound {
-		if !slices.ContainsFunc(list, func(s api.Workspace) bool { return s.ID == w.ID }) {
-			return fmt.Errorf("you signed in as %s, who cannot see %s, which this computer syncs; sign in with the account it was linked to, or unlink to use another account", tok.User, w.Name)
-		}
+// sameAccount refuses a sign-in as any account but the one recorded at link. An install
+// linked before accounts were recorded cannot be checked, so it is refused too.
+func (d *daemon) sameAccount(tok api.Token) error {
+	switch was := d.db.Get("user"); {
+	case was == "":
+		return errors.New("this computer was linked before KyDrive recorded which account it syncs, so it cannot sign in again; unlink, then link it")
+	case tok.User != was:
+		return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
 	}
 	return nil
 }
 
-// stillWanted refuses an approval that arrived after CancelLink or Unlink, revoking it. The
-// caller holds d.work, which Unlink takes after cancelling.
+// stillWanted refuses an approval that arrived after CancelLink or Unlink, revoking it;
+// otherwise the link is committed and nothing is left to cancel. The caller holds d.work,
+// which Unlink takes after cancelling.
 func (d *daemon) stillWanted(ctx context.Context, server string, tok api.Token) error {
-	if ctx.Err() == nil {
+	d.mu.Lock()
+	cancelled := ctx.Err() != nil
+	if !cancelled {
+		d.linking = nil
+	}
+	d.mu.Unlock()
+	if !cancelled {
 		return nil
 	}
 	d.revoke(server, tok)
@@ -284,11 +277,15 @@ func (d *daemon) revoke(server string, tok api.Token) {
 	}
 }
 
-// CancelLink ends a link or sign-in waiting for approval in the browser.
+// CancelLink ends a link or sign-in waiting for approval in the browser. One already approved
+// and being saved cannot be cancelled.
 func (c *Core) CancelLink(_ struct{}, _ *struct{}) error {
 	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.linking == nil {
+		return errors.New("no link is waiting for approval")
+	}
 	c.d.cancelLink()
-	c.d.mu.Unlock()
 	return nil
 }
 

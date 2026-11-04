@@ -35,4 +35,6 @@ private:
     QString m_exec;
     bool m_flatpak;
     QString m_request; // the portal request waiting for its answer
+    bool m_asked = false; // that request asked to turn it on
+    bool m_quiet = false; // that request is refresh()'s check, not the user's
 };
