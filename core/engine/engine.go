@@ -186,8 +186,9 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 	for _, w := range ws {
 		i := slices.IndexFunc(list, func(s api.Workspace) bool { return s.ID == w.ID })
 		if i < 0 {
+			// A file that cannot go yet keeps the binding for the next pass, not the others.
 			if err := e.lose(w); err != nil {
-				return err
+				failed = errors.Join(failed, fmt.Errorf("%s: %w", w.Name, err))
 			}
 			continue
 		}
@@ -212,7 +213,7 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		// Only KyDrive's own answer (a JSON error) means lost access; a proxy's page does not.
 		if ae := (*api.Error)(nil); errors.As(err, &ae) && (ae.Status == 403 || ae.Status == 404) && ae.Code != "" {
 			if err := e.lose(w); err != nil {
-				return err
+				failed = errors.Join(failed, fmt.Errorf("%s: %w", w.Name, err))
 			}
 			continue
 		}

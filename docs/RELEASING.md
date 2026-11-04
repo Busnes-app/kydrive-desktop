@@ -16,9 +16,11 @@ build: it is checked against the version without its suffix, and its notes open 
 `.github/release-notes/prerelease.md` (the unsigned-build warning and install steps). First bump
 the version in `linux/CMakeLists.txt`, the newest `<release>` (version and date) in
 `linux/packaging/com.kysecurity.drive.metainfo.xml`,
-`CFBundleShortVersionString` in `macos/packaging/Info.plist` and `Identity Version` (with a
-trailing `.0`) in `windows/KyDrive/Package.appxmanifest`. The release job refuses a tag that
-does not match all four.
+`CFBundleShortVersionString` in `macos/packaging/Info.plist`, `Identity Version` (with a
+trailing `.0`) in `windows/KyDrive/Package.appxmanifest`, `Version` in
+`windows/KyDrive/KyDrive.csproj` and `version` in `core/cmd/kydrive-sync/main.go`. The release
+job refuses a tag that does not match all six. A shell replaces a running core older than its own
+version (`Core.Quit`), so the six must move together.
 
 ```sh
 git tag v0.4.0-test.1 && git push origin v0.4.0-test.1

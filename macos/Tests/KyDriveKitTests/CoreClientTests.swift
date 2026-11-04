@@ -125,6 +125,38 @@ final class CoreClientTests: XCTestCase {
         XCTAssertFalse(model.linking)
     }
 
+    // Start at login shows the real state, and a refused change says so.
+    // Q5: a core older than the app is asked to quit, once a minute; a newer or unversioned one is not.
+    func testOlderCoreIsAskedToQuit() async {
+        model.version = "0.6.0"
+        for (version, quits) in [("0.5.9", 1), ("0.10.0", 0), ("", 0)] {
+            fake.stop()
+            fake = try! FakeCore()
+            var status = FakeCore.status
+            status["Version"] = version
+            fake.answer("Core.Status", status)
+            model = AppModel(core: CoreClient(socketPath: fake.path))
+            model.version = "0.6.0"
+            await model.refresh()
+            await model.refresh()
+            XCTAssertEqual(fake.methods.filter { $0 == "Core.Quit" }.count, quits, "core \(version)")
+        }
+    }
+
+    func testStartAtLogin() async {
+        var on = false
+        model.startsAtLogin = { on }
+        model.setStartsAtLogin = { on = $0 }
+        await model.refresh()
+        XCTAssertFalse(model.startAtLogin)
+        model.setStartAtLogin(true)
+        XCTAssertTrue(model.startAtLogin)
+        model.setStartsAtLogin = { _ in throw CoreError.message("refused") }
+        model.setStartAtLogin(false)
+        XCTAssertTrue(model.startAtLogin)
+        XCTAssertEqual(model.shownError, "Could not change Start at login: refused")
+    }
+
     // The first activity read only sets the baseline; later warnings are announced once.
     func testWarnsOnNewActivityOnly() async {
         var warnings: [String] = []

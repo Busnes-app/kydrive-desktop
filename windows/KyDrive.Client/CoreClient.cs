@@ -6,7 +6,7 @@ namespace KyDrive;
 
 // Wire shapes of core/cmd/kydrive-sync/rpc.go and core/engine/db.go.
 public sealed record Status(bool Linked, string? Server, string? DevicesURL, string? Root, string? State, string? Error,
-    bool Paused, long LastSync, WorkspaceStatus[]? Workspaces);
+    bool Paused, long LastSync, WorkspaceStatus[]? Workspaces, string? Version = null);
 
 public sealed record WorkspaceStatus(string ID, string Name, string Dir, int HeldDeletes);
 
@@ -15,6 +15,16 @@ public sealed record Choice(string ID, string Name, string Kind, string Role, bo
 public sealed record Issue(long ID, string Workspace, string Path, string Kind, string Detail, long Created);
 
 public sealed record Activity(long ID, long Created, string Level, string Message);
+
+// After an upgrade the old core may still run: one older than this shell is replaced.
+public static class Upgrade
+{
+    public static bool Older(string? core, Version shell) =>
+        Version.TryParse(core, out var v) && Plain(v) < Plain(shell);
+
+    // 0.6.0 and 0.6.0.0 are one release.
+    static Version Plain(Version v) => new(v.Major, v.Minor, Math.Max(v.Build, 0));
+}
 
 // The core answered with an error.
 public class CoreException(string message) : Exception(message);
@@ -36,6 +46,8 @@ public sealed class CoreClient(string socketPath)
     public Task Link(string server, string name, CancellationToken ct = default) => Call<object>("Link", new { Server = server, Name = name }, ct);
     public Task SignIn(CancellationToken ct = default) => Call<object>("SignIn", null, ct);
     public Task CancelLink(CancellationToken ct = default) => Call<object>("CancelLink", null, ct);
+    // Ends an idle core so a newer one can start; refused while it syncs.
+    public Task Quit(CancellationToken ct = default) => Call<object>("Quit", null, ct);
     public Task Unlink(bool removeFiles, CancellationToken ct = default) => Call<object>("Unlink", new { RemoveFiles = removeFiles }, ct);
     public Task Choose(IEnumerable<string> ids, CancellationToken ct = default) => Call<object>("Choose", new { IDs = ids.ToArray() }, ct);
     public Task Pause(bool paused, CancellationToken ct = default) => Call<object>("Pause", new { Paused = paused }, ct);

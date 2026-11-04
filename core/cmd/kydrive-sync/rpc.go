@@ -29,6 +29,7 @@ type Core struct {
 }
 
 type Status struct {
+	Version    string // this core's release, for a shell that bundles a newer one (Quit)
 	Linked     bool
 	Server     string
 	DevicesURL string // the account page where this computer can be revoked
@@ -48,7 +49,7 @@ type WorkspaceStatus struct {
 func (c *Core) Status(_ struct{}, out *Status) error {
 	d := c.d
 	d.mu.Lock()
-	*out = Status{Linked: d.token != "", Server: d.db.Get("server"), DevicesURL: d.db.Get("devices_url"), Root: d.root,
+	*out = Status{Version: version, Linked: d.token != "", Server: d.db.Get("server"), DevicesURL: d.db.Get("devices_url"), Root: d.root,
 		State: d.state, Error: d.lastErr, Paused: d.db.Get("paused") != "", LastSync: d.lastSync}
 	d.mu.Unlock()
 	ws, err := d.db.Workspaces()
@@ -103,17 +104,16 @@ func deviceName(name string) string {
 // pending is a link waiting for the browser; CancelLink and Unlink end it.
 type pending struct{ cancel context.CancelFunc }
 
-// begin marks a link as waiting once ok allows it (called under d.mu); end clears the mark.
+// begin marks a link as waiting once ok allows it (called under d.mu), replacing one already
+// waiting: a shell started again does not know of it and could not cancel it. end clears the mark.
 func (c *Core) begin(ok func() error) (ctx context.Context, end func(), err error) {
 	d := c.d
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.linking != nil {
-		return nil, nil, errors.New("a link is already waiting for approval in the browser; cancel it first")
-	}
 	if err := ok(); err != nil {
 		return nil, nil, err
 	}
+	d.cancelLink()
 	ctx, cancel := context.WithCancel(c.ctx)
 	p := &pending{cancel}
 	d.linking = p
@@ -223,6 +223,10 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 		return err
 	}
 	defer end()
+	// The bindings it keeps would be dropped by an unfinished wipe once syncing again.
+	if err := d.finishWipe(); err != nil {
+		return err
+	}
 	tok, err := link.Link(ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
 	if err != nil {
 		return linkErr(ctx, err)
@@ -245,7 +249,7 @@ func (d *daemon) sameAccount(tok api.Token) error {
 	switch was := d.db.Get("user"); {
 	case was == "":
 		return errors.New("this computer was linked before KyDrive recorded which account it syncs, so it cannot sign in again; unlink, then link it")
-	case tok.User != was:
+	case !strings.EqualFold(tok.User, was): // the server's usernames are unique regardless of case
 		return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
 	}
 	return nil
@@ -328,7 +332,7 @@ func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 		// Recorded first, like a wipe the server asks for: a file that cannot go yet (open
 		// elsewhere) is removed by a later pass, and Link waits for it.
 		if err := d.engine().StartWipe(); err != nil {
-			wiped = wipeUnfinished(err)
+			wiped = errors.New("unlinked, but files from this computer are not all removed yet; KyDrive removes them once no app is using them, and linking waits until then: " + err.Error())
 		}
 	} else {
 		ws, err := d.db.Workspaces()
@@ -415,4 +419,28 @@ func (c *Core) ConfirmDeletes(in struct {
 	d.work.Unlock()
 	d.trigger(true)
 	return err
+}
+
+// Quit ends this core so that a shell bundling a newer one can start it after an upgrade. It is
+// refused while a pass or a link is under way (the shell asks again later), and holds the work
+// lock until the exit so nothing starts meanwhile.
+func (c *Core) Quit(_ struct{}, _ *struct{}) error {
+	d := c.d
+	if !d.work.TryLock() {
+		return errors.New("KyDrive is syncing; try again shortly")
+	}
+	d.mu.Lock()
+	busy := d.linking != nil
+	d.mu.Unlock()
+	if busy {
+		d.work.Unlock()
+		return errors.New("a link is waiting for approval in the browser")
+	}
+	log.Printf("quitting: a shell asked for its newer core")
+	go func() {
+		time.Sleep(200 * time.Millisecond) // the answer reaches the shell first
+		d.db.Close()
+		d.exit(0)
+	}()
+	return nil
 }

@@ -30,6 +30,7 @@ public struct MenuContent: View {
             if let error = model.shownError { ErrorBanner(text: error, fill: true) }
             if model.signedOut { signInForm }
             if model.status.linked { linked } else if !model.signedOut { linkForm }
+            Toggle("Start at login", isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) }))
             Hairline()
             HStack {
                 SettingsButton().buttonStyle(KyButtonStyle())
@@ -368,4 +369,26 @@ struct HeldDeletesBanner: View {
                 .buttonStyle(KyButtonStyle())
         }
     }
+}
+
+/// The menu window: its content at full height, scrolling once that is taller than the screen
+/// (a long workspace list would otherwise push Apply off it).
+public struct ScrollingMenu<Content: View>: View {
+    @State private var height: CGFloat = 0
+    private let content: Content
+
+    public init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    public var body: some View {
+        ScrollView {
+            content.background(GeometryReader { Color.clear.preference(key: MenuHeight.self, value: $0.size.height) })
+        }
+        .frame(height: min(height, (NSScreen.main?.visibleFrame.height ?? 800) - 40))
+        .onPreferenceChange(MenuHeight.self) { height = $0 }
+    }
+}
+
+private struct MenuHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

@@ -4,9 +4,9 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
 ## Ownership
 - `Sources/KyDriveKit/CoreClient.swift` — socket path, JSON-RPC 1.0 client (`Core.<Method>`, one JSON object per line, one connection per call), the core's reply types; the only link to the core.
 - `Sources/KyDriveKit/AppModel.swift` — what the menu shows, actions, warning announcements, `webURL`, `notice`.
-- `Sources/KyDriveKit/Views.swift` — the menu window: brand row, link form with Cancel, sign-in-again card when `signed_out`, workspaces, held deletes, conflicts, unlink; the shared `Banner`, `Card` and `KyButtonStyle` (primary, secondary, danger), matching the Linux shell.
+- `Sources/KyDriveKit/Views.swift` — the menu window: brand row, link form with Cancel, sign-in-again card when `signed_out`, Start at login, workspaces, held deletes, conflicts, unlink; the shared `Banner`, `Card` and `KyButtonStyle` (primary, secondary, danger), matching the Linux shell; `ScrollingMenu`, which scrolls the menu once it is taller than the screen.
 - `Sources/KyDriveKit/Appearance.swift` — the suite's six theme pairs (ky-ui `THEME_PAIRS` and `tokens.css`), the saved pair and System/Light/Dark mode (`appearancePair`, `appearanceMode`; a legacy `theme` migrates once), `kyThemed()` and the Settings window's `AppearanceSettings`.
-- `Sources/KyDrive/KyDriveApp.swift` — `@main`, launch agent registration, notifications, starting the core without the agent.
+- `Sources/KyDrive/KyDriveApp.swift` — `@main`, the launch agent behind Start at login, notifications, starting the core without the agent.
 - `packaging/` — `Info.plist` (`LSUIElement`) and the launch agent `com.kysecurity.drive.sync.plist`.
 - `scripts/bundle.sh` — `build/KyDrive.app`: universal shell and core (`Contents/MacOS/`), agent plist (`Contents/Library/LaunchAgents/`), ad-hoc signed.
 
@@ -17,7 +17,7 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
 - **Theme:** Busnes following the system by default. Copy palette and status values from ky-ui, never approximate them; `AppearanceTests` ports ky-ui's `check-status-colours.mjs` gate (180 checks). Status colours never reuse the accent and always come with a word and an icon or dot.
 - **Look:** form labels sit above their full-width controls (link form, Settings); one filled primary per group, dimmed but still filled when disabled.
 - **URLs:** only `http`/`https` with a host are opened (`webURL`). The sync root is revealed with `selectFile(_:inFileViewerRootedAtPath:)`, which never launches anything.
-- **Core lifecycle:** the app registers the bundled core as a per-user launch agent with `SMAppService.agent` (`RunAtLoad`, restarted after a crash). Only when the agent is not enabled (refused, or switched off in Login Items) and nothing answers does the app start the core itself, at most once a minute; never both, as two cores would contend for one socket.
+- **Core lifecycle:** Start at login (the menu's toggle) is the bundled core as a per-user launch agent with `SMAppService.agent` (`RunAtLoad`, restarted after a crash). A fresh install starts with it off; an install that registered it earlier keeps it; the toggle shows the agent's real status. Only when the agent is not enabled and nothing answers does the app start the core itself, at most once a minute; never both, as two cores would contend for one socket: turning it on stops the core the app started first. With the agent on and nothing answering, the app asks launchd to start it (`launchctl kickstart`), at most once a minute: launchd does not restart a core that exited cleanly. A core reporting an older `Version` than the app's `CFBundleShortVersionString` is asked to `Quit`, at most once a minute, so the app's own core replaces it.
 
 ## Work Guidance
 - Builds and tests need macOS and Xcode; on Linux, push and read the `macos-shell` CI job.

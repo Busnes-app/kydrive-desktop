@@ -10,12 +10,21 @@ public final class AppModel: ObservableObject {
     @Published private(set) var linking = false
     @Published private(set) var actionError = "" // the last action's error, cleared by the next success
     @Published private(set) var offline: String? // set while Status fails
+    @Published private(set) var startAtLogin = false
 
     /// A new `warn` activity, as plain text.
     public var onWarning: (String) -> Void = { _ in }
     /// Nothing answers on the socket.
     public var onNotRunning: () -> Void = {}
     var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    /// Start at login (the core's launch agent): its real state, and the switch. Off until the
+    /// user turns it on.
+    public var startsAtLogin: () -> Bool = { false }
+    public var setStartsAtLogin: (Bool) throws -> Void = { _ in }
+    /// This app's release. A running core older than it (left from before an upgrade) is asked to
+    /// quit, at most once a minute (it refuses while it syncs), so the app's own core replaces it.
+    public var version = ""
+    private var quitAsked: Date?
 
     let core: CoreClient
     private var lastActivity: Int64 = -1
@@ -43,11 +52,17 @@ public final class AppModel: ObservableObject {
         guard !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
+        startAtLogin = startsAtLogin()
         do {
             let s: Status = try await core.call("Status")
             let wasLinked = status.linked
             status = s
             offline = nil
+            if let running = s.version, !running.isEmpty, !version.isEmpty, running.compare(version, options: .numeric) == .orderedAscending,
+               quitAsked.map({ Date().timeIntervalSince($0) > 60 }) ?? true {
+                quitAsked = Date()
+                _ = try? await core.call("Quit") as Empty
+            }
             conflicts = try await core.call("Conflicts")
             announce(try await core.call("Activity", ["After": max(lastActivity, 0)]))
             if s.linked && !wasLinked { await loadWorkspaces() }
@@ -87,6 +102,16 @@ public final class AppModel: ObservableObject {
         await act(method, params)
         linking = false
         if actionError.isEmpty { await loadWorkspaces() }
+    }
+
+    func setStartAtLogin(_ on: Bool) {
+        do {
+            try setStartsAtLogin(on)
+            actionError = ""
+        } catch {
+            actionError = "Could not change Start at login: " + error.localizedDescription
+        }
+        startAtLogin = startsAtLogin()
     }
 
     func unlink(removeFiles: Bool) async { await act("Unlink", ["RemoveFiles": removeFiles]) }
