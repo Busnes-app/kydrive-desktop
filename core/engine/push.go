@@ -3,11 +3,14 @@ package engine
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -103,6 +106,10 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		case it != nil && !e.changed(*it, n.p, n.fi):
 		case unsettled(n.fi.ModTime(), e.Settle):
 			e.Unsettled = true
+		case it != nil && it.State == "synced" && n.fi.Size() == it.Size && sameCopy(it, n):
+			// The synced content with new metadata (copied back from another disk): recorded
+			// again, not uploaded again.
+			err = e.DB.PutItem(*it)
 		default:
 			err = e.upload(ctx, w, n, it)
 		}
@@ -111,6 +118,37 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		}
 	}
 	return e.deletes(ctx, w, entries, false)
+}
+
+// sameCopy reports a changed file whose content is still the synced one, recording its new
+// metadata, read by the scan before the hash, in it: a write during the hash shows next pass.
+func sameCopy(it *Item, n entry) bool {
+	if !sameContent(n.p, it.Digest) {
+		return false
+	}
+	it.LocalSize, it.LocalMtime, it.LocalInode = n.fi.Size(), n.fi.ModTime().UnixNano(), n.inode
+	return true
+}
+
+// aliases is whether Finder aliases exist here (macOS); a variable for tests.
+var aliases = runtime.GOOS == "darwin"
+
+// finderAlias reports a Finder alias: a bookmark file, which starts "book\0\0\0\0mark".
+func finderAlias(p string) bool {
+	if !aliases {
+		return false
+	}
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+		return false // never opened: a FIFO would block
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := make([]byte, 12)
+	_, err = io.ReadFull(f, b)
+	return err == nil && string(b) == "book\x00\x00\x00\x00mark"
 }
 
 // unsettled reports a file written within settle. A future mtime (an archive from another
@@ -302,6 +340,7 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		return err
 	}
 	var top []Item
+	var aliased []string
 	count, total := 0, 0
 	for _, it := range items {
 		if it.State == "skipped" {
@@ -310,6 +349,18 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		total++
 		dir, ok := at[it.Path]
 		if it.State != "synced" || (ok && dir == (it.Kind == "folder")) {
+			continue
+		}
+		if slices.ContainsFunc(aliased, func(a string) bool { return strings.HasPrefix(it.Path, a+"/") }) {
+			continue
+		}
+		if ok && it.Kind == "folder" && finderAlias(filepath.Join(e.dir(w), filepath.FromSlash(it.Path))) {
+			// A Finder alias in its place (the folder moved to another disk, Option-Command
+			// dragged back): a link, not a delete, nor is anything recorded below it.
+			aliased = append(aliased, it.Path)
+			if err := e.DB.AddIssueOnce(w.ID, it.Path, "skipped", "a link or special file is in its place; not synced"); err != nil {
+				return err
+			}
 			continue
 		}
 		if !ok && !folderGone {
@@ -350,7 +401,14 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		w.Deletes = count
 		return e.DB.PutWorkspace(w)
 	}
+	busy, err := e.changedUnder(ctx, w, items, top)
+	if err != nil {
+		return err
+	}
 	for _, it := range top {
+		if busy[it.ID] {
+			continue
+		}
 		if it.Kind == "folder" {
 			err = e.API.TrashFolder(ctx, it.ID)
 		} else {
@@ -374,6 +432,59 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 			w.Cursor = -1 // a fresh snapshot restores it
 		}
 	}
-	w.Deletes, w.AllowDeletes = 0, false
+	// A confirmed delete that waits stays confirmed.
+	w.Deletes, w.AllowDeletes = 0, w.AllowDeletes && len(busy) > 0
 	return e.DB.PutWorkspace(w)
+}
+
+// changedUnder lists the folders about to be trashed that changed on the server since the
+// pull: the server trashes a folder with everything in it, so a file a colleague added during
+// the push would go too. Such a folder waits for the next pass, whose pull brings the change.
+func (e *Engine) changedUnder(ctx context.Context, w Workspace, items, top []Item) (map[string]bool, error) {
+	under := map[string]string{} // an item, or a folder created since, -> the folder to trash
+	for _, t := range top {
+		if t.Kind != "folder" {
+			continue
+		}
+		under[t.ID] = t.ID
+		for _, it := range items {
+			if strings.HasPrefix(it.Path, t.Path+"/") {
+				under[it.ID] = t.ID
+			}
+		}
+	}
+	busy := map[string]bool{}
+	for after := w.Cursor; len(under) > 0; {
+		ch, err := e.API.Changes(ctx, w.ID, after)
+		if api.Status(err) == 410 {
+			for _, t := range under {
+				busy[t] = true // the next pull snapshots
+			}
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range ch.Changes {
+			parent := ""
+			if c.File != nil {
+				parent = c.File.Parent
+			} else if c.Folder != nil {
+				parent = c.Folder.Parent
+			}
+			t, ok := under[c.ID]
+			if !ok {
+				t, ok = under[parent]
+			}
+			if ok {
+				busy[t] = true
+				under[c.ID] = t
+			}
+		}
+		if !ch.More {
+			break
+		}
+		after = ch.Next
+	}
+	return busy, nil
 }

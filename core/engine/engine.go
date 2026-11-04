@@ -50,6 +50,9 @@ type Engine struct {
 // errOutside refuses a path that would leave the workspace folder.
 var errOutside = errors.New("path leaves the workspace folder")
 
+// errLinked refuses a path under a link (a folder moved elsewhere, a link left in its place).
+var errLinked = errors.New("a folder above it is a link")
+
 // dir is the workspace's folder under the root.
 func (e *Engine) dir(w Workspace) string { return filepath.Join(e.Root, w.Dir) }
 
@@ -73,7 +76,7 @@ func (e *Engine) abs(w Workspace, rel string) (string, error) {
 		p = filepath.Join(p, part)
 		// A Windows junction (a folder moved to another disk) is irregular, not a symlink.
 		if fi, err := os.Lstat(p); err == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
-			return "", errOutside
+			return "", errLinked
 		}
 	}
 	return filepath.Join(root, r), nil
@@ -194,6 +197,12 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 			}
 			continue
 		}
+		// The workspace folder moved elsewhere with a link (a Windows junction) left in its place:
+		// nothing syncs through it, or what the scan cannot see would be trashed.
+		if fi, err := os.Lstat(e.dir(w)); err == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			failed = errors.Join(failed, fmt.Errorf("%s: %s is a link; KyDrive does not sync through links. Move the folder back to sync it", w.Name, e.dir(w)))
+			continue
+		}
 		if w.Cursor >= 0 && !w.AllowDeletes && list[i].Role != "reader" && missing(e.dir(w)) {
 			// A pull would recreate the folder and the push then trash what is missing from it,
 			// so the guard is armed first. Confirmed deletes still pull first: the server may
@@ -266,6 +275,29 @@ func (e *Engine) readerEdits(w Workspace) error {
 		}
 		if err := e.DB.AddIssueOnce(w.ID, n.rel, "readonly", "read-only workspace; not uploaded"); err != nil {
 			return err
+		}
+	}
+	// A synced copy deleted here comes back with a restore snapshot: kept as a pending
+	// delete, it would trash the file on the server once the user can edit.
+	if w, err = e.workspace(w.ID); err != nil || w.ID == "" {
+		return err
+	}
+	items, err := e.DB.Items(w.ID)
+	if err != nil {
+		return err
+	}
+	retries, err := e.DB.Retries(w.ID)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		// One waiting in retries (a download backing off) comes with its retry instead.
+		if slices.ContainsFunc(retries, func(f api.File) bool { return f.ID == it.ID }) {
+			continue
+		}
+		if p, err := e.abs(w, it.Path); err == nil && it.State == "synced" && missing(p) {
+			w.Cursor = -1
+			return e.DB.PutWorkspace(w)
 		}
 	}
 	return nil

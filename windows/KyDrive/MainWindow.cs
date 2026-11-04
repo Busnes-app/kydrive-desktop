@@ -28,6 +28,8 @@ sealed class MainWindow : Window
     DateTime started; // when this app last started the core
     DateTime quitAsked; // when an older core was last asked to quit
     string? quitVersion; // an older core that quit; if it answers again, it is the one on disk
+    DateTime unversionedEnded; // when an unversioned (0.6.0) core was ended here
+    bool olderRunning; // an unversioned core could not be ended
 
     readonly InfoBar errorBar = new() { Severity = InfoBarSeverity.Error, IsClosable = false };
     readonly StackPanel linkForm = new() { Spacing = 12 };
@@ -148,18 +150,20 @@ sealed class MainWindow : Window
         {
             status = await core.Status();
             coreError = "";
+            var quitNow = false;
             // An older core (from before an upgrade) is asked to quit, at most once a minute; it
             // refuses while it syncs. The next poll finds none and starts this build's core.
-            // One that comes back after quitting (the old kydrive-sync.exe beside this app, or an
-            // older KyDrive still running) is kept, not restarted every minute.
-            if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!) && status.Version != quitVersion
-                && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(1))
+            // One that comes back after quitting (an older KyDrive still running started it again)
+            // is asked again only every 10 minutes, once the user may have quit that KyDrive.
+            if (Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!)
+                && DateTime.UtcNow - quitAsked > TimeSpan.FromMinutes(status.Version != quitVersion ? 1 : 10))
             {
                 quitAsked = DateTime.UtcNow;
                 try
                 {
                     await core.Quit();
                     quitVersion = status.Version;
+                    quitNow = true; // gone; the next poll sees who answers
                     started = DateTime.MinValue;
                 }
                 catch (CoreException)
@@ -167,6 +171,26 @@ sealed class MainWindow : Window
                     // Refused while it syncs: asked again in a minute.
                 }
             }
+            // Q8: the released 0.6.0 core reports no version and cannot quit. While idle it is
+            // ended, once; if none could be, or one still answers a minute later, the user is told.
+            if (string.IsNullOrEmpty(status.Version) && !olderRunning && status.State != "syncing")
+            {
+                if (unversionedEnded == default)
+                {
+                    unversionedEnded = DateTime.UtcNow;
+                    var bundled = Path.Join(AppContext.BaseDirectory, "kydrive-sync.exe");
+                    olderRunning = !(await core.PeerProcessId() is int pid && await Task.Run(() => Upgrade.EndCore(pid, bundled)));
+                    started = DateTime.MinValue;
+                }
+                else if (DateTime.UtcNow - unversionedEnded > TimeSpan.FromMinutes(1))
+                    olderRunning = true;
+            }
+            if (olderRunning && string.IsNullOrEmpty(status.Version))
+                coreError = Upgrade.OlderRunning;
+            // An older core that answers again after quitting was started by an older KyDrive
+            // still running (unzipped elsewhere): only the user can quit that one.
+            if (!quitNow && status.Version == quitVersion && Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!))
+                coreError = $"An older KyDrive ({status.Version}) is still running. Quit it from its tray icon to finish the upgrade.";
             RenderConflicts(await core.Conflicts());
             foreach (var message in warnings.Next(await core.Activity(warnings.After)))
                 Notify(message);

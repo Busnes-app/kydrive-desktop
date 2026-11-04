@@ -69,6 +69,8 @@ private:
     void setError(const QString& error);
     Reply reportErrors(Reply done = {});
     void replaceIfOlder();
+    void endUnversioned();
+    static QString olderRunning();
     void waitForBrowser(const QString& method, const QVariantMap& params);
 
     QString m_socketPath;
@@ -82,6 +84,7 @@ private:
     QElapsedTimer m_started; // when the core was last started here
     QElapsedTimer m_quitAsked; // when an older core was last asked to quit
     QString m_quitVersion; // the version it reported: one that comes back is the installed core
+    bool m_unversionedEnded = false; // an unversioned (0.6.0) core was sent SIGTERM
     bool m_linking = false;
     QVariantMap m_status;
     QVariantList m_workspaces;

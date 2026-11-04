@@ -1,6 +1,7 @@
 #include "CoreClient.h"
 
 #include <QDesktopServices>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -8,6 +9,11 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QVersionNumber>
+
+#include <csignal>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 CoreClient::CoreClient(const QString& socketPath, const QString& corePath, QObject* parent)
     : QObject(parent)
@@ -160,6 +166,10 @@ void CoreClient::refresh()
 void CoreClient::replaceIfOlder()
 {
     const QString version = m_status.value(QStringLiteral("Version")).toString();
+    if (version.isEmpty() && !m_corePath.isEmpty())
+        return endUnversioned();
+    if (m_error == olderRunning())
+        setError(QString());
     const QVersionNumber running = QVersionNumber::fromString(version);
     if (m_corePath.isEmpty() || running.isNull() || running >= QVersionNumber::fromString(QStringLiteral(KYDRIVE_VERSION))
         || version == m_quitVersion || (m_quitAsked.isValid() && !m_quitAsked.hasExpired(60000)))
@@ -169,6 +179,44 @@ void CoreClient::replaceIfOlder()
         if (error.isEmpty())
             m_quitVersion = version;
     });
+}
+
+// Q8: the released 0.6.0 core reports no version and has no Quit. While it is idle it is sent
+// SIGTERM, once, after checking the socket's peer is this user's kydrive-sync; the next call
+// then starts this shell's core. A peer that cannot be seen (the Flatpak's own PID namespace),
+// or an unversioned core still answering a minute later, leaves a notice instead.
+void CoreClient::endUnversioned()
+{
+    if (m_status.value(QStringLiteral("State")).toString() == QStringLiteral("syncing")
+        || (m_quitAsked.isValid() && !m_quitAsked.hasExpired(60000)))
+        return;
+    if (!m_unversionedEnded) {
+        ucred peer{};
+        socklen_t len = sizeof peer;
+        if (getsockopt(int(m_socket.socketDescriptor()), SOL_SOCKET, SO_PEERCRED, &peer, &len) == 0 && peer.pid > 0 && peer.uid == getuid()) {
+            // The pidfd pins the process: the one checked is the one signalled.
+            const int pidfd = int(syscall(SYS_pidfd_open, peer.pid, 0));
+            char exe[4096];
+            const ssize_t n = pidfd < 0 ? -1 : readlink(QStringLiteral("/proc/%1/exe").arg(peer.pid).toLocal8Bit().constData(), exe, sizeof exe - 1);
+            // An upgraded package leaves "/usr/bin/kydrive-sync (deleted)".
+            const QString name = n > 0 ? QFileInfo(QString::fromLocal8Bit(exe, n)).fileName() : QString();
+            const bool ended = (name == QStringLiteral("kydrive-sync") || name == QStringLiteral("kydrive-sync (deleted)"))
+                && syscall(SYS_pidfd_send_signal, pidfd, SIGTERM, nullptr, 0) == 0;
+            if (pidfd >= 0)
+                close(pidfd);
+            if (ended) {
+                m_unversionedEnded = true;
+                m_quitAsked.start();
+                return;
+            }
+        }
+    }
+    setError(olderRunning());
+}
+
+QString CoreClient::olderRunning()
+{
+    return tr("An older KyDrive is still running. Log out and back in to finish the upgrade.");
 }
 
 void CoreClient::loadWorkspaces()

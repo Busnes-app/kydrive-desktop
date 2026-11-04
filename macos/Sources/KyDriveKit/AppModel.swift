@@ -25,6 +25,11 @@ public final class AppModel: ObservableObject {
     /// quit, at most once a minute (it refuses while it syncs), so the app's own core replaces it.
     public var version = ""
     private var quitAsked: Date?
+    /// Q8: ends a core that reports no version (the released 0.6.0, which has no Quit); true if
+    /// it did. Unset, such a core is left alone.
+    public var endUnversionedCore: (() -> Bool)?
+    private var unversionedEnded: Date?
+    @Published private(set) var olderRunning = false // an unversioned core could not be ended
 
     let core: CoreClient
     private var lastActivity: Int64 = -1
@@ -44,7 +49,8 @@ public final class AppModel: ObservableObject {
     var signedOut: Bool { status.state == "signed_out" && !status.server.isEmpty }
 
     var shownError: String? {
-        let e = offline ?? (actionError.isEmpty ? status.error : actionError)
+        let stale = olderRunning && (status.version ?? "").isEmpty
+        let e = offline ?? (actionError.isEmpty ? (stale ? "An older KyDrive is still running. Log out and back in to finish the upgrade." : status.error) : actionError)
         return e.isEmpty ? nil : e
     }
 
@@ -62,6 +68,16 @@ public final class AppModel: ObservableObject {
                quitAsked.map({ Date().timeIntervalSince($0) > 60 }) ?? true {
                 quitAsked = Date()
                 _ = try? await core.call("Quit") as Empty
+            }
+            // Ended while idle, once; if it could not be, or one still answers a minute later,
+            // the user is told.
+            if (s.version ?? "").isEmpty, let end = endUnversionedCore, !olderRunning, s.state != "syncing" {
+                if let at = unversionedEnded {
+                    olderRunning = Date().timeIntervalSince(at) > 60
+                } else {
+                    unversionedEnded = Date()
+                    olderRunning = !end()
+                }
             }
             conflicts = try await core.call("Conflicts")
             announce(try await core.call("Activity", ["After": max(lastActivity, 0)]))

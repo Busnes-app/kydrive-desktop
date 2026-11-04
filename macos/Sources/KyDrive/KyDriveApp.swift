@@ -35,6 +35,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         model.version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         model.onNotRunning = { [weak self] in self?.startCoreOnce() }
+        // 0.6.0 always ran its core as this launch agent: restart it, which runs the app's own core.
+        model.endUnversionedCore = {
+            let launchctl = Process()
+            launchctl.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            launchctl.arguments = ["kickstart", "-k", "gui/" + String(getuid()) + "/com.kysecurity.drive.sync"]
+            guard (try? launchctl.run()) != nil else { return false }
+            launchctl.waitUntilExit()
+            return launchctl.terminationStatus == 0
+        }
         model.start()
     }
 
