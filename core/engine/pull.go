@@ -178,10 +178,30 @@ func cmpErr(err, otherwise error) error {
 }
 
 // snapshot enumerates the whole workspace, applies it, removes what is gone and continues
-// the feed from the snapshot's head.
+// the feed from the snapshot's head. Only a snapshot asked for to restore (cursor -1: a new
+// binding, an evict, refused deletes) brings back missing copies; one the feed forces (an
+// unknown folder, 410) leaves them, as echo does, for the push to send as moves or deletes.
+// A file waiting out a failed download's backoff is not fetched early.
 func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
+	restore := w.Cursor < 0
 	if err := os.MkdirAll(e.dir(w), 0o755); err != nil {
 		return err
+	}
+	retries, err := e.DB.Retries(w.ID)
+	if err != nil {
+		return err
+	}
+	waiting := map[string]api.File{}
+	for _, f := range retries {
+		waiting[f.ID] = f
+	}
+	// held is a feed echo: the record has it and its local copy is missing.
+	held := func(id, parent, name string, rev int64, digest string) (bool, error) {
+		if restore {
+			return false, nil
+		}
+		it, err := e.DB.Item(id)
+		return err == nil && e.echo(w, it, parent, name, rev, digest), err
 	}
 	var folders []api.Folder
 	var files []api.File
@@ -208,10 +228,16 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 				later = append(later, f)
 				continue
 			}
+			seen[f.ID] = true
+			if h, err := held(f.ID, f.Parent, f.Name, 0, ""); err != nil || h {
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			if err := e.upsertFolder(w, f); err != nil && !errors.Is(err, errSnapshot) {
 				return err
 			}
-			seen[f.ID] = true
 		}
 		if len(later) == len(folders) {
 			break // orphans: their parents are not in the snapshot
@@ -219,17 +245,32 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		folders = later
 	}
 	slices.SortFunc(files, func(a, b api.File) int { return strings.Compare(a.Name, b.Name) })
+	var tried []string
 	for _, f := range files {
 		if !seen[f.Parent] {
 			continue
 		}
-		if err := e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f)); err != nil && !errors.Is(err, errSnapshot) {
-			return err
-		}
 		seen[f.ID] = true
+		if r, ok := waiting[f.ID]; ok && r.Revision == f.Revision && r.Digest == f.Digest {
+			if !e.Memory.due(f.ID) {
+				continue
+			}
+			tried = append(tried, f.ID)
+		}
+		if h, err := held(f.ID, f.Parent, f.Name, f.Revision, f.Digest); err != nil || h {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if err := e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f)); err != nil && !errors.Is(err, errSnapshot) {
+			return errors.Join(err, e.Memory.tried(e.DB, w.ID, tried))
+		}
 	}
-	retries, err := e.DB.Retries(w.ID)
-	if err != nil {
+	if err := e.Memory.tried(e.DB, w.ID, tried); err != nil {
+		return err
+	}
+	if retries, err = e.DB.Retries(w.ID); err != nil {
 		return err
 	}
 	for _, f := range retries {
@@ -375,16 +416,15 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 	if err != nil {
 		return e.skip(w, it, err.Error())
 	}
-	if err := os.MkdirAll(p, 0o755); err != nil {
-		// Tried again each pull; the folder syncs once the file is moved away.
+	err = os.MkdirAll(p, 0o755)
+	fi, lerr := os.Lstat(p)
+	if err != nil || lerr != nil || !fi.IsDir() {
+		// A file or a link has the name (MkdirAll follows a link to a folder). Tried again each
+		// pull; the folder syncs once it is moved away.
 		if _, err := e.DB.AddRetry(w.ID, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name}); err != nil {
 			return err
 		}
-		return e.skip(w, it, "a local file has this name")
-	}
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return err
+		return e.skip(w, it, "a local file or link has this name")
 	}
 	it.LocalInode = inode(p, fi)
 	if old != nil && old.State == "skipped" {
@@ -406,7 +446,9 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	if err != nil {
 		return err
 	}
-	if old != nil && old.State == "skipped" {
+	// A record from another workspace (a file moved between two chosen ones) names a path in
+	// that workspace, not this one: the file downloads fresh here.
+	if old != nil && (old.State == "skipped" || old.Workspace != w.ID) {
 		old = nil
 	}
 	if old != nil && old.Path != rel {
@@ -427,8 +469,13 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	if err == nil {
 		id := inode(p, fi)
 		switch {
-		case fi.IsDir():
-			return e.skip(w, fileItem(w, f, rel), "a local folder has this name")
+		case !fi.Mode().IsRegular():
+			// A folder, link or special file (never opened: a FIFO would block) has the name.
+			// Tried again each pull; the file syncs once it is moved away.
+			if _, err := e.DB.AddRetry(w.ID, f); err != nil {
+				return err
+			}
+			return e.skip(w, fileItem(w, f, rel), "a local folder or link has this name")
 		case old != nil && old.State == "synced" && old.Revision == f.Revision && old.Digest == f.Digest:
 			// The server has nothing newer (often this computer's own upload coming back); a
 			// local change since is a pending upload, not a conflict.
