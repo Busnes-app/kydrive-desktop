@@ -1,4 +1,5 @@
 #include "Appearance.h"
+#include "Autostart.h"
 #include "CoreClient.h"
 #include "FakeCore.h"
 
@@ -50,6 +51,7 @@ private:
     QTemporaryDir m_settingsDir;
     QSettings m_settings{m_settingsDir.filePath(QStringLiteral("kydrive.ini")), QSettings::IniFormat};
     Appearance m_appearance{&m_settings};
+    Autostart m_autostart{m_settingsDir.filePath(QStringLiteral("autostart/com.kysecurity.drive.desktop")), QStringLiteral("kydrive-desktop"), false};
     QStringList m_warnings;
 
     void save(QQuickWindow* window, const QString& shot)
@@ -71,6 +73,7 @@ private:
         KLocalization::setupLocalizedContext(&engine);
         engine.rootContext()->setContextProperty(QStringLiteral("Core"), &client);
         engine.rootContext()->setContextProperty(QStringLiteral("Appearance"), &m_appearance);
+        engine.rootContext()->setContextProperty(QStringLiteral("Autostart"), &m_autostart);
         engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
         if (engine.rootObjects().size() != 1)
             return nullptr;
@@ -107,6 +110,18 @@ private slots:
         core.status = {{QStringLiteral("Linked"), false}, {QStringLiteral("State"), QStringLiteral("unlinked")}};
         core.conflicts = {};
         show(core, socket, QStringLiteral("unlinked"));
+    }
+
+    // A plain 401, or no credential in the keyring: the sign-in card instead of the link form.
+    void signedOut()
+    {
+        QTemporaryDir dir;
+        const QString socket = dir.filePath(QStringLiteral("s"));
+        FakeCore core(socket);
+        core.status = {{QStringLiteral("Linked"), false}, {QStringLiteral("State"), QStringLiteral("signed_out")},
+                       {QStringLiteral("Server"), QStringLiteral("https://drive.example.com")}};
+        core.conflicts = {};
+        show(core, socket, QStringLiteral("signed-out"));
     }
 
     void linked()

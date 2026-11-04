@@ -111,6 +111,35 @@ final class CoreClientTests: XCTestCase {
         XCTAssertEqual(fake.params("Core.Link").first?["Server"] as? String, "https://drive.example.com")
     }
 
+    // A pending link or sign-in can be cancelled; signing in again calls the core's SignIn.
+    func testCancelLinkAndSignIn() async {
+        fake.holdLink = true
+        let link = Task { await model.link(server: "https://drive.example.com", name: "mac") }
+        for _ in 0..<500 where !fake.methods.contains("Core.Link") { try? await Task.sleep(nanoseconds: 10_000_000) }
+        await model.cancelLink()
+        XCTAssertTrue(fake.methods.contains("Core.CancelLink"))
+        fake.releaseLink()
+        await link.value
+        await model.signIn()
+        XCTAssertTrue(fake.methods.contains("Core.SignIn"))
+        XCTAssertFalse(model.linking)
+    }
+
+    // Start at login shows the real state, and a refused change says so.
+    func testStartAtLogin() async {
+        var on = false
+        model.startsAtLogin = { on }
+        model.setStartsAtLogin = { on = $0 }
+        await model.refresh()
+        XCTAssertFalse(model.startAtLogin)
+        model.setStartAtLogin(true)
+        XCTAssertTrue(model.startAtLogin)
+        model.setStartsAtLogin = { _ in throw CoreError.message("refused") }
+        model.setStartAtLogin(false)
+        XCTAssertTrue(model.startAtLogin)
+        XCTAssertEqual(model.shownError, "Could not change Start at login: refused")
+    }
+
     // The first activity read only sets the baseline; later warnings are announced once.
     func testWarnsOnNewActivityOnly() async {
         var warnings: [String] = []

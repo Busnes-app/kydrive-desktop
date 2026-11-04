@@ -10,12 +10,17 @@ public final class AppModel: ObservableObject {
     @Published private(set) var linking = false
     @Published private(set) var actionError = "" // the last action's error, cleared by the next success
     @Published private(set) var offline: String? // set while Status fails
+    @Published private(set) var startAtLogin = false
 
     /// A new `warn` activity, as plain text.
     public var onWarning: (String) -> Void = { _ in }
     /// Nothing answers on the socket.
     public var onNotRunning: () -> Void = {}
     var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    /// Start at login (the core's launch agent): its real state, and the switch. Off until the
+    /// user turns it on.
+    public var startsAtLogin: () -> Bool = { false }
+    public var setStartsAtLogin: (Bool) throws -> Void = { _ in }
 
     let core: CoreClient
     private var lastActivity: Int64 = -1
@@ -31,6 +36,9 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// KyDrive stopped accepting this computer's credential: sign in again to the same account.
+    var signedOut: Bool { status.state == "signed_out" && !status.server.isEmpty }
+
     var shownError: String? {
         let e = offline ?? (actionError.isEmpty ? status.error : actionError)
         return e.isEmpty ? nil : e
@@ -40,6 +48,7 @@ public final class AppModel: ObservableObject {
         guard !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
+        startAtLogin = startsAtLogin()
         do {
             let s: Status = try await core.call("Status")
             let wasLinked = status.linked
@@ -73,12 +82,27 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    /// Returns once the user approves in the browser the core opened, or after its ten-minute timeout.
-    func link(server: String, name: String) async {
+    /// Link and SignIn return once the user approves in the browser, after the core's
+    /// ten-minute timeout, or on CancelLink.
+    func link(server: String, name: String) async { await waitForBrowser("Link", ["Server": server, "Name": name]) }
+    func signIn() async { await waitForBrowser("SignIn", [:]) }
+    func cancelLink() async { await act("CancelLink", [:]) }
+
+    private func waitForBrowser(_ method: String, _ params: [String: Any]) async {
         linking = true
-        await act("Link", ["Server": server, "Name": name])
+        await act(method, params)
         linking = false
         if actionError.isEmpty { await loadWorkspaces() }
+    }
+
+    func setStartAtLogin(_ on: Bool) {
+        do {
+            try setStartsAtLogin(on)
+            actionError = ""
+        } catch {
+            actionError = "Could not change Start at login: " + error.localizedDescription
+        }
+        startAtLogin = startsAtLogin()
     }
 
     func unlink(removeFiles: Bool) async { await act("Unlink", ["RemoveFiles": removeFiles]) }

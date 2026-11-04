@@ -161,18 +161,33 @@ void CoreClient::loadWorkspaces()
 
 void CoreClient::link(const QString& server, const QString& name)
 {
+    waitForBrowser(QStringLiteral("Link"), {{QStringLiteral("Server"), server}, {QStringLiteral("Name"), name}});
+}
+
+void CoreClient::signIn()
+{
+    waitForBrowser(QStringLiteral("SignIn"), {});
+}
+
+// Link and SignIn return once the user approves in the browser, after the core's ten-minute
+// timeout, or on CancelLink.
+void CoreClient::waitForBrowser(const QString& method, const QVariantMap& params)
+{
     m_linking = true;
     emit linkingChanged();
-    // Returns once the user approves in the browser, or after the core's ten-minute timeout.
-    call(QStringLiteral("Link"), {{QStringLiteral("Server"), server}, {QStringLiteral("Name"), name}},
-         [this](const QJsonValue&, const QString& error) {
-             m_linking = false;
-             emit linkingChanged();
-             setError(error);
-             if (error.isEmpty())
-                 loadWorkspaces();
-             refresh();
-         });
+    call(method, params, [this](const QJsonValue&, const QString& error) {
+        m_linking = false;
+        emit linkingChanged();
+        setError(error);
+        if (error.isEmpty())
+            loadWorkspaces();
+        refresh();
+    });
+}
+
+void CoreClient::cancelLink()
+{
+    call(QStringLiteral("CancelLink"), {});
 }
 
 void CoreClient::unlink(bool removeFiles)

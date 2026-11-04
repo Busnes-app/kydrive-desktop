@@ -29,8 +29,8 @@ go build ./cmd/kydrive-sync
 ./kydrive-sync ctl Status
 ```
 
-`ctl` methods: `Status`, `Link`, `Unlink`, `Workspaces`, `Choose`, `Pause`, `Conflicts`,
-`Activity`, `ConfirmDeletes`. They are JSON-RPC 1.0 calls `Core.<Method>` on the socket at
+`ctl` methods: `Status`, `Link`, `SignIn`, `CancelLink`, `Unlink`, `Workspaces`, `Choose`, `Pause`,
+`Conflicts`, `Activity`, `ConfirmDeletes`. They are JSON-RPC 1.0 calls `Core.<Method>` on the socket at
 `$XDG_RUNTIME_DIR/kydrive/sync.sock` (Linux), `~/Library/Application Support/kydrive/sync.sock`
 (macOS) or `<user config dir>/kydrive/sync.sock`.
 
@@ -46,7 +46,7 @@ cmake --build linux/build
 ctest --test-dir linux/build --output-on-failure
 sudo install -m 755 core/kydrive-sync /usr/local/bin/kydrive-sync
 sudo cmake --install linux/build
-# Optional login startup after installing the generated unit:
+# Start at login is a setting in the app (off by default). Or keep the core running with the unit:
 systemctl --user daemon-reload
 systemctl --user enable --now kydrive-sync
 # Launch the tray app after installation:
@@ -65,8 +65,8 @@ swift test
 scripts/bundle.sh && open build/KyDrive.app     # needs Xcode and Go
 ```
 
-Needs macOS 13+. The app registers the bundled core as a login item; until CI signs it with a
-Developer ID, the built app is only ad-hoc signed.
+Needs macOS 13+. The app's Start at login setting (off on a fresh install) registers the bundled
+core as a login item; until CI signs it with a Developer ID, the built app is only ad-hoc signed.
 
 ## Windows app
 

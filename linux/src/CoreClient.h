@@ -43,6 +43,8 @@ public:
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void loadWorkspaces();
     Q_INVOKABLE void link(const QString& server, const QString& name);
+    Q_INVOKABLE void signIn();
+    Q_INVOKABLE void cancelLink();
     Q_INVOKABLE void unlink(bool removeFiles);
     Q_INVOKABLE void choose(const QStringList& ids);
     Q_INVOKABLE void pause(bool paused);
@@ -65,6 +67,7 @@ private:
     void failAll(const QString& error);
     void setError(const QString& error);
     Reply reportErrors(Reply done = {});
+    void waitForBrowser(const QString& method, const QVariantMap& params);
 
     QString m_socketPath;
     QString m_corePath;

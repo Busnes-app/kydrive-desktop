@@ -20,7 +20,7 @@ public struct MenuContent: View {
         VStack(alignment: .leading, spacing: 16) {
             BrandRow()
             VStack(alignment: .leading, spacing: 4) {
-                if model.status.linked {
+                if model.status.linked || model.signedOut {
                     Text(verbatim: model.status.server).font(KyType.title).fixedSize(horizontal: false, vertical: true)
                     StatusLine(state: model.status.paused ? "paused" : model.status.state)
                 } else {
@@ -28,7 +28,9 @@ public struct MenuContent: View {
                 }
             }
             if let error = model.shownError { ErrorBanner(text: error, fill: true) }
-            if model.status.linked { linked } else { linkForm }
+            if model.signedOut { signInForm }
+            if model.status.linked { linked } else if !model.signedOut { linkForm }
+            Toggle("Start at login", isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) }))
             Hairline()
             HStack {
                 SettingsButton().buttonStyle(KyButtonStyle())
@@ -48,18 +50,44 @@ public struct MenuContent: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("KyDrive address").font(KyType.nav)
                 TextField("https://drive.example.com", text: $server).accessibilityLabel(Text("KyDrive address"))
+                    .disabled(model.linking)
                 Text("Computer name").font(KyType.nav).padding(.top, 10)
                 TextField("This computer's name", text: $name).accessibilityLabel(Text("Computer name"))
-                Button(model.linking ? "Waiting for approval in your browser…" : "Link") {
-                    Task { await model.link(server: server, name: name) }
+                    .disabled(model.linking)
+                HStack {
+                    Button(model.linking ? "Waiting for approval in your browser…" : "Link") {
+                        Task { await model.link(server: server, name: name) }
+                    }
+                    .buttonStyle(KyButtonStyle(kind: .primary))
+                    .disabled(model.linking || server.isEmpty)
+                    if model.linking { Button("Cancel") { Task { await model.cancelLink() } }.buttonStyle(KyButtonStyle()) }
                 }
-                .buttonStyle(KyButtonStyle(kind: .primary))
-                .disabled(model.linking || server.isEmpty)
                 .padding(.top, 10)
             }
             .padding(16)
         }
-        .disabled(model.linking)
+    }
+
+    // Signed out: the browser signs in to the same account; the workspaces stay.
+    private var signInForm: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("KyDrive no longer accepts this computer's sign-in. Sign in again with the same account to keep syncing your workspaces.")
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button(model.linking ? "Waiting for approval in your browser…" : "Sign in again") { Task { await model.signIn() } }
+                        .buttonStyle(KyButtonStyle(kind: .primary))
+                        .disabled(model.linking)
+                    if model.linking { Button("Cancel") { Task { await model.cancelLink() } }.buttonStyle(KyButtonStyle()) }
+                }
+                if !model.status.linked { unlinkControl }
+            }
+            .padding(16)
+        }
+    }
+
+    @ViewBuilder private var unlinkControl: some View {
+        if unlinking { unlinkConfirm } else { Button("Unlink…") { unlinking = true }.buttonStyle(KyButtonStyle(kind: .danger)) }
     }
 
     @ViewBuilder private var linked: some View {
@@ -111,7 +139,7 @@ public struct MenuContent: View {
             Button(model.status.paused ? "Resume" : "Pause") { Task { await model.pause(!model.status.paused) } }
         }
         .buttonStyle(KyButtonStyle())
-        if unlinking { unlinkConfirm } else { Button("Unlink…") { unlinking = true }.buttonStyle(KyButtonStyle(kind: .danger)) }
+        unlinkControl
     }
 
     private var unlinkConfirm: some View {

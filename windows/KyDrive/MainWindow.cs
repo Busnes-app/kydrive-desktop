@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Windows.AppNotifications;
+using Windows.ApplicationModel;
 using Windows.Graphics;
 
 namespace KyDrive;
@@ -30,6 +31,16 @@ sealed class MainWindow : Window
     readonly TextBox server = new() { Header = "KyDrive address", PlaceholderText = "https://drive.example.com" };
     readonly TextBox deviceName = new() { Header = "Computer name", PlaceholderText = "This computer's name" };
     readonly Button linkButton = new();
+    readonly Button cancelLink;
+    // Signed out: sign in again to the same account; the workspaces stay.
+    readonly StackPanel signInPanel = new() { Spacing = 12 };
+    readonly Button signInButton = new();
+    readonly Button cancelSignIn;
+    readonly Button signInUnlink;
+    // Start at login: off until the user turns it on. The MSIX has a StartupTask; the zip a Run value.
+    readonly CheckBox startAtLogin = new() { Content = "Start at login" };
+    readonly RunKey runKey = new(Path.Join(AppContext.BaseDirectory, "KyDrive.exe"));
+    readonly bool packaged = Packaged();
     readonly StackPanel linked = new() { Spacing = 12 };
     readonly TextBlock serverText = Plain("");
     readonly TextBlock stateText = Plain("");
@@ -58,10 +69,20 @@ sealed class MainWindow : Window
         };
 
         server.TextChanged += (_, _) => Render();
-        linkButton.Click += (_, _) => Link();
+        linkButton.Click += (_, _) => WaitForBrowser(c => c.Link(server.Text, deviceName.Text));
+        cancelLink = Act("Cancel", () => Run(c => c.CancelLink()));
         linkForm.Children.Add(server);
         linkForm.Children.Add(deviceName);
-        linkForm.Children.Add(linkButton);
+        linkForm.Children.Add(Row(linkButton, cancelLink));
+
+        signInButton.Click += (_, _) => WaitForBrowser(c => c.SignIn());
+        cancelSignIn = Act("Cancel", () => Run(c => c.CancelLink()));
+        signInUnlink = Act("Unlink…", ConfirmUnlink);
+        signInPanel.Children.Add(Plain("KyDrive no longer accepts this computer's sign-in. Sign in again with the same account to keep syncing your workspaces."));
+        signInPanel.Children.Add(Row(signInButton, cancelSignIn, signInUnlink));
+
+        startAtLogin.Click += (_, _) => SetStartAtLogin(startAtLogin.IsChecked == true);
+        Activated += (_, _) => _ = ShowStartAtLogin();
 
         pauseButton.Click += (_, _) => TogglePause();
         var actions = Row(Act("Open folder", OpenFolder), Act("Open in browser", OpenInBrowser), pauseButton, Act("Unlink…", ConfirmUnlink));
@@ -74,8 +95,10 @@ sealed class MainWindow : Window
 
         var page = new StackPanel { Spacing = 16, Padding = new Thickness(24) };
         page.Children.Add(errorBar);
+        page.Children.Add(signInPanel);
         page.Children.Add(linkForm);
         page.Children.Add(linked);
+        page.Children.Add(startAtLogin);
         Content = new ScrollViewer { Content = page };
 
         pauseItem.Command = Command(TogglePause);
@@ -103,6 +126,7 @@ sealed class MainWindow : Window
         poll.Start();
         Render();
         _ = Refresh();
+        _ = ShowStartAtLogin();
     }
 
     // Safe from any thread.
@@ -170,10 +194,16 @@ sealed class MainWindow : Window
         errorBar.Message = error;
         errorBar.IsOpen = error != "";
 
-        linkForm.Visibility = Show(s != null && !isLinked);
+        var signedOut = s?.State == "signed_out" && !string.IsNullOrEmpty(s.Server);
+        signInPanel.Visibility = Show(signedOut);
+        signInButton.Content = linking ? "Waiting for approval in your browser…" : "Sign in again";
+        signInButton.IsEnabled = !linking;
+        signInUnlink.Visibility = Show(!isLinked);
+        linkForm.Visibility = Show(s != null && !isLinked && !signedOut);
         server.IsEnabled = deviceName.IsEnabled = !linking;
         linkButton.Content = linking ? "Waiting for approval in your browser…" : "Link";
         linkButton.IsEnabled = !linking && server.Text.Trim() != "";
+        cancelLink.Visibility = cancelSignIn.Visibility = Show(linking);
         // An empty list is one that did not load: applying it would remove every workspace.
         apply.IsEnabled = choices.Children.Count > 0;
 
@@ -258,14 +288,14 @@ sealed class MainWindow : Window
         await Refresh();
     }
 
-    async void Link()
+    // Link or SignIn: the core opens the browser; this returns once the user approves there.
+    async void WaitForBrowser(Func<CoreClient, Task> call)
     {
         linking = true;
         Render();
         try
         {
-            // The core opens the browser; this returns once the user approves there.
-            await core.Link(server.Text, deviceName.Text);
+            await call(core);
             actionError = "";
         }
         catch (CoreException e)
@@ -274,6 +304,66 @@ sealed class MainWindow : Window
         }
         linking = false;
         await Refresh();
+    }
+
+    static bool Packaged()
+    {
+        try
+        {
+            return Package.Current != null;
+        }
+        catch (InvalidOperationException)
+        {
+            return false; // the zip build has no package identity
+        }
+    }
+
+    async Task<bool> StartsAtLogin()
+    {
+        if (!packaged)
+            return runKey.Enabled;
+        var task = await StartupTask.GetAsync("KyDriveStartup");
+        return task.State is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
+    }
+
+    // The checkbox shows the real state, which Task Manager or a policy can change.
+    async Task ShowStartAtLogin()
+    {
+        try
+        {
+            startAtLogin.IsChecked = await StartsAtLogin();
+        }
+        catch (Exception e)
+        {
+            startAtLogin.IsEnabled = false;
+            actionError = "Start at login is not available: " + e.Message;
+            Render();
+        }
+    }
+
+    async void SetStartAtLogin(bool on)
+    {
+        try
+        {
+            actionError = "";
+            if (!packaged)
+                runKey.Set(on);
+            else if (!on)
+                (await StartupTask.GetAsync("KyDriveStartup")).Disable();
+            else
+                actionError = await (await StartupTask.GetAsync("KyDriveStartup")).RequestEnableAsync() switch
+                {
+                    StartupTaskState.DisabledByUser => "Start at login was turned off in Task Manager; turn KyDrive on in Settings > Apps > Startup.",
+                    StartupTaskState.DisabledByPolicy => "Your organisation does not allow KyDrive to start at login.",
+                    _ => "",
+                };
+        }
+        catch (Exception e)
+        {
+            actionError = "Could not change Start at login: " + e.Message;
+        }
+        await ShowStartAtLogin();
+        Render();
     }
 
     void TogglePause() => Run(c => c.Pause(!(status?.Paused ?? false)));
