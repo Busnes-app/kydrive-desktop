@@ -2,6 +2,15 @@ namespace KyDrive.Tests;
 
 public class CoreClientTests
 {
+    // Q8: the process answering on the socket is known, as SO_PEERCRED gives on Linux.
+    [Fact]
+    public async Task PeerProcessIsTheAnsweringOne()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var core = new FakeCore();
+        Assert.Equal(Environment.ProcessId, await new CoreClient(core.Path).PeerProcessId());
+    }
+
     [Fact]
     public async Task StatusOverUnixSocket()
     {

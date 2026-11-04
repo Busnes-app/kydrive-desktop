@@ -428,7 +428,7 @@ func (e *Engine) skip(w Workspace, it Item, why string) error {
 	if o, err := e.DB.ItemAt(w.ID, it.Path); err != nil {
 		return err
 	} else if o != nil && o.ID != it.ID {
-		it.Path = ".kydrive-blocked-" + it.ID
+		it.Path = "\x01blocked-" + it.ID // no server name holds a control character
 	}
 	return e.DB.PutItem(it)
 }
@@ -536,6 +536,14 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 	old, err := e.DB.Item(f.ID)
 	if err != nil {
 		return err
+	}
+	if old != nil && old.State == "synced" {
+		// A Finder alias in its place (moved to another disk): it and its files' records
+		// wait, as for a link, wherever the server puts it.
+		if src, err := e.abs(w, old.Path); err == nil && finderAlias(src) {
+			_, err := e.DB.AddRetry(w.ID, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
+			return err
+		}
 	}
 	if old != nil && old.State != "skipped" && old.Path != rel {
 		ok, err := e.relocate(w, old.Path, rel)

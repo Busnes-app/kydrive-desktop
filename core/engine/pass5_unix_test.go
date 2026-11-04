@@ -197,3 +197,42 @@ func TestFinderAliasInPlaceOfFolder(t *testing.T) {
 		t.Fatalf("server paths %v", got)
 	}
 }
+
+// Certification round 2: a folder with a Finder alias in its place that the server then
+// renames keeps its files on the server.
+func TestFinderAliasThenServerRename(t *testing.T) {
+	aliases = true
+	t.Cleanup(func() { aliases = runtime.GOOS == "darwin" })
+	v := setup(t, map[string]string{"Photos/p.jpg": "p", "Photos/q.jpg": "q", "a.txt": "a", "b.txt": "b", "c.txt": "c"})
+	linkAway(t, v, "Photos")
+	if err := os.Remove(v.path("Photos")); err != nil {
+		t.Fatal(err)
+	}
+	v.write("Photos", "book\x00\x00\x00\x00mark\x00\x00\x00\x00alias data")
+	v.sync()
+	v.r.Rename(t, v.ws, "Photos", "Pics")
+	v.sync()
+	v.sync()
+	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"Pics/p.jpg", "Pics/q.jpg", "a.txt", "b.txt", "c.txt"}) {
+		t.Fatalf("server paths %v", got)
+	}
+}
+
+// Certification round 2: a wipe behind a link whose target cannot be changed finishes (an
+// unfinished wipe would refuse Link for good) and says what it kept.
+func TestWipeBehindReadOnlyLinkFinishes(t *testing.T) {
+	f := newFake(t)
+	v := setupOn(t, f, map[string]string{"Shared/x.txt": "x", "a.txt": "a"})
+	away := linkAway(t, v, "Shared")
+	if err := os.Chmod(away, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(away, 0o755) })
+	v.sync()
+	f.Revoke(t, true)
+	v.e.Sync(context.Background())
+	acts, _ := v.e.DB.Activity(0)
+	if v.e.DB.Get(wipeKey) != "" || !slices.ContainsFunc(acts, func(a Activity) bool { return strings.HasPrefix(a.Message, "Kept 1 files in") }) {
+		t.Fatalf("wipe %q, activity %v", v.e.DB.Get(wipeKey), acts)
+	}
+}

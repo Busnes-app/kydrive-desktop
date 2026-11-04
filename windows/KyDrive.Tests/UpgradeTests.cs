@@ -14,7 +14,7 @@ public class UpgradeTests
     public void OnlyAnOlderCoreIsReplaced(string? core, bool older) =>
         Assert.Equal(older, Upgrade.Older(core, new Version(0, 6, 0, 0)));
 
-    // Q8: this user's core running from another folder is ended; the bundled one never is.
+    // Q8: the answering core is ended only if it runs from another folder under its own name.
     [Fact]
     public void EndsOnlyACoreFromAnotherFolder()
     {
@@ -22,25 +22,19 @@ public class UpgradeTests
         var dir = Directory.CreateTempSubdirectory("kyd-upgrade").FullName;
         var exe = Path.Join(dir, "kyd-test-sync.exe");
         File.Copy(Path.Join(Environment.GetFolderPath(Environment.SpecialFolder.System), "PING.EXE"), exe);
-        var start = () => Process.Start(new ProcessStartInfo(exe, "-n 120 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false })!;
-        using var old = start();
-        using var another = start();
+        using var old = Process.Start(new ProcessStartInfo(exe, "-n 120 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false })!;
         try
         {
-            // Two copies running: which one answered cannot be told, so neither is ended.
-            Assert.False(Upgrade.EndOtherCore(Path.Join(dir, "new", "kydrive-sync.exe"), "kyd-test-sync"));
-            Assert.False(old.HasExited || another.HasExited);
-            another.Kill();
-            another.WaitForExit();
-            Assert.False(Upgrade.EndOtherCore(exe, "kyd-test-sync"));
+            var elsewhere = Path.Join(dir, "new", "kydrive-sync.exe");
+            Assert.False(Upgrade.EndCore(old.Id, elsewhere)); // not named kydrive-sync
+            Assert.False(Upgrade.EndCore(old.Id, exe, "kyd-test-sync")); // the bundled one
             Assert.False(old.HasExited);
-            Assert.True(Upgrade.EndOtherCore(Path.Join(dir, "new", "kydrive-sync.exe"), "kyd-test-sync"));
+            Assert.True(Upgrade.EndCore(old.Id, elsewhere, "kyd-test-sync"));
             Assert.True(old.HasExited);
         }
         finally
         {
             if (!old.HasExited) old.Kill();
-            if (!another.HasExited) another.Kill();
         }
     }
 }

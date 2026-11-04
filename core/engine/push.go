@@ -104,20 +104,17 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		case n.dir():
 		case it != nil && it.Kind != "file":
 		case it != nil && !e.changed(*it, n.p, n.fi):
-			var again bool
-			if again, err = e.rewritten(*it, n); err == nil && again {
-				if unsettled(time.Unix(0, ctime(n.p, n.fi)), e.Settle) {
-					e.Unsettled = true
-				} else {
-					err = e.upload(ctx, w, n, it)
-				}
+			var again, wait bool
+			if again, wait, err = e.rewritten(*it, n); wait {
+				e.Unsettled = true
+			} else if err == nil && again {
+				err = e.upload(ctx, w, n, it)
 			}
 		case unsettled(n.fi.ModTime(), e.Settle):
 			e.Unsettled = true
-		case it != nil && it.State == "synced" && n.fi.Size() == it.Size && sameContent(n.p, it.Digest):
+		case it != nil && it.State == "synced" && n.fi.Size() == it.Size && sameCopy(it, n):
 			// The synced content with new metadata (copied back from another disk): recorded
 			// again, not uploaded again.
-			it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = n.fi.Size(), n.fi.ModTime().UnixNano(), n.inode, ctime(n.p, n.fi)
 			err = e.DB.PutItem(*it)
 		default:
 			err = e.upload(ctx, w, n, it)
@@ -130,18 +127,37 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 }
 
 // rewritten reports a file written in place keeping its size and mtime (VeraCrypt does so by
-// default for its containers): its change time moved and its content is not what synced. A
-// change time that moved alone (permissions, a rename) is recorded, as is a first one.
-func (e *Engine) rewritten(it Item, n entry) (bool, error) {
+// default for its containers): its change time moved and its content is not what synced.
+// wait: it moved within Settle, so it is not hashed yet. A change time that moved alone
+// (permissions, a rename) is recorded, as is a first one; read before the hash, a write
+// during the hash shows on the next pass.
+func (e *Engine) rewritten(it Item, n entry) (again, wait bool, err error) {
 	c := ctime(n.p, n.fi)
 	if c == it.LocalCtime {
-		return false, nil
+		return false, false, nil
 	}
-	if it.LocalCtime != 0 && !sameContent(n.p, it.Digest) {
-		return true, nil
+	if it.LocalCtime != 0 {
+		if unsettled(time.Unix(0, c), e.Settle) {
+			return false, true, nil
+		}
+		if !sameContent(n.p, it.Digest) {
+			return true, false, nil
+		}
 	}
 	it.LocalCtime = c
-	return false, e.DB.PutItem(it)
+	return false, false, e.DB.PutItem(it)
+}
+
+// sameCopy reports a changed file whose content is still the synced one, recording its new
+// metadata in it. The change time is read before the hash and checked after it, so a write
+// during the hash is never recorded as synced.
+func sameCopy(it *Item, n entry) bool {
+	c := ctime(n.p, n.fi)
+	if !sameContent(n.p, it.Digest) || ctime(n.p, n.fi) != c {
+		return false
+	}
+	it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = n.fi.Size(), n.fi.ModTime().UnixNano(), n.inode, c
+	return true
 }
 
 // aliases is whether Finder aliases exist here (macOS); a variable for tests.
@@ -151,6 +167,9 @@ var aliases = runtime.GOOS == "darwin"
 func finderAlias(p string) bool {
 	if !aliases {
 		return false
+	}
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+		return false // never opened: a FIFO would block
 	}
 	f, err := os.Open(p)
 	if err != nil {

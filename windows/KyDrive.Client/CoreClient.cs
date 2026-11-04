@@ -25,44 +25,23 @@ public static class Upgrade
 
     public const string OlderRunning = "An older KyDrive is still running. Log out and back in to finish the upgrade.";
 
-    // Q8: the released 0.6.0 core reports no version and has no Quit. This user's core running
-    // from another folder (an older zip or MSIX) is ended; true if it was. More than one such
-    // process (another copy in use) is left alone: which one answered cannot be told.
-    public static bool EndOtherCore(string bundled, string name = "kydrive-sync")
+    // Q8: the released 0.6.0 core reports no version and has no Quit. The process that answered
+    // (CoreClient.PeerProcessId) is ended if it is this user's core running from another folder
+    // (an older zip or MSIX); true if it was.
+    public static bool EndCore(int pid, string bundled, string name = "kydrive-sync")
     {
-        var session = Process.GetCurrentProcess().SessionId;
-        var others = new List<Process>();
-        foreach (var p in Process.GetProcessesByName(name))
-        {
-            try
-            {
-                if (p.SessionId == session && p.MainModule?.FileName is { } exe
-                    && !string.Equals(Path.GetFullPath(exe), Path.GetFullPath(bundled), StringComparison.OrdinalIgnoreCase))
-                {
-                    others.Add(p);
-                    continue;
-                }
-            }
-            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
-            {
-                // Another user's (access denied) or already gone.
-            }
-            p.Dispose();
-        }
         try
         {
-            if (others.Count != 1)
+            using var p = Process.GetProcessById(pid);
+            if (p.ProcessName != name || p.SessionId != Process.GetCurrentProcess().SessionId || p.MainModule?.FileName is not { } exe
+                || string.Equals(Path.GetFullPath(exe), Path.GetFullPath(bundled), StringComparison.OrdinalIgnoreCase))
                 return false;
-            others[0].Kill();
-            return others[0].WaitForExit(5000);
+            p.Kill();
+            return p.WaitForExit(5000);
         }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (Exception e) when (e is ArgumentException or System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException)
         {
-            return false;
-        }
-        finally
-        {
-            others.ForEach(p => p.Dispose());
+            return false; // gone, or another user's (access denied)
         }
     }
 
@@ -96,6 +75,24 @@ public sealed class CoreClient(string socketPath)
     public Task Choose(IEnumerable<string> ids, CancellationToken ct = default) => Call<object>("Choose", new { IDs = ids.ToArray() }, ct);
     public Task Pause(bool paused, CancellationToken ct = default) => Call<object>("Pause", new { Paused = paused }, ct);
     public Task ConfirmDeletes(string workspace, bool allow, CancellationToken ct = default) => Call<object>("ConfirmDeletes", new { Workspace = workspace, Allow = allow }, ct);
+
+    // The process answering on the socket (SIO_AF_UNIX_GETPEERPID), or null where Windows
+    // cannot tell.
+    public async Task<int?> PeerProcessId(CancellationToken ct = default)
+    {
+        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        try
+        {
+            await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), ct);
+            var pid = new byte[4];
+            socket.IOControl(unchecked((int)0x58000100), null, pid);
+            return BitConverter.ToInt32(pid);
+        }
+        catch (Exception e) when (e is SocketException or PlatformNotSupportedException)
+        {
+            return null;
+        }
+    }
 
     async Task<T> Call<T>(string method, object? args, CancellationToken ct)
     {

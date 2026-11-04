@@ -179,7 +179,7 @@ sealed class MainWindow : Window
                 {
                     unversionedEnded = DateTime.UtcNow;
                     var bundled = Path.Join(AppContext.BaseDirectory, "kydrive-sync.exe");
-                    olderRunning = !await Task.Run(() => Upgrade.EndOtherCore(bundled));
+                    olderRunning = !(await core.PeerProcessId() is int pid && await Task.Run(() => Upgrade.EndCore(pid, bundled)));
                     started = DateTime.MinValue;
                 }
                 else if (DateTime.UtcNow - unversionedEnded > TimeSpan.FromMinutes(1))

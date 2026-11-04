@@ -276,7 +276,7 @@ func (e *Engine) readerEdits(w Workspace) error {
 			continue
 		}
 		if it != nil && !e.changed(*it, n.p, n.fi) {
-			if again, err := e.rewritten(*it, n); err != nil || !again {
+			if again, _, err := e.rewritten(*it, n); err != nil || !again {
 				if err != nil {
 					return err
 				}
@@ -452,63 +452,97 @@ func (e *Engine) evict(w Workspace, rel string) error {
 }
 
 // evictLinked deletes, for a wipe, the synced copies recorded under link p whose content is
-// still what synced. A copy changed since stays where it is, and is announced. A link into
-// the sync root is left: what it reaches is evicted, if synced, in its own place.
+// still what synced (bytes the server holds). A copy changed since, or one that cannot be
+// reached or removed, stays where it is, and is announced: the wipe still finishes, since an
+// unfinished one refuses Link. A link into the sync root is left: what it reaches is evicted,
+// if synced, in its own place.
 func (e *Engine) evictLinked(w Workspace, p string) error {
 	r, _ := filepath.Rel(e.dir(w), p)
 	r = filepath.ToSlash(r)
-	target, err := filepath.EvalSymlinks(p)
+	items, err := e.DB.Items(w.ID)
 	if err != nil {
-		return nil // a dangling link reaches nothing
+		return err
+	}
+	var under []Item
+	for _, it := range items {
+		if it.Kind == "file" && it.State == "synced" && (r == "." || strings.HasPrefix(it.Path, r+"/")) {
+			under = append(under, it)
+		}
 	}
 	root, err := filepath.EvalSymlinks(e.Root)
 	if err != nil {
 		return err
 	}
-	if in, err := filepath.Rel(root, target); err == nil && filepath.IsLocal(in) || target == root {
-		return nil
+	inRoot := func(d string) bool {
+		in, err := filepath.Rel(root, d)
+		return err == nil && filepath.IsLocal(in) || d == root
 	}
-	items, err := e.DB.Items(w.ID)
-	if err != nil {
-		return err
+	target, err := linkTarget(p)
+	if errors.Is(err, fs.ErrNotExist) || err == nil && inRoot(target) {
+		return nil // a dangling link reaches nothing
 	}
 	kept := 0
-	for _, it := range items {
-		sub, ok := strings.CutPrefix(it.Path, r+"/")
-		if r == "." {
-			sub, ok = it.Path, true
-		}
-		if !ok || it.Kind != "file" || it.State != "synced" {
+	for _, it := range under {
+		if err != nil {
+			kept++
 			continue
 		}
+		sub := it.Path
+		if r != "." {
+			sub = strings.TrimPrefix(it.Path, r+"/")
+		}
 		f := filepath.Join(target, filepath.FromSlash(sub))
-		if fi, err := os.Lstat(f); err != nil || !fi.Mode().IsRegular() {
+		fi, lerr := os.Lstat(f)
+		if errors.Is(lerr, fs.ErrNotExist) || lerr == nil && !fi.Mode().IsRegular() {
+			continue
+		}
+		// A link further down into the sync root: that copy is evicted in its own place.
+		if d, derr := filepath.EvalSymlinks(filepath.Dir(f)); lerr != nil || derr != nil || inRoot(d) {
+			kept++
 			continue
 		}
 		// Moved aside first, as evictFile does: an editor's save landing at f after the
 		// check is never deleted.
 		aside := filepath.Join(filepath.Dir(f), fmt.Sprintf(".kydrive-aside-%d", time.Now().UnixNano()))
-		if err := os.Rename(f, aside); err != nil {
-			return err
+		if os.Rename(f, aside) != nil {
+			kept++
+			continue
 		}
-		if fi, err := os.Lstat(aside); err == nil && fi.Mode().IsRegular() && sameContent(aside, it.Digest) {
-			if err := os.Remove(aside); err != nil {
-				return err
-			}
+		if fi, err := os.Lstat(aside); err == nil && fi.Mode().IsRegular() && sameContent(aside, it.Digest) && os.Remove(aside) == nil {
 			continue
 		}
 		kept++
-		if _, err := os.Lstat(f); err == nil {
-			continue // saved meanwhile: both stay
-		}
-		if err := os.Rename(aside, f); err != nil {
-			return err
+		// Back in place, never over a save that landed meanwhile; otherwise both stay.
+		if os.Link(aside, f) == nil {
+			os.Remove(aside)
 		}
 	}
 	if kept > 0 {
-		e.warn("Kept %d changed files in %s, which links to another folder", kept, p)
+		e.warn("Kept %d files in %s, which links to another folder: changed since they synced, or they could not be removed", kept, p)
 	}
 	return nil
+}
+
+// linkTarget resolves link p, a Windows junction too (EvalSymlinks leaves those as they are).
+func linkTarget(p string) (string, error) {
+	t, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	if fi, err := os.Lstat(t); err != nil || fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
+		return t, err
+	}
+	l := t
+	if t, err = os.Readlink(l); err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(t) {
+		t = filepath.Join(filepath.Dir(l), t)
+	}
+	if r, err := filepath.EvalSymlinks(t); err == nil {
+		t = r
+	}
+	return t, nil
 }
 
 func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
