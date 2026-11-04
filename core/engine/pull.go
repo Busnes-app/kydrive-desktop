@@ -29,19 +29,36 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 	if err != nil {
 		return err
 	}
+	var tried []string
 	for _, f := range retries {
+		if !e.Memory.due(f.ID) {
+			continue
+		}
+		tried = append(tried, f.ID)
 		var err error
 		switch it, _ := e.DB.Item(f.ID); {
+		case f.Name == "": // a server removal that could not finish here
+			if it == nil || it.Workspace != w.ID {
+				err = e.DB.DropRetry(f.ID)
+			} else {
+				err = e.removeLater(w, *it, e.remove(w, *it))
+			}
 		case f.Digest != "":
 			err = e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f))
 		case it != nil && it.Kind == "folder":
 			err = e.upsertFolder(w, api.Folder{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name})
+			if errors.Is(err, errSnapshot) {
+				return e.snapshot(ctx, w)
+			}
 		default: // a folder move whose folder is gone here
 			err = e.DB.DropRetry(f.ID)
 		}
 		if err != nil && !errors.Is(err, errSnapshot) {
 			return err
 		}
+	}
+	if err := e.Memory.tried(e.DB, w.ID, tried); err != nil {
+		return err
 	}
 	for w.Cursor != head {
 		ch, err := e.API.Changes(ctx, w.ID, w.Cursor)
@@ -93,16 +110,49 @@ func (e *Engine) apply(ctx context.Context, w Workspace, c api.Change) error {
 		if err != nil || it == nil || it.Workspace != w.ID {
 			return err
 		}
-		return e.remove(w, *it)
+		return e.removeLater(w, *it, e.remove(w, *it))
 	case c.Kind == "folder" && c.Folder != nil:
-		if it, err := e.DB.Item(c.ID); err != nil || it == nil {
+		it, err := e.DB.Item(c.ID)
+		if err != nil || it == nil {
 			return cmpErr(err, errSnapshot)
+		}
+		if e.echo(w, it, c.Folder.Parent, c.Folder.Name, 0, "") {
+			return nil
 		}
 		return e.upsertFolder(w, *c.Folder)
 	case c.File != nil:
+		if it, err := e.DB.Item(c.ID); err != nil || e.echo(w, it, c.File.Parent, c.File.Name, c.File.Revision, c.File.Digest) {
+			return err
+		}
 		return e.retryLater(ctx, w, *c.File, e.upsertFile(ctx, w, *c.File))
 	}
 	return nil
+}
+
+// echo reports a feed entry the record already holds while the local copy is missing: the
+// server has nothing new (often this computer's own upload or folder coming back), so the
+// missing copy is a local move or delete for the push to send. Pulling it back would undo it.
+// A snapshot still restores missing copies.
+func (e *Engine) echo(w Workspace, old *Item, parent, name string, rev int64, digest string) bool {
+	if old == nil || old.Workspace != w.ID || old.State != "synced" || old.Parent != parent || old.Name != name ||
+		old.Revision != rev || old.Digest != digest {
+		return false
+	}
+	p, err := e.abs(w, old.Path)
+	return err == nil && missing(p)
+}
+
+// removeLater keeps a server removal that cannot finish here (a file open elsewhere, no
+// permission) from stopping the pass: it waits in retries, marked by an empty name.
+func (e *Engine) removeLater(w Workspace, it Item, err error) error {
+	if err == nil {
+		return e.DB.DropRetry(it.ID)
+	}
+	fresh, aerr := e.DB.AddRetry(w.ID, api.File{ID: it.ID, Workspace: w.ID})
+	if fresh {
+		e.warn("Could not remove %s, which was deleted on the server: %v", it.Path, err)
+	}
+	return aerr
 }
 
 // retryLater keeps one file's local failure (a file open elsewhere, no permission, a name the
@@ -199,7 +249,7 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		if cur, err := e.DB.Item(it.ID); err != nil || cur == nil {
 			continue // already gone with its folder
 		}
-		if err := e.remove(w, it); err != nil {
+		if err := e.removeLater(w, it, e.remove(w, it)); err != nil {
 			return err
 		}
 	}
@@ -325,6 +375,10 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 		return e.skip(w, it, err.Error())
 	}
 	if err := os.MkdirAll(p, 0o755); err != nil {
+		// Tried again each pull; the folder syncs once the file is moved away.
+		if _, err := e.DB.AddRetry(w.ID, api.File{ID: f.ID, Workspace: f.Workspace, Parent: f.Parent, Name: f.Name}); err != nil {
+			return err
+		}
 		return e.skip(w, it, "a local file has this name")
 	}
 	fi, err := os.Lstat(p)
@@ -332,6 +386,10 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 		return err
 	}
 	it.LocalInode = inode(p, fi)
+	if old != nil && old.State == "skipped" {
+		// No longer blocked: what was skipped below it comes with a snapshot.
+		return cmpErr(e.keep(it), errSnapshot)
+	}
 	return e.keep(it)
 }
 
@@ -348,6 +406,18 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 		return err
 	}
 	if old != nil && old.State == "skipped" {
+		old = nil
+	}
+	if old != nil && old.Workspace != w.ID {
+		// Moved here from another chosen workspace: its copy there goes (edits to Unsynced/),
+		// never a path of that workspace used in this one.
+		if from, err := e.workspace(old.Workspace); err != nil {
+			return err
+		} else if from.ID != "" {
+			if err := e.remove(from, *old); err != nil {
+				return err
+			}
+		}
 		old = nil
 	}
 	if old != nil && old.Path != rel {
@@ -433,8 +503,9 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
-	if s := api.Status(err); s == 403 || s == 404 {
-		return e.DB.DropRetry(f.ID) // gone; the feed says so next
+	// Only KyDrive's own answer (a JSON error) means gone; the feed says so next.
+	if ae := (*api.Error)(nil); errors.As(err, &ae) && (ae.Status == 403 || ae.Status == 404) && ae.Code != "" {
+		return e.DB.DropRetry(f.ID)
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -443,6 +514,10 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 		fresh, aerr := e.DB.AddRetry(w.ID, f)
 		if fresh {
 			e.warn("Download of %s failed: %v", rel, err)
+		}
+		// A network or server failure ends the pass rather than failing every file in turn.
+		if s := api.Status(err); s >= 500 || errors.As(err, new(*url.Error)) {
+			return errors.Join(err, aerr)
 		}
 		return aerr
 	}

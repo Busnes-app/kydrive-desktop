@@ -38,9 +38,10 @@ type daemon struct {
 	http            *http.Client
 	open            func(url string) error
 
-	lock *os.File   // held for the daemon's life: one core per state directory
-	work sync.Mutex // one engine operation at a time
-	mu   sync.Mutex // guards the fields below
+	lock   *os.File       // held for the daemon's life: one core per state directory
+	memory *engine.Memory // retry backoff and announced failures, across passes
+	work   sync.Mutex     // one engine operation at a time
+	mu     sync.Mutex     // guards the fields below
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -61,7 +62,7 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, kick: make(chan bool, 1), state: "unlinked",
+	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, kick: make(chan bool, 1), state: "unlinked", memory: engine.NewMemory(),
 		http: &http.Client{
 			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute},
 			// Never send a token or link verifier to a redirected origin or HTTP downgrade.
@@ -116,8 +117,14 @@ func (d *daemon) serve(ctx context.Context, ln net.Listener) {
 	srv.RegisterName("Core", &Core{d: d, ctx: ctx})
 	for {
 		c, err := ln.Accept()
-		if err != nil {
+		if errors.Is(err, net.ErrClosed) {
 			return
+		}
+		if err != nil {
+			// Out of descriptors, say: the shells must still reach the core once it recovers.
+			log.Printf("accept: %v", err)
+			time.Sleep(time.Second)
+			continue
 		}
 		go srv.ServeCodec(jsonrpc.NewServerCodec(c))
 	}
@@ -149,7 +156,7 @@ func (d *daemon) engine() *engine.Engine {
 	d.mu.Lock()
 	token := d.token
 	d.mu.Unlock()
-	return &engine.Engine{Root: d.root, Device: d.db.Get("device"), DB: d.db, Settle: settle, Now: time.Now,
+	return &engine.Engine{Root: d.root, Device: d.db.Get("device"), DB: d.db, Settle: settle, Now: time.Now, Memory: d.memory,
 		API:      &api.Client{Base: d.db.Get("server"), Token: token, HTTP: d.http},
 		CaseFold: runtime.GOOS == "windows" || runtime.GOOS == "darwin", WinNames: runtime.GOOS == "windows"}
 }

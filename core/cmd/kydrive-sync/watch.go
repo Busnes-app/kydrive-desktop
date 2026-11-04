@@ -21,11 +21,22 @@ func (d *daemon) watch(ctx context.Context) {
 		return
 	}
 	defer w.Close()
+	// kqueue (macOS) holds a descriptor for every file in a watched folder: past the budget,
+	// folders rely on the periodic scan rather than leaving none for syncing and the socket.
+	budget, used := watchBudget(), 0
 	add := func(top string) {
 		filepath.WalkDir(top, func(p string, e fs.DirEntry, err error) error {
 			if err == nil && e.IsDir() {
 				if rel, _ := filepath.Rel(d.root, p); rel == "Unsynced" {
 					return filepath.SkipDir
+				}
+				if budget > 0 {
+					list, _ := os.ReadDir(p)
+					if used+len(list)+1 > budget {
+						log.Printf("watch: %s and below rely on periodic scans (%d entries watched)", p, used)
+						return filepath.SkipDir
+					}
+					used += len(list) + 1
 				}
 				if err := w.Add(p); err != nil {
 					log.Printf("watch %s: %v", p, err)
@@ -38,6 +49,7 @@ func (d *daemon) watch(ctx context.Context) {
 	quiet.Stop()
 	for {
 		if _, err := os.Stat(d.root); err == nil && len(w.WatchList()) == 0 {
+			used = 0
 			add(d.root)
 			d.trigger(true) // whatever changed while unwatched
 		}

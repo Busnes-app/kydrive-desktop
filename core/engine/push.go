@@ -46,6 +46,9 @@ func (e *Engine) scan(w Workspace) ([]entry, error) {
 			return nil
 		}
 		fi, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // gone since the folder was read
+		}
 		if err != nil {
 			return err
 		}
@@ -86,7 +89,7 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 					continue
 				}
 				// Not movable: it becomes a create here and a delete below.
-				if err := e.itemErr(n.rel, err); err != nil {
+				if err := e.itemErr(w, n.rel, err); err != nil {
 					return err
 				}
 			}
@@ -103,7 +106,7 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		default:
 			err = e.upload(ctx, w, n, it)
 		}
-		if err := e.itemErr(n.rel, err); err != nil {
+		if err := e.itemErr(w, n.rel, err); err != nil {
 			return err
 		}
 	}
@@ -119,14 +122,18 @@ func unsettled(mtime time.Time, settle time.Duration) bool {
 
 // itemErr keeps one item's failure from stopping the pass, unless the credentials or the
 // network failed.
-func (e *Engine) itemErr(rel string, err error) error {
+func (e *Engine) itemErr(w Workspace, rel string, err error) error {
+	key := w.ID + "/" + rel
 	if err == nil {
+		e.Memory.clear(key)
 		return nil
 	}
 	if api.Status(err) == 401 || errors.As(err, new(*url.Error)) {
 		return err
 	}
-	e.warn("Could not sync %s: %v", rel, err)
+	if e.Memory.once(key) { // announced again only after it once succeeds
+		e.warn("Could not sync %s: %v", rel, err)
+	}
 	return nil
 }
 

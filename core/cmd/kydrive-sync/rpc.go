@@ -280,25 +280,27 @@ func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 		}
 		cancel()
 	}
-	ws, err := d.db.Workspaces()
-	if err != nil {
-		return err
-	}
+	var wiped error
 	if in.RemoveFiles {
-		err = d.engine().Wipe()
+		// Recorded first, like a wipe the server asks for: a file that cannot go yet (open
+		// elsewhere) is removed by a later pass, and Link waits for it.
+		if err := d.engine().StartWipe(); err != nil {
+			wiped = wipeUnfinished(err)
+		}
 	} else {
+		ws, err := d.db.Workspaces()
 		for _, w := range ws {
 			err = errors.Join(err, d.db.DropWorkspace(w.ID))
 		}
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.forget()
 	d.state, d.lastErr = "unlinked", ""
-	return errors.Join(d.db.Set("server", ""), d.db.Set("devices_url", ""), d.db.Set("user", ""))
+	return errors.Join(wiped, d.db.Set("server", ""), d.db.Set("devices_url", ""), d.db.Set("user", ""))
 }
 
 type Choice struct {

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -40,6 +41,7 @@ type Engine struct {
 	CaseFold bool          // the file system ignores case (Windows, macOS)
 	WinNames bool          // skip names Windows cannot hold
 	Now      func() time.Time
+	Memory   *Memory // kept by the daemon across passes; nil in tests that need none
 
 	// Unsettled is set by a pass that skipped a file still being written.
 	Unsettled bool
@@ -92,7 +94,9 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 	for _, w := range current {
 		if !slices.Contains(ids, w.ID) {
 			if err := e.evict(w, ""); err != nil {
-				return err
+				// What could not go stays on disk, no longer synced, rather than everything
+				// already removed coming back with a snapshot.
+				e.warn("Some files of %s could not be removed and were left in %s: %v", w.Name, w.Dir, err)
 			}
 			if err := e.DB.DropWorkspace(w.ID); err != nil {
 				return err
@@ -133,7 +137,7 @@ func missing(p string) bool { _, err := os.Lstat(p); return errors.Is(err, fs.Er
 
 func folderName(name string) string {
 	name = strings.Trim(strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r < 32 {
+		if r < 32 || strings.ContainsRune(`/\<>:"|?*`, r) {
 			return '_'
 		}
 		return r
@@ -178,15 +182,13 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 	if err != nil {
 		return err
 	}
+	var failed error
 	for _, w := range ws {
 		i := slices.IndexFunc(list, func(s api.Workspace) bool { return s.ID == w.ID })
 		if i < 0 {
 			if err := e.lose(w); err != nil {
 				return err
 			}
-			continue
-		}
-		if w.Deletes > 0 && !w.AllowDeletes {
 			continue
 		}
 		if w.Cursor >= 0 && !w.AllowDeletes && list[i].Role != "reader" && missing(e.dir(w)) {
@@ -231,11 +233,15 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 			return err
 		} else if w.ID != "" {
 			if err := e.push(ctx, w); err != nil {
-				return err
+				if ctx.Err() != nil || api.Status(err) != 0 || errors.As(err, new(*url.Error)) {
+					return err
+				}
+				// One workspace's local trouble (an unreadable folder) does not keep the others.
+				failed = errors.Join(failed, fmt.Errorf("%s: %w", w.Name, err))
 			}
 		}
 	}
-	return nil
+	return failed
 }
 
 // readerEdits lists files added or edited in a reader workspace, once each: they never upload.
@@ -316,6 +322,14 @@ func (e *Engine) Wipe() error {
 	return failed
 }
 
+// StartWipe records a wipe and runs it, so what cannot go yet is removed by a later ResumeWipe.
+func (e *Engine) StartWipe() error {
+	if err := e.DB.Set(wipeKey, "1"); err != nil {
+		return err
+	}
+	return e.ResumeWipe()
+}
+
 // wipeKey marks a wipe the server asked for that has not finished; it survives a restart.
 const wipeKey = "wipe"
 
@@ -347,6 +361,13 @@ func (e *Engine) evict(w Workspace, rel string) error {
 		e.warn("Kept %s on disk: %v", rel, err)
 		return e.DB.DropTree(w.ID, rel)
 	}
+	if rel == "" {
+		// Until it ends, a fresh snapshot restores what this evict removed, even after a crash.
+		w.Cursor = -1
+		if err := e.DB.PutWorkspace(w); err != nil {
+			return err
+		}
+	}
 	var dirs []string
 	var failed error
 	err = filepath.WalkDir(top, func(p string, d fs.DirEntry, err error) error {
@@ -354,7 +375,9 @@ func (e *Engine) evict(w Workspace, rel string) error {
 			return nil
 		}
 		if err != nil {
-			return err
+			// An unreadable folder does not keep the evict from its siblings.
+			failed = errors.Join(failed, err)
+			return nil
 		}
 		if d.IsDir() {
 			dirs = append(dirs, p)
@@ -365,11 +388,6 @@ func (e *Engine) evict(w Workspace, rel string) error {
 		return nil
 	})
 	if err = errors.Join(err, failed); err != nil {
-		if rel == "" {
-			// The workspace stays chosen; a fresh snapshot restores what this evict removed.
-			w.Cursor = -1
-			err = errors.Join(err, e.DB.PutWorkspace(w))
-		}
 		return err
 	}
 	for _, d := range slices.Backward(dirs) {
@@ -385,16 +403,25 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 	if err != nil {
 		return err
 	}
-	if strings.HasPrefix(d.Name(), ".kydrive-") && strings.HasSuffix(d.Name(), ".tmp") {
+	if strings.HasPrefix(d.Name(), ".kydrive-") && strings.HasSuffix(d.Name(), ".tmp") || osJunk(d.Name()) {
 		return os.Remove(p)
 	}
 	// Each file's record goes with it, so a partial evict leaves no record of a file that is
 	// gone, which the next push would read as a local delete.
 	if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && !e.changed(*it, p, fi) {
-		if err := os.Remove(p); err != nil {
+		// Moved aside first, the copy deleted is the one checked: an editor's save landing at
+		// p after the check is never deleted.
+		aside := filepath.Join(filepath.Dir(p), fmt.Sprintf(".kydrive-%d.tmp", time.Now().UnixNano()))
+		if err := os.Rename(p, aside); err != nil {
 			return err
 		}
-		return e.DB.DropTree(w.ID, r)
+		p = aside
+		if fi, err := os.Lstat(p); err == nil && !e.changed(*it, p, fi) {
+			if err := os.Remove(p); err != nil {
+				return err
+			}
+			return e.DB.DropTree(w.ID, r)
+		}
 	}
 	dst := filepath.Join(e.Root, Unsynced, w.Dir, filepath.FromSlash(r))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
@@ -503,6 +530,13 @@ func sameContent(p, digest string) bool {
 
 // ignored names are never uploaded, and never downloaded either, so that ignoring them
 // locally cannot read as a delete.
+// osJunk names files the system writes on its own: an evict deletes them, never keeping them as
+// unuploaded work.
+func osJunk(name string) bool {
+	l := strings.ToLower(name)
+	return l == ".ds_store" || l == "thumbs.db" || l == "desktop.ini"
+}
+
 func ignored(name string) bool {
 	l := strings.ToLower(name)
 	return l == ".ds_store" || l == "thumbs.db" || l == "desktop.ini" ||

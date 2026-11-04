@@ -242,23 +242,29 @@ func TestBlockedRemoteRenameRetries(t *testing.T) {
 	}
 }
 
-// An unchoose that cannot remove one file keeps the workspace, but the files it did remove
-// must not read as local deletes on the next pass.
+// An unchoose that cannot remove one file still unchooses: the file stays on disk unsynced,
+// and nothing it removed is trashed on the server or downloaded again (council pass 2 O-R4).
 func TestPartialEvictDoesNotTrash(t *testing.T) {
 	v := setup(t, map[string]string{"a/x.txt": "x", "z.txt": "z"})
 	readOnly(t, v.path("a"))
-	if err := v.e.Choose(context.Background(), nil); err == nil {
-		t.Fatal("unchoose reported success with a file left behind")
+	if err := v.e.Choose(context.Background(), nil); err != nil {
+		t.Fatal(err)
 	}
-	if v.exists("z.txt") {
-		t.Fatal("the evict stopped at the first file it could not remove")
+	if v.exists("z.txt") || !v.exists("a/x.txt") {
+		t.Fatalf("local tree %v", tree(t, v.path("")))
+	}
+	if ws, _ := v.e.DB.Workspaces(); len(ws) != 0 {
+		t.Fatalf("still chosen: %+v", ws)
 	}
 	v.sync()
 	if got := v.r.Paths(t, v.ws); !slices.Equal(got, []string{"a/x.txt", "z.txt"}) {
 		t.Fatalf("server paths %v; an evicted copy was trashed", got)
 	}
-	if v.read("z.txt") != "z" {
-		t.Fatal("the still-chosen workspace did not get its removed file back")
+	if v.exists("z.txt") {
+		t.Fatal("an unchosen workspace's file came back")
+	}
+	if a, _ := v.e.DB.Activity(0); !slices.ContainsFunc(a, func(x Activity) bool { return strings.Contains(x.Message, "could not be removed") }) {
+		t.Fatal("the file left behind was not reported")
 	}
 }
 

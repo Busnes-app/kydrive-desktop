@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +143,39 @@ func TestSignedOutRetriesFromKeyring(t *testing.T) {
 	defer d.mu.Unlock()
 	if d.state != "idle" || d.token != "kyd_SECRETTOKEN" || d.backoff != 0 {
 		t.Fatalf("after retry: state %q (%s), backoff %v", d.state, d.lastErr, d.backoff)
+	}
+}
+
+// O-R5 (pass 2): Unlink that removes files finishes the unlink even when a file cannot go yet,
+// and a later pass removes it.
+func TestUnlinkRemovingFilesResumes(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permission bits do not stop this user")
+	}
+	srv := server(t)
+	d, ctl := start(t, srv)
+	var out struct{}
+	if err := ctl("Link", LinkArgs{Server: srv.URL}, &out); err != nil {
+		t.Fatal(err)
+	}
+	ro := filepath.Join(d.root, "Docs", "ro")
+	if err := os.MkdirAll(ro, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(ro, "kept.txt"), []byte("x"), 0o600)
+	d.db.PutWorkspace(engine.Workspace{ID: "w1", Name: "Docs", Dir: "Docs", Cursor: 5})
+	os.Chmod(ro, 0o555)
+	defer os.Chmod(ro, 0o755)
+	if err := ctl("Unlink", map[string]bool{"RemoveFiles": true}, &out); err == nil || !strings.Contains(err.Error(), "not all removed") {
+		t.Fatalf("unlink answered %v", err)
+	}
+	var st Status
+	if err := ctl("Status", struct{}{}, &st); err != nil || st.Linked || st.State != "unlinked" {
+		t.Fatalf("status %+v, %v", st, err)
+	}
+	os.Chmod(ro, 0o755)
+	d.pass(t.Context(), false)
+	if _, err := os.Stat(filepath.Join(d.root, "Docs")); !os.IsNotExist(err) {
+		t.Fatalf("a later pass did not finish removing the files: %v", err)
 	}
 }
