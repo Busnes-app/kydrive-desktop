@@ -21,6 +21,7 @@ type Item struct {
 	LocalSize                         int64
 	LocalMtime                        int64 // UnixNano
 	LocalInode                        uint64
+	LocalCtime                        int64  // change time sampled before reading synced bytes
 	State                             string // synced, stale (local copy not ours) or skipped
 }
 
@@ -52,10 +53,10 @@ CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS workspaces(id TEXT PRIMARY KEY, name TEXT NOT NULL, dir TEXT NOT NULL UNIQUE, cursor INTEGER NOT NULL, deletes INTEGER NOT NULL DEFAULT 0, allow_deletes INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('file','folder')), parent TEXT NOT NULL, name TEXT NOT NULL,
  revision INTEGER NOT NULL, digest TEXT NOT NULL, size INTEGER NOT NULL, mtime TEXT NOT NULL, path TEXT NOT NULL,
- local_size INTEGER NOT NULL, local_mtime INTEGER NOT NULL, local_inode INTEGER NOT NULL, state TEXT NOT NULL, UNIQUE(workspace, path));
+ local_size INTEGER NOT NULL, local_mtime INTEGER NOT NULL, local_inode INTEGER NOT NULL, local_ctime INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, UNIQUE(workspace, path));
 CREATE INDEX IF NOT EXISTS items_parent ON items(workspace, parent);
 CREATE TABLE IF NOT EXISTS issues(id INTEGER PRIMARY KEY, workspace TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL, created INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS retries(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, file TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS retries(id TEXT NOT NULL, workspace TEXT NOT NULL, file TEXT NOT NULL, PRIMARY KEY(workspace,id));
 CREATE TABLE IF NOT EXISTS activity(id INTEGER PRIMARY KEY, created INTEGER NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL);`
 
 func Open(path string) (*DB, error) {
@@ -67,6 +68,42 @@ func Open(path string) (*DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
+	}
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('items') WHERE name='local_ctime'`).Scan(&has); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if has == 0 {
+		if _, err := db.Exec(`ALTER TABLE items ADD COLUMN local_ctime INTEGER NOT NULL DEFAULT 0`); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	var retryKeys int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('retries') WHERE pk>0`).Scan(&retryKeys); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if retryKeys == 1 {
+		tx, err := db.Begin()
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		_, err = tx.Exec(`ALTER TABLE retries RENAME TO retries_old;
+CREATE TABLE retries(id TEXT NOT NULL,workspace TEXT NOT NULL,file TEXT NOT NULL,PRIMARY KEY(workspace,id));
+INSERT INTO retries SELECT id,workspace,file FROM retries_old;
+DROP TABLE retries_old;`)
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return &DB{db}, nil
 }
@@ -119,7 +156,7 @@ func (d *DB) DropWorkspace(id string) error {
 	return err
 }
 
-const itemCols = `id,workspace,kind,parent,name,revision,digest,size,mtime,path,local_size,local_mtime,local_inode,state`
+const itemCols = `id,workspace,kind,parent,name,revision,digest,size,mtime,path,local_size,local_mtime,local_inode,local_ctime,state`
 
 func scanItems(rows *sql.Rows, err error) ([]Item, error) {
 	if err != nil {
@@ -129,7 +166,7 @@ func scanItems(rows *sql.Rows, err error) ([]Item, error) {
 	var out []Item
 	for rows.Next() {
 		var i Item
-		if err := rows.Scan(&i.ID, &i.Workspace, &i.Kind, &i.Parent, &i.Name, &i.Revision, &i.Digest, &i.Size, &i.Mtime, &i.Path, &i.LocalSize, &i.LocalMtime, &i.LocalInode, &i.State); err != nil {
+		if err := rows.Scan(&i.ID, &i.Workspace, &i.Kind, &i.Parent, &i.Name, &i.Revision, &i.Digest, &i.Size, &i.Mtime, &i.Path, &i.LocalSize, &i.LocalMtime, &i.LocalInode, &i.LocalCtime, &i.State); err != nil {
 			return nil, err
 		}
 		out = append(out, i)
@@ -162,8 +199,8 @@ func (d *DB) Siblings(workspace, parent string) ([]Item, error) {
 }
 
 func (d *DB) PutItem(i Item) error {
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO items(`+itemCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		i.ID, i.Workspace, i.Kind, i.Parent, i.Name, i.Revision, i.Digest, i.Size, i.Mtime, i.Path, i.LocalSize, i.LocalMtime, i.LocalInode, i.State)
+	_, err := d.db.Exec(`INSERT OR REPLACE INTO items(`+itemCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		i.ID, i.Workspace, i.Kind, i.Parent, i.Name, i.Revision, i.Digest, i.Size, i.Mtime, i.Path, i.LocalSize, i.LocalMtime, i.LocalInode, i.LocalCtime, i.State)
 	return err
 }
 
@@ -197,7 +234,7 @@ func (d *DB) AddRetry(workspace string, f api.File) (fresh bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	res, err := d.db.Exec(`UPDATE retries SET workspace=?, file=? WHERE id=?`, workspace, string(b), f.ID)
+	res, err := d.db.Exec(`UPDATE retries SET file=? WHERE workspace=? AND id=?`, string(b), workspace, f.ID)
 	if err != nil {
 		return false, err
 	}
@@ -208,8 +245,8 @@ func (d *DB) AddRetry(workspace string, f api.File) (fresh bool, err error) {
 	return err == nil, err
 }
 
-func (d *DB) DropRetry(id string) error {
-	_, err := d.db.Exec(`DELETE FROM retries WHERE id=?`, id)
+func (d *DB) DropRetry(workspace, id string) error {
+	_, err := d.db.Exec(`DELETE FROM retries WHERE workspace=? AND id=?`, workspace, id)
 	return err
 }
 

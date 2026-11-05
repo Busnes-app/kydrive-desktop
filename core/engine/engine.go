@@ -41,7 +41,8 @@ type Engine struct {
 	CaseFold bool          // the file system ignores case (Windows, macOS)
 	WinNames bool          // skip names Windows cannot hold
 	Now      func() time.Time
-	Memory   *Memory // kept by the daemon across passes; nil in tests that need none
+	Context  context.Context // cancellation for local work, including a resumed wipe
+	Memory   *Memory         // kept by the daemon across passes; nil in tests that need none
 
 	// Unsettled is set by a pass that skipped a file still being written.
 	Unsettled bool
@@ -87,6 +88,7 @@ func (e *Engine) warn(format string, a ...any) { e.DB.Log("warn", fmt.Sprintf(fo
 // Choose sets the synced workspaces. A newly chosen one gets a folder named after it; one no
 // longer chosen is evicted.
 func (e *Engine) Choose(ctx context.Context, ids []string) error {
+	e.Context = ctx
 	list, err := e.API.Workspaces(ctx)
 	if err != nil {
 		return e.fail(err)
@@ -99,6 +101,9 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 	for _, w := range current {
 		if !slices.Contains(ids, w.ID) {
 			if err := e.evict(w, ""); err != nil {
+				if e.canceled() != nil {
+					return e.canceled()
+				}
 				// What could not go stays on disk, no longer synced, rather than everything
 				// already removed coming back with a snapshot.
 				e.warn("Some files of %s could not be removed and were left in %s: %v", w.Name, w.Dir, err)
@@ -126,7 +131,17 @@ func (e *Engine) Choose(ctx context.Context, ids []string) error {
 			continue
 		}
 		dir := folderName(s.Name)
-		for i := 2; slices.ContainsFunc(taken, func(t string) bool { return strings.EqualFold(t, dir) }); i++ {
+		for i := 2; ; i++ {
+			if err := e.canceled(); err != nil {
+				return err
+			}
+			_, err := os.Lstat(filepath.Join(e.Root, dir))
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			if errors.Is(err, fs.ErrNotExist) && !slices.ContainsFunc(taken, func(t string) bool { return strings.EqualFold(t, dir) }) {
+				break
+			}
 			dir = fitName(folderName(s.Name), fmt.Sprintf(" (%d)", i), "")
 		}
 		taken = append(taken, dir)
@@ -160,6 +175,9 @@ func (e *Engine) ConfirmDeletes(workspace string, allow bool) error {
 		return err
 	}
 	for _, w := range ws {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if w.ID == workspace {
 			if allow {
 				w.AllowDeletes = true
@@ -179,6 +197,7 @@ func (e *Engine) Sync(ctx context.Context) error { return e.fail(e.sync(ctx, tru
 func (e *Engine) Poll(ctx context.Context) error { return e.fail(e.sync(ctx, false)) }
 
 func (e *Engine) sync(ctx context.Context, local bool) error {
+	e.Context = ctx
 	list, err := e.API.Workspaces(ctx)
 	if err != nil {
 		return err
@@ -204,6 +223,9 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 	}
 	var failed error
 	for _, w := range ws {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		i := slices.IndexFunc(list, func(s api.Workspace) bool { return s.ID == w.ID })
 		if i < 0 {
 			// A file that cannot go yet keeps the binding for the next pass, not the others.
@@ -278,6 +300,9 @@ func (e *Engine) readerEdits(w Workspace) error {
 		return err
 	}
 	for _, n := range entries {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if n.dir() {
 			continue
 		}
@@ -287,6 +312,15 @@ func (e *Engine) readerEdits(w Workspace) error {
 		}
 		if it != nil && (it.State == "skipped" || it.Kind != "file" || !e.changed(*it, n.p, n.fi)) {
 			continue
+		}
+		if it != nil && it.State == "synced" && n.fi.Size() == it.Size && e.sameCopy(it, n) {
+			if err := e.DB.PutItem(*it); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := e.canceled(); err != nil {
+			return err
 		}
 		if err := e.DB.AddIssueOnce(w.ID, n.rel, "readonly", "read-only workspace; not uploaded"); err != nil {
 			return err
@@ -361,6 +395,9 @@ func (e *Engine) Wipe() error {
 	}
 	var failed error
 	for _, w := range ws {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if err := e.evict(w, ""); err != nil {
 			failed = errors.Join(failed, err) // the other workspaces still go
 			continue
@@ -421,6 +458,9 @@ func (e *Engine) evict(w Workspace, rel string) error {
 	var dirs []string
 	var failed error
 	err = filepath.WalkDir(top, func(p string, d fs.DirEntry, err error) error {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
@@ -453,12 +493,15 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 	if err != nil {
 		return err
 	}
+	if e.DB.Get(wipeKey) != "" && (fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 || finderAlias(p)) {
+		return fmt.Errorf("%s is a link; restore the folder or remove the link before the wipe can finish", p)
+	}
 	if strings.HasPrefix(d.Name(), ".kydrive-") && strings.HasSuffix(d.Name(), ".tmp") || osJunk(d.Name()) {
 		return os.Remove(p)
 	}
 	// Each file's record goes with it, so a partial evict leaves no record of a file that is
 	// gone, which the next push would read as a local delete.
-	if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && !e.changed(*it, p, fi) {
+	if it, _ := e.DB.ItemAt(w.ID, r); it != nil && it.State == "synced" && fi.Mode().IsRegular() {
 		// Moved aside first, the copy deleted is the one checked: an editor's save landing at
 		// p after the check is never deleted.
 		// Not a .tmp name: one left by a crash is kept like any unsynced file, never discarded.
@@ -467,8 +510,9 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 			return err
 		}
 		p = aside
+		// Finish this one staged-file operation even if canceled; the next walk entry stops.
 		// Hashed too: an edit written in place that kept the size and mtime is kept.
-		if fi, err := os.Lstat(p); err == nil && !e.changed(*it, p, fi) && sameContent(p, it.Digest) {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() && sameContent(p, it.Digest) {
 			if err := os.Remove(p); err != nil {
 				return err
 			}
@@ -494,7 +538,7 @@ func (e *Engine) evictFile(w Workspace, p string, d fs.DirEntry) error {
 
 // changed reports whether the local file differs from what the last sync left.
 func (e *Engine) changed(it Item, p string, fi fs.FileInfo) bool {
-	return it.State != "synced" || fi.Size() != it.LocalSize || fi.ModTime().UnixNano() != it.LocalMtime || inode(p, fi) != it.LocalInode
+	return it.State != "synced" || fi.Size() != it.LocalSize || fi.ModTime().UnixNano() != it.LocalMtime || inode(p, fi) != it.LocalInode || it.LocalCtime == 0 || ctime(p, fi) != it.LocalCtime
 }
 
 // maxName is the longest file name in bytes: the limit on Linux and macOS and the server's, and
@@ -543,6 +587,9 @@ func freePath(p string) (string, error) {
 // conflict renames the local file at rel to a conflict copy, which the next push uploads as
 // a new file, and lists it.
 func (e *Engine) conflict(w Workspace, rel string) error {
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	stem, ext := splitName(path.Base(rel))
 	device := strings.Map(func(r rune) rune {
 		if strings.ContainsRune(`<>:"|?*`, r) {
@@ -567,14 +614,35 @@ func (e *Engine) conflict(w Workspace, rel string) error {
 	return e.DB.AddIssue(w.ID, filepath.ToSlash(r), "conflict", "edited here and on the server; both kept")
 }
 
-func sameContent(p, digest string) bool {
+func sameContent(p, digest string) bool { return (&Engine{}).sameContent(p, digest) }
+
+func (e *Engine) canceled() error {
+	if e.Context != nil {
+		return e.Context.Err()
+	}
+	return nil
+}
+
+type cancelReader struct {
+	e *Engine
+	r io.Reader
+}
+
+func (r cancelReader) Read(p []byte) (int, error) {
+	if err := r.e.canceled(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
+}
+
+func (e *Engine) sameContent(p, digest string) bool {
 	f, err := os.Open(p)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, cancelReader{e, f}); err != nil {
 		return false
 	}
 	return hex.EncodeToString(h.Sum(nil)) == digest

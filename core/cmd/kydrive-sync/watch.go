@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 // watch asks for a local scan once file system activity under the root has been quiet for
 // longer than a file needs to settle. Without watches the 10-minute scan still runs.
 func (d *daemon) watch(ctx context.Context) {
+	// kqueue opens each file, starving sync and IPC on ordinary large trees. The existing
+	// periodic scan is the dependency-free fallback until a root-stream watcher is used.
+	if runtime.GOOS == "darwin" {
+		log.Print("watch: using periodic scans on macOS (kqueue opens every file)")
+		return
+	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("watch: %v; relying on periodic scans", err)

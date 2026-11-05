@@ -23,6 +23,7 @@ type entry struct {
 	p     string
 	fi    fs.FileInfo
 	inode uint64
+	ctime int64
 }
 
 func (n entry) dir() bool { return n.fi.IsDir() }
@@ -33,6 +34,9 @@ func (e *Engine) scan(w Workspace) ([]entry, error) {
 	root := e.dir(w)
 	var out []entry
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
@@ -56,7 +60,7 @@ func (e *Engine) scan(w Workspace) ([]entry, error) {
 			return err
 		}
 		rel, _ := filepath.Rel(root, p)
-		out = append(out, entry{filepath.ToSlash(rel), p, fi, inode(p, fi)})
+		out = append(out, entry{filepath.ToSlash(rel), p, fi, inode(p, fi), ctime(p, fi)})
 		return nil
 	})
 	return out, err
@@ -77,6 +81,9 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		return err
 	}
 	for _, n := range entries {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		it, err := e.DB.ItemAt(w.ID, n.rel)
 		if err != nil {
 			return err
@@ -106,7 +113,9 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 		case it != nil && !e.changed(*it, n.p, n.fi):
 		case unsettled(n.fi.ModTime(), e.Settle):
 			e.Unsettled = true
-		case it != nil && it.State == "synced" && n.fi.Size() == it.Size && sameCopy(it, n):
+		case it != nil && n.ctime != it.LocalCtime && n.fi.Size() == it.LocalSize && n.fi.ModTime().UnixNano() == it.LocalMtime && unsettled(time.Unix(0, n.ctime), e.Settle):
+			e.Unsettled = true
+		case it != nil && it.State == "synced" && n.fi.Size() == it.Size && e.sameCopy(it, n):
 			// The synced content with new metadata (copied back from another disk): recorded
 			// again, not uploaded again.
 			err = e.DB.PutItem(*it)
@@ -122,11 +131,11 @@ func (e *Engine) push(ctx context.Context, w Workspace) error {
 
 // sameCopy reports a changed file whose content is still the synced one, recording its new
 // metadata, read by the scan before the hash, in it: a write during the hash shows next pass.
-func sameCopy(it *Item, n entry) bool {
-	if !sameContent(n.p, it.Digest) {
+func (e *Engine) sameCopy(it *Item, n entry) bool {
+	if !e.sameContent(n.p, it.Digest) {
 		return false
 	}
-	it.LocalSize, it.LocalMtime, it.LocalInode = n.fi.Size(), n.fi.ModTime().UnixNano(), n.inode
+	it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = n.fi.Size(), n.fi.ModTime().UnixNano(), n.inode, n.ctime
 	return true
 }
 
@@ -161,6 +170,9 @@ func unsettled(mtime time.Time, settle time.Duration) bool {
 // itemErr keeps one item's failure from stopping the pass, unless the credentials or the
 // network failed.
 func (e *Engine) itemErr(w Workspace, rel string, err error) error {
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	key := w.ID + "/" + rel
 	if err == nil {
 		e.Memory.clear(key)
@@ -264,6 +276,7 @@ func (e *Engine) upload(ctx context.Context, w Workspace, n entry, it *Item) err
 		f.Close()
 		return err
 	}
+	id, ct := openedIdentity(f, fi)
 	u.Size, u.Mtime = fi.Size(), fi.ModTime()
 	sf, err := e.API.Upload(ctx, w.ID, u, f)
 	f.Close()
@@ -281,7 +294,8 @@ func (e *Engine) upload(ctx context.Context, w Workspace, n entry, it *Item) err
 		return err
 	}
 	item := fileItem(w, sf, n.rel)
-	item.LocalSize, item.LocalMtime, item.LocalInode = fi.Size(), fi.ModTime().UnixNano(), inode(n.p, fi)
+	item.LocalSize, item.LocalMtime, item.LocalInode = fi.Size(), fi.ModTime().UnixNano(), id
+	item.LocalCtime = ct
 	return e.DB.PutItem(item)
 }
 

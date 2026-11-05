@@ -51,8 +51,10 @@ type daemon struct {
 	kick     chan bool // true asks for a local scan as well
 	// While signed_out, the keyring is read again and the server retried at retryAt, each
 	// failure doubling backoff.
-	retryAt time.Time
-	backoff time.Duration
+	retryAt    time.Time
+	backoff    time.Duration
+	passCancel context.CancelFunc // registered atomically before a pass releases mu
+	controls   int                // controls waiting for work take priority over queued passes
 }
 
 func newDaemon(dir, root, sock string) (*daemon, error) {
@@ -116,11 +118,25 @@ func (d *daemon) listen() (net.Listener, error) {
 func (d *daemon) serve(ctx context.Context, ln net.Listener) {
 	srv := rpc.NewServer()
 	srv.RegisterName("Core", &Core{d: d, ctx: ctx})
+	var delay time.Duration
 	for {
 		c, err := ln.Accept()
 		if err != nil {
-			return
+			var temporary net.Error
+			if !errors.As(err, &temporary) || !temporary.Temporary() {
+				return
+			}
+			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			continue
 		}
+		delay = 0
 		go srv.ServeCodec(jsonrpc.NewServerCodec(c))
 	}
 }
@@ -200,11 +216,38 @@ func netPrint() string {
 	return strings.Join(s, ",")
 }
 
+// lockWork cancels the current pass and reserves the next engine operation for a control.
+// Queued passes yield until every waiting control has acquired the work lock.
+func (d *daemon) lockWork() func() {
+	d.mu.Lock()
+	d.controls++
+	if d.passCancel != nil {
+		d.passCancel()
+	}
+	d.mu.Unlock()
+	d.work.Lock()
+	d.mu.Lock()
+	d.controls--
+	d.mu.Unlock()
+	return d.work.Unlock
+}
+
 func (d *daemon) pass(ctx context.Context, local bool) {
 	d.work.Lock()
 	defer d.work.Unlock()
+	d.mu.Lock()
+	if d.controls > 0 {
+		d.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	d.passCancel = cancel
+	d.mu.Unlock()
+	defer func() { cancel(); d.mu.Lock(); d.passCancel = nil; d.mu.Unlock() }()
+	e := d.engine()
+	e.Context = ctx
 	// A wipe the server asked for continues even after the credential is gone.
-	if err := d.engine().ResumeWipe(); err != nil {
+	if err := e.ResumeWipe(); err != nil {
 		log.Printf("wipe: %v", err)
 	}
 	retried := d.retry()
@@ -216,7 +259,8 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	d.state = "syncing"
 	d.mu.Unlock()
 
-	e := d.engine()
+	e = d.engine() // retry may have recovered a credential from the keyring
+	e.Context = ctx
 	var err error
 	if local {
 		err = e.Sync(ctx)
@@ -240,6 +284,8 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		if !retried {
 			d.db.Log("warn", "KyDrive refused this computer's credentials; syncing stopped until you sign in again")
 		}
+	case errors.Is(err, context.Canceled):
+		d.state, d.lastErr = "idle", ""
 	case err != nil:
 		d.state, d.lastErr = "error", err.Error()
 		log.Printf("sync: %v", err)

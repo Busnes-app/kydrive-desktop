@@ -58,6 +58,13 @@ Files kept when unlinking stay separate: newly selected workspaces use fresh fol
 uploaded to the newly linked account.
 **Sign in again** keeps the chosen workspaces after an expired credential, including when the account was renamed on an updated server. After upgrading, leave an existing linked app connected for one successful sync so it can record the server’s immutable account identity. Older servers without that account route still refuse Sign in again for links made before the client recorded an account; unlinking instead keeps local files and requires choosing fresh workspace folders as described above.
 
+On macOS, local changes upload at startup and on the scan every 10 minutes. Server changes
+are polled every 45 seconds. Windows and Linux also scan after filesystem activity.
+
+A wipe pauses at a symlink, junction or Finder alias and reports that it is unfinished.
+Restore the moved folder or remove the link, then let KyDrive retry; it does not follow the
+link to delete files elsewhere. Unuploaded edits in a restored folder still go to `Unsynced`.
+
 On an updated server, a colleague’s file change arriving while a local folder deletion is being sent makes the server refuse that deletion. The next sync pulls the change before deciding again. Older servers keep the earlier feed check and its small final request window; upgrade the server for the atomic protection.
 
 The real-server script `scripts/smoke.sh` requires an actual compatible test server and
