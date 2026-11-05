@@ -139,10 +139,20 @@ func TestCarryoverMacWatcherKeepsDescriptorsAvailable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	before, err := os.ReadDir("/dev/fd")
-	if err != nil {
-		t.Fatal(err)
+	// macOS /dev/fd entries cannot all be fstatat'ed; count names without requesting metadata.
+	countFDs := func() int {
+		f, err := os.Open("/dev/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		names, err := f.Readdirnames(-1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(names)
 	}
+	before := countFDs()
 	d := &daemon{root: root, kick: make(chan bool, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -156,13 +166,10 @@ func TestCarryoverMacWatcherKeepsDescriptorsAvailable(t *testing.T) {
 		<-done
 		t.Fatal("watch initialization stalled")
 	}
-	after, err := os.ReadDir("/dev/fd")
+	after := countFDs()
 	cancel()
 	<-done
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(after) > len(before)+32 {
-		t.Fatalf("watcher pinned %d descriptors for 512 files", len(after)-len(before))
+	if after > before+32 {
+		t.Fatalf("watcher pinned %d descriptors for 512 files", after-before)
 	}
 }
