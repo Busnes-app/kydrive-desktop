@@ -82,10 +82,7 @@ func TestCarryoverMovedBetweenWorkspaces(t *testing.T) {
 				t.Fatal(err)
 			}
 			v.sync()
-			id := v.r.ID(t, v.ws, "move.txt")
-			if _, err := v.e.API.MoveFile(context.Background(), id, 1, dest, "", "moved.txt"); err != nil {
-				t.Fatal(err)
-			}
+			moveAcrossWorkspaces(t, v, "move.txt", dest, "moved.txt")
 			v.sync()
 			v.sync()
 			if v.exists("move.txt") {
@@ -308,10 +305,7 @@ func TestCarryoverBlockedMoveSurvivesDestinationUnchoose(t *testing.T) {
 			}
 			v.sync()
 			readOnly(t, v.path("ro"))
-			id := v.r.ID(t, v.ws, "ro/move.txt")
-			if _, err := v.e.API.MoveFile(context.Background(), id, 1, dest, "", "moved.txt"); err != nil {
-				t.Fatal(err)
-			}
+			moveAcrossWorkspaces(t, v, "ro/move.txt", dest, "moved.txt")
 			v.sync()
 			if err := v.e.Choose(context.Background(), []string{v.ws}); err != nil {
 				t.Fatal(err)
@@ -376,5 +370,56 @@ func TestCarryoverLegacyStateMigrationPreservesRetries(t *testing.T) {
 	source, _ = upgraded.Retries("source")
 	if len(source) != 1 {
 		t.Fatal("dropping destination lost source retry")
+	}
+}
+
+// Server-side scenario setup: taking a file out of a workspace needs a manager session.
+func moveAcrossWorkspaces(t *testing.T, v *env, from, dest, name string) {
+	t.Helper()
+	id := v.r.ID(t, v.ws, from)
+	if r, ok := v.r.(*real); ok {
+		grant := "/api/drive/workspaces/" + v.ws + "/grants/" + r.group
+		r.must(t, "PUT", grant, map[string]string{"role": "manager"}, nil)
+		r.must(t, "PUT", "/api/drive/files/"+id+"/location", map[string]any{"revision": 1, "workspace": dest, "parent": "", "name": name}, nil)
+		r.must(t, "PUT", grant, map[string]string{"role": "editor"}, nil)
+		return
+	}
+	if _, err := v.e.API.MoveFile(context.Background(), id, 1, dest, "", name); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCarryoverBrokenFilesKeepOtherWorkMoving(t *testing.T) {
+	v := setup(t, nil)
+	v.e.Memory = NewMemory()
+	target, _ := url.Parse(v.r.URL())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/download") {
+			http.Error(w, "unavailable", 503)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	v.e.API.Base = front.URL
+	for i := 0; i < 5; i++ {
+		v.r.Put(t, v.ws, fmt.Sprintf("%d.bin", i), []byte("broken"))
+	}
+	v.write("upload.txt", "progress")
+	v.sync()
+	v.sync()
+	if v.remote("upload.txt") != "progress" {
+		t.Fatal("broken files stopped uploads")
+	}
+	activity, _ := v.e.DB.Activity(0)
+	warnings := 0
+	for _, a := range activity {
+		if a.Level == "warn" {
+			warnings++
+		}
+	}
+	if warnings != 1 {
+		t.Fatalf("network warnings %d, want one group", warnings)
 	}
 }

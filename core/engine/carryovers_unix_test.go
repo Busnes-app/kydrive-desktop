@@ -3,6 +3,8 @@
 package engine
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,5 +68,35 @@ func TestCarryoverWipeDoesNotTouchArbitraryLinkTarget(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(away, "a.txt")); err != nil || string(b) != "same bytes" {
 		t.Fatalf("unrelated target %q %v", b, err)
+	}
+}
+
+func TestCarryoverRemoteWipeAtLink(t *testing.T) {
+	v := setup(t, map[string]string{"Shared/a.txt": "synced", "other.txt": "other"})
+	away := linkAway(t, v, "Shared")
+	v.r.Revoke(t, true)
+	err := v.e.Sync(context.Background())
+	if !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "link") {
+		t.Fatalf("revoke wipe result %v", err)
+	}
+	if v.e.DB.Get(wipeKey) == "" {
+		t.Fatal("remote wipe falsely completed")
+	}
+	items, _ := v.e.DB.Items(v.ws)
+	if len(items) == 0 {
+		t.Fatal("remote wipe lost linked records")
+	}
+	activity, _ := v.e.DB.Activity(0)
+	for _, a := range activity {
+		if strings.Contains(a.Message, "synced files were removed") {
+			t.Fatalf("false success: %s", a.Message)
+		}
+	}
+	moveBack(t, v, "Shared", away)
+	if err := v.e.ResumeWipe(); err != nil {
+		t.Fatal(err)
+	}
+	if v.e.DB.Get(wipeKey) != "" || v.exists("Shared/a.txt") {
+		t.Fatal("wipe did not resume without credentials")
 	}
 }
