@@ -643,9 +643,6 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	if err != nil {
 		return err
 	}
-	if skip {
-		return e.skipPlaced(w, fileItem(w, f, rel), why, f)
-	}
 	old, err := e.DB.Item(f.ID)
 	if err != nil {
 		return err
@@ -661,6 +658,10 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 			}
 		}
 		old = nil
+	}
+	// Skipping also replaces the global identity, so reconcile its old workspace first.
+	if skip {
+		return e.skipPlaced(w, fileItem(w, f, rel), why, f)
 	}
 	if old != nil && old.State == "skipped" {
 		old = nil

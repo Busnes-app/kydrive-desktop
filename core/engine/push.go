@@ -307,10 +307,16 @@ func (e *Engine) gone(w Workspace, entries []entry) (map[uint64]Item, error) {
 	}
 	at := map[string]bool{}
 	for _, n := range entries {
+		if err := e.canceled(); err != nil {
+			return nil, err
+		}
 		at[n.rel] = n.dir()
 	}
 	out := map[uint64]Item{}
 	for _, it := range items {
+		if err := e.canceled(); err != nil {
+			return nil, err
+		}
 		if dir, ok := at[it.Path]; it.State == "synced" && it.LocalInode != 0 && (!ok || dir != (it.Kind == "folder")) {
 			out[it.LocalInode] = it
 		}
@@ -347,6 +353,9 @@ func (e *Engine) move(ctx context.Context, w Workspace, n entry, m Item) error {
 func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, folderGone bool) error {
 	at := map[string]bool{}
 	for _, n := range entries {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		at[n.rel] = n.dir()
 	}
 	items, err := e.DB.Items(w.ID)
@@ -357,6 +366,9 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 	var aliased []string
 	count, total := 0, 0
 	for _, it := range items {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if it.State == "skipped" {
 			continue
 		}
@@ -398,6 +410,9 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 			top = append(top, it)
 		}
 	}
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	if count == 0 {
 		if w.Deletes == 0 && !w.AllowDeletes {
 			return nil
@@ -420,6 +435,9 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 		return err
 	}
 	for _, it := range top {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if busy[it.ID] {
 			continue
 		}
@@ -461,11 +479,17 @@ func (e *Engine) deletes(ctx context.Context, w Workspace, entries []entry, fold
 func (e *Engine) changedUnder(ctx context.Context, w Workspace, items, top []Item) (map[string]bool, error) {
 	under := map[string]string{} // an item, or a folder created since, -> the folder to trash
 	for _, t := range top {
+		if err := e.canceled(); err != nil {
+			return nil, err
+		}
 		if t.Kind != "folder" {
 			continue
 		}
 		under[t.ID] = t.ID
 		for _, it := range items {
+			if err := e.canceled(); err != nil {
+				return nil, err
+			}
 			if strings.HasPrefix(it.Path, t.Path+"/") {
 				under[it.ID] = t.ID
 			}
@@ -476,6 +500,9 @@ func (e *Engine) changedUnder(ctx context.Context, w Workspace, items, top []Ite
 		ch, err := e.API.Changes(ctx, w.ID, after)
 		if api.Status(err) == 410 {
 			for _, t := range under {
+				if err := e.canceled(); err != nil {
+					return nil, err
+				}
 				busy[t] = true // the next pull snapshots
 			}
 			break
@@ -484,6 +511,9 @@ func (e *Engine) changedUnder(ctx context.Context, w Workspace, items, top []Ite
 			return nil, err
 		}
 		for _, c := range ch.Changes {
+			if err := e.canceled(); err != nil {
+				return nil, err
+			}
 			parent := ""
 			if c.File != nil {
 				parent = c.File.Parent

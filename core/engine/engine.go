@@ -481,7 +481,13 @@ func (e *Engine) evict(w Workspace, rel string) error {
 		return err
 	}
 	for _, d := range slices.Backward(dirs) {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		os.Remove(d)
+	}
+	if err := e.canceled(); err != nil {
+		return err
 	}
 	return e.DB.DropTree(w.ID, rel)
 }
