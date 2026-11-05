@@ -7,7 +7,7 @@ godebug fips140=on
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/zalando/go-keyring v0.2.8
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
