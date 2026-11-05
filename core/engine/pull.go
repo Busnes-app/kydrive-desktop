@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Busnes-app/kydrive-desktop/core/api"
@@ -31,7 +33,10 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 	}
 	var tried []string
 	for _, f := range retries {
-		if !e.Memory.due(f.ID) {
+		if err := e.canceled(); err != nil {
+			return err
+		}
+		if !e.Memory.due(w.ID, f.ID) {
 			continue
 		}
 		tried = append(tried, f.ID)
@@ -39,7 +44,7 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 		switch it, _ := e.DB.Item(f.ID); {
 		case f.Name == "": // a server removal that could not finish here
 			if it == nil || it.Workspace != w.ID {
-				err = e.DB.DropRetry(f.ID)
+				err = e.DB.DropRetry(w.ID, f.ID)
 			} else {
 				err = e.removeLater(w, *it, e.remove(w, *it))
 			}
@@ -51,7 +56,7 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 				return e.snapshot(ctx, w)
 			}
 		default: // a folder move whose folder is gone here
-			err = e.DB.DropRetry(f.ID)
+			err = e.DB.DropRetry(w.ID, f.ID)
 		}
 		if err != nil && !errors.Is(err, errSnapshot) {
 			// A pass the network ended still backs this retry off.
@@ -72,6 +77,9 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 		// Upserts parents first, removals last, so a move out of a removed folder survives.
 		slices.SortStableFunc(ch.Changes, func(a, b api.Change) int { return rank(a) - rank(b) })
 		for _, c := range ch.Changes {
+			if err := e.canceled(); err != nil {
+				return err
+			}
 			err := e.apply(ctx, w, c)
 			if errors.Is(err, errSnapshot) {
 				return e.snapshot(ctx, w)
@@ -104,7 +112,7 @@ func rank(c api.Change) int {
 func (e *Engine) apply(ctx context.Context, w Workspace, c api.Change) error {
 	switch {
 	case c.Removed:
-		if err := e.DB.DropRetry(c.ID); err != nil {
+		if err := e.DB.DropRetry(w.ID, c.ID); err != nil {
 			return err
 		}
 		it, err := e.DB.Item(c.ID)
@@ -146,8 +154,11 @@ func (e *Engine) echo(w Workspace, old *Item, parent, name string, rev int64, di
 // removeLater keeps a server removal that cannot finish here (a file open elsewhere, no
 // permission) from stopping the pass: it waits in retries, marked by an empty name.
 func (e *Engine) removeLater(w Workspace, it Item, err error) error {
+	if e.canceled() != nil {
+		return e.canceled()
+	}
 	if err == nil {
-		return e.DB.DropRetry(it.ID)
+		return e.DB.DropRetry(it.Workspace, it.ID)
 	}
 	fresh, aerr := e.DB.AddRetry(w.ID, api.File{ID: it.ID, Workspace: w.ID})
 	if fresh {
@@ -156,11 +167,17 @@ func (e *Engine) removeLater(w Workspace, it Item, err error) error {
 	return aerr
 }
 
+// downloadOutage identifies failures needing a shared-API reachability probe.
+// A digest mismatch remains a per-file retry (the server supplied all its bytes).
+func downloadOutage(err error) bool {
+	return errors.As(err, new(*url.Error)) || api.Status(err) >= 500 || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET)
+}
+
 // retryLater keeps one file's local failure (a file open elsewhere, no permission, a name the
 // file system refuses) from stopping the pass: the file waits in retries for the next pull.
 // Server, network and cancellation errors still end the pass.
 func (e *Engine) retryLater(ctx context.Context, w Workspace, f api.File, err error) error {
-	if err == nil || errors.Is(err, errSnapshot) || ctx.Err() != nil || api.Status(err) != 0 || errors.As(err, new(*url.Error)) {
+	if err == nil || errors.Is(err, errSnapshot) || ctx.Err() != nil || api.Status(err) != 0 || downloadOutage(err) {
 		return err
 	}
 	fresh, aerr := e.DB.AddRetry(w.ID, f)
@@ -193,6 +210,9 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 	}
 	waiting := map[string]api.File{}
 	for _, f := range retries {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		waiting[f.ID] = f
 	}
 	// held is a feed echo: the record has it and its local copy is missing.
@@ -224,6 +244,9 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 	for len(folders) > 0 {
 		var later []api.Folder
 		for _, f := range folders {
+			if err := e.canceled(); err != nil {
+				return err
+			}
 			if !seen[f.Parent] {
 				later = append(later, f)
 				continue
@@ -247,12 +270,15 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 	slices.SortFunc(files, func(a, b api.File) int { return strings.Compare(a.Name, b.Name) })
 	var tried []string
 	for _, f := range files {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if !seen[f.Parent] {
 			continue
 		}
 		seen[f.ID] = true
 		if r, ok := waiting[f.ID]; ok && r.Revision == f.Revision && r.Digest == f.Digest {
-			if !e.Memory.due(f.ID) {
+			if !e.Memory.due(w.ID, f.ID) {
 				// Still backing off; it may have moved since, so the retry takes its new place.
 				if _, err := e.DB.AddRetry(w.ID, f); err != nil {
 					return err
@@ -278,8 +304,11 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		return err
 	}
 	for _, f := range retries {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if !seen[f.ID] {
-			if err := e.DB.DropRetry(f.ID); err != nil {
+			if err := e.DB.DropRetry(w.ID, f.ID); err != nil {
 				return err
 			}
 		}
@@ -289,6 +318,9 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		return err
 	}
 	for _, it := range items {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		if seen[it.ID] {
 			continue
 		}
@@ -391,6 +423,9 @@ const caseTwin = "another item here differs only in case"
 // server renamed it into a name this computer cannot hold) leaves its old place as a server
 // removal would; its copy would otherwise upload again as a new item.
 func (e *Engine) skipPlaced(w Workspace, it Item, why string, f api.File) error {
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	old, err := e.DB.Item(it.ID)
 	if err != nil {
 		return err
@@ -412,6 +447,9 @@ func (e *Engine) skipPlaced(w Workspace, it Item, why string, f api.File) error 
 }
 
 func (e *Engine) skip(w Workspace, it Item, why string) error {
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	old, err := e.DB.Item(it.ID)
 	if err != nil {
 		return err
@@ -458,7 +496,7 @@ func (e *Engine) occupied(w Workspace, id, rel string) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() || e.changed(*o, p, fi) || !sameContent(p, o.Digest) {
+	if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() || e.changed(*o, p, fi) || !e.sameContent(p, o.Digest) {
 		return true, fmt.Errorf("%s has changes here and waits to move first", rel)
 	}
 	return false, e.evict(w, rel)
@@ -482,6 +520,9 @@ func (e *Engine) aside(w Workspace, rel string) (bool, error) {
 // relocate moves the local copy of an item from one path to another. It refuses, leaving
 // everything in place, when something already occupies the destination.
 func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
+	if err := e.canceled(); err != nil {
+		return false, err
+	}
 	src, err := e.abs(w, from)
 	if err != nil {
 		return false, err
@@ -511,6 +552,9 @@ func (e *Engine) relocate(w Workspace, from, to string) (bool, error) {
 }
 
 func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	rel, skip, why, err := e.place(w, f.ID, f.Parent, f.Name)
 	if errors.Is(err, errLinked) {
 		// A recorded folder waits in retries for the link to go; a new one is not placed.
@@ -592,6 +636,9 @@ func (e *Engine) upsertFolder(w Workspace, f api.Folder) error {
 }
 
 func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error {
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	rel, skip, why, err := e.place(w, f.ID, f.Parent, f.Name)
 	if err != nil {
 		return err
@@ -605,7 +652,17 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	}
 	// A record from another workspace (a file moved between two chosen ones) names a path in
 	// that workspace, not this one: the file downloads fresh here.
-	if old != nil && (old.State == "skipped" || old.Workspace != w.ID) {
+	if old != nil && old.Workspace != w.ID {
+		if source, err := e.workspace(old.Workspace); err != nil {
+			return err
+		} else if source.ID != "" {
+			if err := e.remove(source, *old); err != nil {
+				return err
+			}
+		}
+		old = nil
+	}
+	if old != nil && old.State == "skipped" {
 		old = nil
 	}
 	if wait, err := e.occupied(w, f.ID, rel); err != nil || wait {
@@ -630,7 +687,7 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 	}
 	fi, err := os.Lstat(p)
 	if err == nil {
-		id := inode(p, fi)
+		id, ct := inode(p, fi), ctime(p, fi)
 		switch {
 		case !fi.Mode().IsRegular():
 			// A folder, link or special file (never opened: a FIFO would block) has the name.
@@ -643,14 +700,14 @@ func (e *Engine) upsertFile(ctx context.Context, w Workspace, f api.File) error 
 			// The server has nothing newer (often this computer's own upload coming back); a
 			// local change since is a pending upload, not a conflict.
 			it := fileItem(w, f, rel)
-			it.LocalSize, it.LocalMtime, it.LocalInode = old.LocalSize, old.LocalMtime, old.LocalInode
+			it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = old.LocalSize, old.LocalMtime, old.LocalInode, old.LocalCtime
 			return e.keep(it)
-		case old != nil && old.State == "synced" && sameContent(p, old.Digest):
+		case old != nil && old.State == "synced" && e.sameContent(p, old.Digest):
 			// The synced copy, by content: an edit written in place that kept the size and
 			// mtime is not replaced, and a copy back from another disk (new file IDs) is.
-		case sameContent(p, f.Digest):
+		case e.sameContent(p, f.Digest):
 			// fi and the file ID were read before hashing: a change during the hash shows later.
-			return e.record(w, f, rel, fi, id)
+			return e.record(w, f, rel, fi, id, ct)
 		default:
 			// A local edit the server has not seen meets a server version this computer
 			// has not seen: keep both.
@@ -667,15 +724,15 @@ func fileItem(w Workspace, f api.File, rel string) Item {
 }
 
 // record stores f as synced with the local file, as fi and its file ID found it, as its copy.
-func (e *Engine) record(w Workspace, f api.File, rel string, fi fs.FileInfo, id uint64) error {
+func (e *Engine) record(w Workspace, f api.File, rel string, fi fs.FileInfo, id uint64, ct int64) error {
 	it := fileItem(w, f, rel)
-	it.LocalSize, it.LocalMtime, it.LocalInode = fi.Size(), fi.ModTime().UnixNano(), id
+	it.LocalSize, it.LocalMtime, it.LocalInode, it.LocalCtime = fi.Size(), fi.ModTime().UnixNano(), id, ct
 	return e.keep(it)
 }
 
 // keep stores an item that needs no download or move, ending any retry of it.
 func (e *Engine) keep(it Item) error {
-	if err := e.DB.DropRetry(it.ID); err != nil {
+	if err := e.DB.DropRetry(it.Workspace, it.ID); err != nil {
 		return err
 	}
 	return e.DB.PutItem(it)
@@ -706,18 +763,30 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	}
 	// Only KyDrive's own answer (a JSON error) means gone; the feed says so next.
 	if ae := (*api.Error)(nil); errors.As(err, &ae) && (ae.Status == 403 || ae.Status == 404) && ae.Code != "" {
-		return e.DB.DropRetry(f.ID)
+		return e.DB.DropRetry(w.ID, f.ID)
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if err != nil {
 		fresh, aerr := e.DB.AddRetry(w.ID, f)
+		if downloadOutage(err) {
+			// A broken single download must not starve unrelated sync. Probe the shared
+			// API before treating a transport-shaped failure as a whole-server outage.
+			if _, probe := e.API.Workspaces(ctx); probe != nil {
+				return errors.Join(probe, aerr)
+			}
+			if e.Memory.once(w.ID + "/download-network") {
+				e.warn("Some files of %s could not be downloaded; KyDrive will retry: %v", w.Name, err)
+			}
+			return aerr
+		}
 		if fresh {
 			e.warn("Download of %s failed: %v", rel, err)
 		}
 		return aerr
 	}
+	e.Memory.clear(w.ID + "/download-network")
 	mtime, err := time.Parse(time.RFC3339, f.Mtime)
 	if err != nil {
 		mtime = time.Now()
@@ -730,14 +799,14 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if err != nil {
 		return err
 	}
-	id := inode(tmp.Name(), tfi)
+	id, ct := inode(tmp.Name(), tfi), ctime(tmp.Name(), tfi)
 	if fi, err := os.Lstat(p); err == nil {
 		old, err := e.DB.Item(f.ID)
 		if err != nil {
 			return err
 		}
 		// Never opened unless a regular file: a FIFO put there would block the hash.
-		if old == nil || old.Path != rel || old.State != "synced" || !fi.Mode().IsRegular() || !sameContent(p, old.Digest) {
+		if old == nil || old.Path != rel || old.State != "synced" || !fi.Mode().IsRegular() || !e.sameContent(p, old.Digest) {
 			_, err := e.DB.AddRetry(w.ID, f) // changed meanwhile; the next pass decides again
 			return err
 		}
@@ -747,7 +816,7 @@ func (e *Engine) download(ctx context.Context, w Workspace, f api.File, rel stri
 	if err := os.Rename(tmp.Name(), p); err != nil {
 		return err
 	}
-	return e.record(w, f, rel, tfi, id)
+	return e.record(w, f, rel, tfi, id, ct)
 }
 
 // remove applies a server-side removal: synced copies go, unuploaded edits move to Unsynced/.

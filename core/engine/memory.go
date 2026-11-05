@@ -19,13 +19,13 @@ func NewMemory() *Memory {
 	return &Memory{next: map[string]time.Time{}, wait: map[string]time.Duration{}, warned: map[string]bool{}}
 }
 
-func (m *Memory) due(id string) bool {
+func (m *Memory) due(workspace, id string) bool {
 	if m == nil {
 		return true
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return !time.Now().Before(m.next[id])
+	return !time.Now().Before(m.next[workspace+"/"+id])
 }
 
 // tried backs off each retry in ids still waiting after its attempt and forgets the rest.
@@ -40,17 +40,18 @@ func (m *Memory) tried(db *DB, workspace string, ids []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, id := range ids {
+		key := workspace + "/" + id
 		still := false
 		for _, f := range left {
 			still = still || f.ID == id
 		}
 		if !still {
-			delete(m.next, id)
-			delete(m.wait, id)
+			delete(m.next, key)
+			delete(m.wait, key)
 			continue
 		}
-		m.wait[id] = min(max(2*m.wait[id], 45*time.Second), 30*time.Minute)
-		m.next[id] = time.Now().Add(m.wait[id])
+		m.wait[key] = min(max(2*m.wait[key], 45*time.Second), 30*time.Minute)
+		m.next[key] = time.Now().Add(m.wait[key])
 	}
 	return nil
 }

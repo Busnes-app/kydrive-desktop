@@ -4,6 +4,7 @@ package engine
 
 import (
 	"io/fs"
+	"os"
 	"syscall"
 )
 
@@ -14,3 +15,5 @@ func inode(_ string, fi fs.FileInfo) uint64 {
 	}
 	return 0
 }
+
+func openedIdentity(_ *os.File, fi fs.FileInfo) (uint64, int64) { return inode("", fi), ctime("", fi) }

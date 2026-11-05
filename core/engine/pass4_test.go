@@ -161,6 +161,7 @@ func TestSameMetadataEditIsKept(t *testing.T) {
 		os.Chtimes(v.path(n), fi.ModTime(), fi.ModTime())
 	}
 	v.r.Put(t, v.ws, "doc.txt", []byte("2222"))
+	v.e.Settle = time.Hour // keep the in-place rewrite pending while the server revision arrives
 	v.sync()
 	if v.read("doc.txt") != "2222" || !slices.ContainsFunc(tree(t, v.path("")), func(p string) bool {
 		return strings.HasPrefix(p, "doc (conflict")
@@ -263,6 +264,7 @@ func TestSameMetadataEditDuringDownloadIsKept(t *testing.T) {
 	defer front.Close()
 	v.e.API.Base = front.URL
 	v.r.Put(t, v.ws, "doc.txt", []byte("2222"))
+	v.e.Settle = time.Hour // keep the in-place rewrite pending while the server revision arrives
 	v.sync()
 	v.sync()
 	var kept bool
