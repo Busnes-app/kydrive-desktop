@@ -171,8 +171,8 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 		return linkErr(ctx, err)
 	}
 	// An approved link starts a new connection; retained files keep no old sync binding.
-	d.work.Lock()
-	defer d.work.Unlock()
+	unlock := d.lockWork()
+	defer unlock()
 	if err := d.stillWanted(ctx, server, tok); err != nil {
 		return err
 	}
@@ -235,8 +235,8 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 		d.revoke(server, tok)
 		return err
 	}
-	d.work.Lock()
-	defer d.work.Unlock()
+	unlock := d.lockWork()
+	defer unlock()
 	if err := d.stillWanted(ctx, server, tok); err != nil {
 		return err
 	}
@@ -301,8 +301,8 @@ func (c *Core) CancelLink(_ struct{}, _ *struct{}) error {
 
 // finishWipe completes a wipe the server asked for, before anything drops its bindings.
 func (d *daemon) finishWipe() error {
-	d.work.Lock()
-	defer d.work.Unlock()
+	unlock := d.lockWork()
+	defer unlock()
 	if err := d.engine().ResumeWipe(); err != nil {
 		return wipeUnfinished(err)
 	}
@@ -320,8 +320,8 @@ func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	d.mu.Lock()
 	d.cancelLink()
 	d.mu.Unlock()
-	d.work.Lock()
-	defer d.work.Unlock()
+	unlock := d.lockWork()
+	defer unlock()
 	// Unlink drops the bindings, which an unfinished wipe still needs.
 	if err := d.engine().ResumeWipe(); err != nil {
 		return wipeUnfinished(err)
@@ -380,9 +380,9 @@ func (c *Core) Workspaces(_ struct{}, out *[]Choice) error {
 // keeping unuploaded edits in Unsynced/.
 func (c *Core) Choose(in struct{ IDs []string }, _ *struct{}) error {
 	d := c.d
-	d.work.Lock()
+	unlock := d.lockWork()
 	err := d.engine().Choose(c.ctx, in.IDs)
-	d.work.Unlock()
+	unlock()
 	d.trigger(true)
 	return err
 }
@@ -391,6 +391,8 @@ func (c *Core) Pause(in struct{ Paused bool }, _ *struct{}) error {
 	v := ""
 	if in.Paused {
 		v = "1"
+		unlock := c.d.lockWork()
+		defer unlock()
 	}
 	if err := c.d.db.Set("paused", v); err != nil {
 		return err
@@ -420,9 +422,9 @@ func (c *Core) ConfirmDeletes(in struct {
 	Allow     bool
 }, _ *struct{}) error {
 	d := c.d
-	d.work.Lock()
+	unlock := d.lockWork()
 	err := d.engine().ConfirmDeletes(in.Workspace, in.Allow)
-	d.work.Unlock()
+	unlock()
 	d.trigger(true)
 	return err
 }
