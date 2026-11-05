@@ -60,10 +60,10 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 		}
 		if err != nil && !errors.Is(err, errSnapshot) {
 			// A pass the network ended still backs this retry off.
-			return errors.Join(err, e.Memory.tried(e.DB, w.ID, tried))
+			return errors.Join(err, e.Memory.tried(ctx, e.DB, w.ID, tried))
 		}
 	}
-	if err := e.Memory.tried(e.DB, w.ID, tried); err != nil {
+	if err := e.Memory.tried(ctx, e.DB, w.ID, tried); err != nil {
 		return err
 	}
 	for w.Cursor != head {
@@ -87,6 +87,9 @@ func (e *Engine) pull(ctx context.Context, w Workspace, head int64) error {
 			if err != nil {
 				return err
 			}
+		}
+		if err := e.canceled(); err != nil {
+			return err
 		}
 		w.Cursor = ch.Next
 		if err := e.DB.PutWorkspace(w); err != nil {
@@ -294,10 +297,10 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 			continue
 		}
 		if err := e.retryLater(ctx, w, f, e.upsertFile(ctx, w, f)); err != nil && !errors.Is(err, errSnapshot) {
-			return errors.Join(err, e.Memory.tried(e.DB, w.ID, tried))
+			return errors.Join(err, e.Memory.tried(ctx, e.DB, w.ID, tried))
 		}
 	}
-	if err := e.Memory.tried(e.DB, w.ID, tried); err != nil {
+	if err := e.Memory.tried(ctx, e.DB, w.ID, tried); err != nil {
 		return err
 	}
 	if retries, err = e.DB.Retries(w.ID); err != nil {
@@ -330,6 +333,9 @@ func (e *Engine) snapshot(ctx context.Context, w Workspace) error {
 		if err := e.removeLater(w, it, e.remove(w, it)); err != nil {
 			return err
 		}
+	}
+	if err := e.canceled(); err != nil {
+		return err
 	}
 	w.Cursor = head
 	return e.DB.PutWorkspace(w)

@@ -326,6 +326,9 @@ func (e *Engine) readerEdits(w Workspace) error {
 			return err
 		}
 	}
+	if err := e.canceled(); err != nil {
+		return err
+	}
 	// A synced copy deleted here comes back with a restore snapshot: kept as a pending
 	// delete, it would trash the file on the server once the user can edit.
 	if w, err = e.workspace(w.ID); err != nil || w.ID == "" {
@@ -339,17 +342,30 @@ func (e *Engine) readerEdits(w Workspace) error {
 	if err != nil {
 		return err
 	}
+	waiting := make(map[string]bool, len(retries))
+	for _, f := range retries {
+		if err := e.canceled(); err != nil {
+			return err
+		}
+		waiting[f.ID] = true
+	}
 	for _, it := range items {
+		if err := e.canceled(); err != nil {
+			return err
+		}
 		// One waiting in retries (a download backing off) comes with its retry instead.
-		if slices.ContainsFunc(retries, func(f api.File) bool { return f.ID == it.ID }) {
+		if waiting[it.ID] {
 			continue
 		}
 		if p, err := e.abs(w, it.Path); err == nil && it.State == "synced" && missing(p) {
+			if err := e.canceled(); err != nil {
+				return err
+			}
 			w.Cursor = -1
 			return e.DB.PutWorkspace(w)
 		}
 	}
-	return nil
+	return e.canceled()
 }
 
 // workspace re-reads a chosen workspace; ID is empty once it is gone.

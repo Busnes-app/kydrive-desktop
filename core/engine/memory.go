@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -29,7 +30,11 @@ func (m *Memory) due(workspace, id string) bool {
 }
 
 // tried backs off each retry in ids still waiting after its attempt and forgets the rest.
-func (m *Memory) tried(db *DB, workspace string, ids []string) error {
+// Each completed entry updates/removes its wait and next together before cancellation yields.
+func (m *Memory) tried(ctx context.Context, db *DB, workspace string, ids []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if m == nil || len(ids) == 0 {
 		return nil
 	}
@@ -37,15 +42,21 @@ func (m *Memory) tried(db *DB, workspace string, ids []string) error {
 	if err != nil {
 		return err
 	}
+	remaining := make(map[string]bool, len(left))
+	for _, f := range left {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		remaining[f.ID] = true
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, id := range ids {
-		key := workspace + "/" + id
-		still := false
-		for _, f := range left {
-			still = still || f.ID == id
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if !still {
+		key := workspace + "/" + id
+		if !remaining[id] {
 			delete(m.next, key)
 			delete(m.wait, key)
 			continue
@@ -53,7 +64,7 @@ func (m *Memory) tried(db *DB, workspace string, ids []string) error {
 		m.wait[key] = min(max(2*m.wait[key], 45*time.Second), 30*time.Minute)
 		m.next[key] = time.Now().Add(m.wait[key])
 	}
-	return nil
+	return ctx.Err()
 }
 
 // once reports whether key is announced for the first time; clear forgets it.
