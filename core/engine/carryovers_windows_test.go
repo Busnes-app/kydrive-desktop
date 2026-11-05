@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -16,7 +17,10 @@ func TestCarryoverWipeWaitsForJunction(t *testing.T) {
 			if err := os.Rename(v.path(rel), away); err != nil {
 				t.Fatal(err)
 			}
-			if out, err := exec.Command("cmd", "/c", "mklink", "/J", v.path(rel), away).CombinedOutput(); err != nil {
+			// cmd.exe splits unquoted '=' in the subtest's temporary paths.
+			cmd := exec.Command("cmd")
+			cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: `cmd /c mklink /J "` + v.path(rel) + `" "` + away + `"`}
+			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("junction: %v %s", err, out)
 			}
 			if err := v.e.StartWipe(); err == nil || !strings.Contains(err.Error(), "link") {
