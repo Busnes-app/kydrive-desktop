@@ -89,7 +89,7 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 - **The packages are not code-signed.** Windows and macOS warn on first launch, and a user who
   skips the checks on [VERIFYING-RELEASES.md](VERIFYING-RELEASES.md) has nothing else to tell a
   genuine package from a substitute.
-- **The core is built with the Go named in `core/go.mod`'s `go` line**, currently 1.26.10; CI runs pinned `govulncheck`. Toolchain updates remain necessary for
+- **The core is built with the Go named in `core/go.mod`'s `go` line**, currently 1.26.11; CI runs pinned `govulncheck`. Toolchain updates remain necessary for
   future standard-library fixes.
 - **The Linux core uses the SDK extension's Go**, subject to the module minimum/toolchain selection; the bundled binary must still carry the strong TLS default.
 - **The keyring may persist the token on disk**, encrypted as the OS and keyring decide (README).
