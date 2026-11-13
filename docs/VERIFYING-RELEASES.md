@@ -12,7 +12,7 @@
 > whatever it gets wrong.
 
 A release is a GitHub Release made by the `release` job when a `v*` tag is pushed. It holds six
-packages and a checksum file. Asset names carry no version.
+packages and a checksum file. Package names carry no version.
 
 | Asset | What |
 |---|---|
@@ -21,6 +21,7 @@ packages and a checksum file. Asset names carry no version.
 | `KyDrive-windows-x64.zip`, `KyDrive-windows-arm64.zip` | Unpackaged app with `kydrive-sync.exe` beside `KyDrive.exe` |
 | `KyDrive_<version>_x64.msix`, `KyDrive_<version>_arm64.msix` | Unsigned MSIX packages |
 | `SHA256SUMS` | SHA-256 of the six files above |
+| `KyDrive-v<version>.intoto.jsonl` | Sigstore bundle of the build provenance attestation for the seven files above; pass it to `gh attestation verify --bundle` to check a file without GitHub's attestations API |
 
 ## What is signed, and by whom
 

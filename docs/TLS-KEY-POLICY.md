@@ -32,7 +32,7 @@ core together with its native shell so an older already-running daemon is not
 mistaken for the updated one. The browser sign-in page uses your external browser's
 TLS settings; native shells send no HTTPS requests themselves.
 
-Build with the Go toolchain selected by `core/go.mod` (currently 1.26.10) or a
+Build with the Go toolchain selected by `core/go.mod` (currently 1.26.11) or a
 newer supported Go release. `go version -m /path/to/kydrive-sync` must show
 `DefaultGODEBUG=fips140=on`; release CI checks that setting on every core target.
 TLS tests exercise real daemon requests with weak/strong certificate chains and

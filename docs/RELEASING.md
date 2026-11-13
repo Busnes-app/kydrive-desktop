@@ -9,7 +9,8 @@ Commands and unlinked file paths below are relative to the repository root.
 Pushing a `v*` tag builds every package in CI and, once all jobs pass, publishes them to a GitHub
 Release: `KyDrive-linux.flatpak`, the macOS zip (`KyDrive-macos.zip` when Developer ID signed,
 otherwise `KyDrive-macos-unsigned.zip`), the Windows MSIX and zip for x64 and arm64, and
-`SHA256SUMS`, each with a GitHub build provenance attestation. Asset names carry no version, so
+`SHA256SUMS`, each with a GitHub build provenance attestation, and that attestation's bundle
+`KyDrive-<tag>.intoto.jsonl`. The package names carry no version, so
 `https://github.com/Busnes-app/kydrive-desktop/releases/latest/download/<name>` always points at
 the newest release. A tag with a suffix such as `v0.4.0-test.1` becomes a pre-release, a test
 build: it is checked against the version without its suffix, and its notes open with
