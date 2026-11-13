@@ -56,6 +56,11 @@ jobs:
         shell: bash
         # The race detector needs cgo, which the Windows runner lacks by default.
         run: if [ "$RUNNER_OS" = Windows ]; then go test ./...; else go test -race ./...; fi
+      # Test above runs the seed names on every OS; this mutates server-sent names for a while.
+      - name: Fuzz server names
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: go test ./engine -run '^$' -fuzz '^FuzzServerNames$' -fuzztime 45s
       # Known vulnerabilities in the toolchain and dependencies the core links. The Go
       # version comes from core/go.mod, so a stale go line fails here, not after a release.
       - name: govulncheck
@@ -434,8 +439,16 @@ jobs:
           cd release && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
       # Keyless and verifiable with `gh attestation verify`; SHA256SUMS is attested too.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: attest
         with:
           subject-path: release/*
+      # The attestation's Sigstore bundle ships as a release file too, for
+      # `gh attestation verify --bundle` without the attestations API. Named per tag (the tag was
+      # checked above), unlike the packages: it is only valid for this release's files.
+      - name: Add the attestation bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp -- "$BUNDLE" "release/KyDrive-$GITHUB_REF_NAME.intoto.jsonl"
       # A pre-release is a test build: its notes, prepended to the generated ones, say so and give
       # install steps for the unsigned packages.
       - name: Publish
