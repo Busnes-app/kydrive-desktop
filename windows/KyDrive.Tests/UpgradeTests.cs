@@ -25,6 +25,12 @@ public class UpgradeTests
         using var old = Process.Start(new ProcessStartInfo(exe, "-n 120 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false })!;
         try
         {
+            // EndCore reads the module list, which a process that has only just started lacks.
+            Assert.True(SpinWait.SpinUntil(() =>
+            {
+                try { using var p = Process.GetProcessById(old.Id); return p.MainModule is not null; }
+                catch (System.ComponentModel.Win32Exception) { return false; }
+            }, 5000));
             var elsewhere = Path.Join(dir, "new", "kydrive-sync.exe");
             Assert.False(Upgrade.EndCore(old.Id, elsewhere)); // not named kydrive-sync
             Assert.False(Upgrade.EndCore(old.Id, exe, "kyd-test-sync")); // the bundled one
