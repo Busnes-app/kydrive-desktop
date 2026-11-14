@@ -19,3 +19,17 @@ DerivedData/
 /windows/**/.vs/
 /windows/**/*.user
 /windows/**/*.dmp
+
+# `cd core && go build ./cmd/kydrive-sync` (docs/BUILDING.md) writes the core beside its source.
+/core/kydrive-sync
+/core/kydrive-sync.exe
+# Written into the checkout root by CI: CodeQL's `cmake -B build -S linux`, the flatpak job,
+# the macOS app zips, and the release job's downloaded artifacts.
+/build/
+/.flatpak-builder/
+/build-flatpak/
+/repo/
+/KyDrive-linux.flatpak
+/KyDrive-macos-unsigned.zip
+/KyDrive-macos.zip
+/dist/
