@@ -95,3 +95,12 @@ MIT. See `LICENSE`.
 - [Contributing](CONTRIBUTING.md) — how changes land, the test policy and the coding standard.
 - [Verifying releases](docs/VERIFYING-RELEASES.md) — check a download's checksum and provenance, and rebuild the core to the same bytes.
 - [Assurance case](docs/ASSURANCE-CASE.md) — threat model, trust boundaries, and why the security requirements are met.
+
+## User manual
+
+Read the [online manual](https://busnes.app/manuals/kydrive-desktop/) or browse its
+[Markdown sources](docs/src/introduction.md).
+
+Build and check it with `mdbook build docs` and `python3 docs/check-links.py`,
+then open `docs/book/index.html`. The documentation workflow also provides a
+downloadable `documentation-book` artifact.
