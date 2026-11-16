@@ -7,6 +7,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
   schedule:
     - cron: "23 6 * * 3"
@@ -23,6 +24,7 @@ concurrency:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -59,7 +61,7 @@ jobs:
   # hand. Builds follow ci.yml's, unsigned and one architecture: the source is arch-neutral.
   shells:
     name: Analyze (${{ matrix.language }})
-    if: github.event_name != 'pull_request'
+    if: (github.event_name != 'pull_request') && github.event.pull_request.draft != true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
