@@ -33,3 +33,6 @@ DerivedData/
 /KyDrive-macos-unsigned.zip
 /KyDrive-macos.zip
 /dist/
+
+# Generated mdBook manual
+/docs/book/

@@ -44,6 +44,8 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
   Release publication depends on this job too.
 
 ## Child DOX Index
+
+- `docs/AGENTS.md` — mdBook manual, chapter ownership and documentation checks.
 - `docs/` — `VERIFYING-RELEASES.md` and `ASSURANCE-CASE.md` (no AGENTS.md; root owns them). `CONTRIBUTING.md` holds the coding standard.
 - `core/` — Go sync core: `kydrive-sync` daemon and `ctl`, REST client, linking, sync engine.
 - `linux/` — Qt6/Kirigami tray shell, systemd user unit and Flatpak.
