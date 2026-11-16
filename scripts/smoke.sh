@@ -55,6 +55,13 @@ SYNC_PID=\$!
 for i in \$(seq 50); do [ -S "$W/run/kydrive/sync.sock" ] && break; sleep 0.1; done
 ctl() { "$SYNC_BIN" ctl "\$@"; }
 waitfor() { for i in \$(seq 100); do eval "\$1" && return 0; sleep 0.1; done; return 1; }
+# signed ITEM PATH: GET PATH signed with a keyring item's key, as core/api/sign.go does.
+signed() {
+  local tok=\${1%% *} key=\${1#* } d n e=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  d=\$(date +%s%3N) n=\$(openssl rand -base64 16 | tr '+/' '-_' | tr -d '=')
+  curl -s -H "Authorization: Bearer \$tok" -H "KyDrive-Date: \$d" -H "KyDrive-Nonce: \$n" -H "KyDrive-Content-SHA256: \$e" \
+    -H "KyDrive-Signature: \$(printf '%s' "kydrive-request-v1|$BASE|GET|\$2|\$d|\$n|\$e|\$e" | openssl dgst -sha256 -keyform DER -sign <(printf '%s' "\$key" | base64 -d) | base64 -w0)" "$BASE\$2"
+}
 
 [ "\$(stat -c %a "$W/run/kydrive/sync.sock")" = 600 ] && ok "socket is 0600" || bad "socket mode \$(stat -c %a "$W/run/kydrive/sync.sock")"
 [ "\$(stat -c %a "$W/run/kydrive")" = 700 ] && ok "socket dir is 0700" || bad "socket dir mode"
@@ -83,12 +90,12 @@ waitfor 'ctl Status | grep -q "\"State\": \"revoked\""' && ok "revoke reaches th
 [ "\$(cat "$HOME/KyDrive/Unsynced/Docs/hello.txt" 2>/dev/null)" = "unuploaded edit" ] && ok "unuploaded edit kept in Unsynced/" || bad "edit lost: \$(find "$HOME/KyDrive")"
 [ -z "\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null)" ] && ok "keyring item deleted" || bad "keyring item survived"
 ctl Link '{"Server":"$BASE","Name":"smoke laptop"}' >/dev/null && ok "Link again after a revoke" || bad "relink"
-TOKEN2=\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null || :)
-TOKEN2=\${TOKEN2%% *}
+ITEM2=\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null || :)
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 1 ] && ok "server lists the new device" || bad "device list"
+signed "\$ITEM2" /api/drive/workspaces | grep -q '"Docs"' && ok "a signed request is accepted" || bad "signed request: \$(signed "\$ITEM2" /api/drive/workspaces)"
 ctl Unlink '{"RemoveFiles":false}' >/dev/null && ok "Unlink" || bad "Unlink"
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 0 ] && ok "Unlink revoked the device on the server" || bad "device still listed"
-[ "\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \$TOKEN2" "$BASE/api/drive/workspaces")" = 401 ] && ok "old token is refused" || bad "old token: \$(curl -s -H "Authorization: Bearer \$TOKEN2" "$BASE/api/drive/workspaces")"
+signed "\$ITEM2" /api/drive/workspaces | grep -q '"error":"device_revoked","wipe":false' && ok "old token, signed with its key, answers device_revoked without wipe" || bad "old token: \$(signed "\$ITEM2" /api/drive/workspaces)"
 [ -z "\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null)" ] && ok "Unlink deleted the keyring item" || bad "keyring item survived Unlink"
 [ \$FAIL = 0 ] || tail -20 "$W/sync.log"
 kill \$SYNC_PID; wait \$SYNC_PID 2>/dev/null

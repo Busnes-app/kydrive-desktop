@@ -47,7 +47,7 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
   and runs the full engine suite with the race detector; keep fake-only controls separate.
   The same job builds the daemon and runs `scripts/smoke.sh` against that server
   with private D-Bus/keyring state, without using the runner's normal keyring.
-- The built daemon: `scripts/smoke.sh /path/kydrive-server /path/kydrive-sync` (private D-Bus session and gnome-keyring; needs `curl`, `jq`, `secret-tool`, `dbus-run-session`, `gnome-keyring-daemon`).
+- The built daemon: `scripts/smoke.sh /path/kydrive-server /path/kydrive-sync` (private D-Bus session and gnome-keyring; needs `curl`, `jq`, `openssl`, `secret-tool`, `dbus-run-session`, `gnome-keyring-daemon`).
 
 ## Child DOX Index
 None.
