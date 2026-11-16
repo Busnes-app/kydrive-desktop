@@ -16,18 +16,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Linux first; core-other repeats the same steps on Windows and macOS only once it passed,
+  # so a broken change never takes a macOS runner. The ruleset requires `core (ubuntu-24.04)`.
   core:
     strategy:
-      fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: [ubuntu-24.04]
     if: github.event.pull_request.draft != true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     defaults:
       run:
         working-directory: core
-    steps:
+    steps: &core-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -69,6 +70,20 @@ jobs:
       - name: govulncheck
         if: runner.os == 'Linux'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  core-other:
+    needs: core
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    if: github.event.pull_request.draft != true
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: core
+    steps: *core-steps
 
   real-server:
     if: github.event.pull_request.draft != true
@@ -162,6 +177,7 @@ jobs:
           if-no-files-found: error
 
   macos-shell:
+    needs: core
     if: github.event.pull_request.draft != true
     runs-on: macos-latest
     timeout-minutes: 10
@@ -408,7 +424,7 @@ jobs:
   # A v* tag publishes every package to a GitHub Release, once all jobs pass. The tag must
   # match the version in the CMake project, metainfo, Info.plist and MSIX manifest.
   release:
-    needs: [core, real-server, linux-shell, flatpak, macos-shell, macos-sign, windows-shell]
+    needs: [core, core-other, real-server, linux-shell, flatpak, macos-shell, macos-sign, windows-shell]
     # macos-sign is skipped, not failed, when signing is not configured.
     if: >-
       !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
