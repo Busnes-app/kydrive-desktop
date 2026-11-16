@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -20,7 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-latest, macos-latest]
+    if: github.event.pull_request.draft != true
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: core
@@ -68,6 +71,7 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   real-server:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -106,7 +110,9 @@ jobs:
         run: timeout 120 bash scripts/smoke.sh "$RUNNER_TEMP/kydrive-server" "$RUNNER_TEMP/kydrive-sync"
 
   linux-shell:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: linux
@@ -126,7 +132,9 @@ jobs:
       - run: ctest --test-dir build --output-on-failure
 
   flatpak:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/check-no-binaries.sh
@@ -154,7 +162,9 @@ jobs:
           if-no-files-found: error
 
   macos-shell:
+    if: github.event.pull_request.draft != true
     runs-on: macos-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -204,8 +214,9 @@ jobs:
   # and only once the secrets in macos/AGENTS.md exist.
   # Decided on Linux so an unsigned repo never holds a macOS runner for macos-sign.
   signing:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       configured: ${{ steps.check.outputs.configured }}
     steps:
@@ -222,6 +233,7 @@ jobs:
     needs: [macos-shell, signing]
     if: needs.signing.outputs.configured == 'true'
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -280,7 +292,9 @@ jobs:
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   windows-shell:
+    if: github.event.pull_request.draft != true
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: pwsh
@@ -399,7 +413,9 @@ jobs:
     if: >-
       !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
       && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     # Two runs for one tag would race on `gh release create`; a half-finished publish is never cancelled.
     concurrency:
       group: release-${{ github.ref }}
