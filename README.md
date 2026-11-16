@@ -12,6 +12,11 @@ KyDrive server.
   but first moves anything that never uploaded to `~/KyDrive/Unsynced/`.
 - **Credentials stay in the OS keyring** (Windows Credential Manager, macOS Keychain, the
   Secret Service on Linux), rather than plaintext client configuration. The keyring may persist encrypted data on disk; its protection depends on the OS and keyring setup.
+- **Every request is signed.** Linking enrols a P-256 key with the server, which then refuses
+  the token without a signature from it. The key is a software key held in the same keyring
+  item as the token, not a non-exportable TPM or Secure Enclave key: whatever can read the
+  keyring item gets both. A computer linked before signing keeps working unsigned until it
+  links again.
 - **Linking happens in your browser:** you sign in to KyDrive as usual and approve the
   computer. Revoke it any time from your KyDrive account page.
 

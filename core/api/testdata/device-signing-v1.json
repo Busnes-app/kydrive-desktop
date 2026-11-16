@@ -1,0 +1,19 @@
+{
+  "app_url": "https://Drive.Example:443/",
+  "body": "hello world",
+  "comment": "Device request signing golden vector (kydrive-request-v1). Test key only. ECDSA is randomized: verify the signature, never compare a fresh one.",
+  "date": "1794844800000",
+  "headers": {
+    "Content-Range": "bytes 0-10/11",
+    "Content-Type": "application/octet-stream"
+  },
+  "message": "kydrive-request-v1|https://drive.example|PUT|/api/drive/upload-sessions/s1?x=a%20b|1794844800000|AAECAwQFBgcICQoLDA0ODw|a5331df9a37a62af81fc2536a8a0b1431278692c47ac2da0595236bc01d24d54|b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+  "method": "PUT",
+  "nonce": "AAECAwQFBgcICQoLDA0ODw",
+  "origin": "https://drive.example",
+  "private_scalar_hex": "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+  "public_key_spki_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEthKuAVOrT5CzJV+FGPNIAGM1lQbppFCtrzInDD4W+1BJZHri9Th1VjWYket5MNR43hK6z3+2VI/LCwIbsRfQYg==",
+  "request_uri": "/api/drive/upload-sessions/s1?x=a%20b",
+  "signature_b64": "MEUCIQCqR95lvuxwlwZik1F/iCY8PM2x3EbiivwkDJQ7bu3DKQIgFF8zdTQCe/ZsbgjizGMRn8htomx0fzJuZ92crQuJBMo=",
+  "signed_headers": "content-range:bytes 0-10/11\n"
+}

@@ -262,7 +262,7 @@ func TestSameMetadataEditDuringDownloadIsKept(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.r.Put(t, v.ws, "doc.txt", []byte("2222"))
 	v.e.Settle = time.Hour // keep the in-place rewrite pending while the server revision arrives
 	v.sync()

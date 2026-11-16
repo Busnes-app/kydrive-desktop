@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -67,9 +68,15 @@ func init() { redeemUser.Store("alice") }
 // selfRevoked counts DELETE /api/devices/self calls.
 var selfRevoked atomic.Int32
 
-// server answers the token exchange, self-revocation and a one-workspace list.
+// server answers the token exchange, self-revocation and a one-workspace list. A token
+// redeemed with a key is refused unsigned, as KyDrive does (api/sign_test.go verifies signatures).
 func server(t *testing.T) *httptest.Server {
+	var keyed atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if keyed.Load() && r.URL.Path != "/api/devices/token" && r.Header.Get("KyDrive-Signature") == "" {
+			http.Error(w, `{"error":"Authentication required"}`, 401)
+			return
+		}
 		switch r.URL.Path {
 		case "/api/devices/token":
 			sum := sha256.Sum256([]byte(r.FormValue("verifier")))
@@ -77,6 +84,7 @@ func server(t *testing.T) *httptest.Server {
 				http.Error(w, "{}", 400)
 				return
 			}
+			keyed.Store(r.FormValue("publicKey") != "")
 			io.WriteString(w, `{"token":"kyd_SECRETTOKEN","user":"`+redeemUser.Load().(string)+`","devices_url":"`+"http://"+r.Host+`/account"}`)
 		case "/api/devices/self":
 			if r.Method != "DELETE" || r.Header.Get("Authorization") != "Bearer kyd_SECRETTOKEN" {
@@ -115,8 +123,8 @@ func TestSocketIsOwnerOnly(t *testing.T) {
 	}
 }
 
-// TestTokenOnlyInKeyring links through the daemon and checks the token reached the keyring
-// and no file under the config directory, sync root or socket directory.
+// TestTokenOnlyInKeyring links through the daemon and checks the token and signing key reached
+// the keyring and no file under the config directory, sync root or socket directory.
 func TestTokenOnlyInKeyring(t *testing.T) {
 	srv := server(t)
 	d, ctl := start(t, srv)
@@ -124,9 +132,12 @@ func TestTokenOnlyInKeyring(t *testing.T) {
 	if err := ctl("Link", map[string]string{"Server": srv.URL, "Name": "laptop"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if tok, err := keyring.Get(keyringService, srv.URL); err != nil || tok != "kyd_SECRETTOKEN" {
-		t.Fatalf("keyring holds %q, %v", tok, err)
+	tok, key, err := loadCredential(srv.URL)
+	if err != nil || tok != "kyd_SECRETTOKEN" || key == nil {
+		t.Fatalf("keyring holds %q, key %v, %v", tok, key != nil, err)
 	}
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	secrets := [][]byte{[]byte("SECRETTOKEN"), []byte(base64.StdEncoding.EncodeToString(der)), der}
 	var st Status
 	if err := ctl("Status", struct{}{}, &st); err != nil || !st.Linked || st.Server != srv.URL {
 		t.Fatalf("status %+v, %v", st, err)
@@ -135,8 +146,11 @@ func TestTokenOnlyInKeyring(t *testing.T) {
 	for _, dir := range []string{d.dir, d.root, filepath.Dir(d.sock)} {
 		filepath.WalkDir(dir, func(p string, e os.DirEntry, err error) error {
 			if err == nil && e.Type().IsRegular() {
-				if b, _ := os.ReadFile(p); bytes.Contains(b, []byte("SECRETTOKEN")) {
-					t.Errorf("token written to %s", p)
+				b, _ := os.ReadFile(p)
+				for _, s := range secrets {
+					if bytes.Contains(b, s) {
+						t.Errorf("credential written to %s", p)
+					}
 				}
 			}
 			return nil
@@ -274,5 +288,18 @@ func TestLinkWaitsForAPendingWipe(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(d.root, "Old")); !os.IsNotExist(err) {
 		t.Fatalf("the wipe did not finish before the link: %v", err)
+	}
+}
+
+// A bare token (a computer linked before signing) loads with no key; a damaged key is refused.
+func TestCredentialFormats(t *testing.T) {
+	keyring.MockInit()
+	keyring.Set(keyringService, "https://old", "kyd_OLD")
+	if tok, key, err := loadCredential("https://old"); err != nil || tok != "kyd_OLD" || key != nil {
+		t.Fatalf("legacy item: %q %v %v", tok, key, err)
+	}
+	keyring.Set(keyringService, "https://bad", "kyd_X not-a-key")
+	if _, _, err := loadCredential("https://bad"); err == nil {
+		t.Fatal("damaged key accepted")
 	}
 }

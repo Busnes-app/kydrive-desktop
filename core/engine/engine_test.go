@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 type remote interface {
 	URL() string
 	Token() string
+	Key() *ecdsa.PrivateKey // nil: the fake does not check signatures
 	NewWorkspace(t *testing.T, name string) string
 	Put(t *testing.T, ws, path string, data []byte) // create or add a version, making folders
 	Read(t *testing.T, ws, path string) ([]byte, bool)
@@ -48,6 +50,24 @@ type env struct {
 	root string
 }
 
+// via sends the engine's requests to front (a test proxy) while they stay addressed, and
+// signed, for the server's origin.
+func (v *env) via(front string) {
+	u, _ := url.Parse(front)
+	v.e.API.HTTP = &http.Client{Transport: rehost{u.Host, &http.Transport{DisableKeepAlives: true}}}
+}
+
+type rehost struct {
+	host string
+	next http.RoundTripper
+}
+
+func (h rehost) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.URL.Host = h.host
+	return h.next.RoundTrip(r)
+}
+
 var today = time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 
 func setup(t *testing.T, files map[string]string) *env {
@@ -67,7 +87,7 @@ func setupOn(t *testing.T, r remote, files map[string]string) *env {
 	}
 	t.Cleanup(func() { db.Close() })
 	v := &env{t: t, r: r, ws: ws, root: t.TempDir()}
-	v.e = &Engine{Root: v.root, Device: "laptop", DB: db, API: &api.Client{Base: r.URL(), Token: r.Token(), HTTP: http.DefaultClient}, Now: func() time.Time { return today }}
+	v.e = &Engine{Root: v.root, Device: "laptop", DB: db, API: &api.Client{Base: r.URL(), Token: r.Token(), Key: r.Key(), HTTP: http.DefaultClient}, Now: func() time.Time { return today }}
 	if err := v.e.Choose(context.Background(), []string{ws}); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +161,7 @@ func TestChooseKeepsRetainedWorkspacePrivate(t *testing.T) {
 	}
 	next := newRemote(t)
 	ws := next.NewWorkspace(t, "Docs")
-	v.e.API = &api.Client{Base: next.URL(), Token: next.Token(), HTTP: http.DefaultClient}
+	v.e.API = &api.Client{Base: next.URL(), Token: next.Token(), Key: next.Key(), HTTP: http.DefaultClient}
 	if err := v.e.Choose(context.Background(), []string{ws}); err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +602,7 @@ func TestUploadSurvivesDroppedConnection(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	data := strings.Repeat("0123456789abcdef", 20<<16) // 20 MiB: three chunks
 	v.write("big.bin", data)
 	v.sync()

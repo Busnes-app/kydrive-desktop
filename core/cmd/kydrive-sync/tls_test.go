@@ -172,12 +172,13 @@ func TestDaemonRejectsUndersizedTLSKeys(t *testing.T) {
 			defer srv.Close()
 			d := tlsDaemon(t, roots)
 			c := &api.Client{Base: srv.URL, Token: "kyd_synthetic", HTTP: d.http}
+			key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			operations := []struct {
 				name string
 				run  func() error
 			}{
 				{"workspace API", func() error { _, err := c.Workspaces(context.Background()); return err }},
-				{"redemption", func() error { _, err := c.Redeem(context.Background(), "synthetic", "synthetic"); return err }},
+				{"redemption", func() error { _, err := c.Redeem(context.Background(), "synthetic", "synthetic", key); return err }},
 				{"download", func() error {
 					hash := sha256.Sum256([]byte("data"))
 					return c.Download(context.Background(), api.File{ID: "f", Size: 4, Digest: hex.EncodeToString(hash[:])}, io.Discard)

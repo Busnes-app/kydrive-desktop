@@ -187,7 +187,7 @@ func TestCarryoverRetryAccountingAlreadyCanceled(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.e.Context = ctx
 	ws, err := v.e.DB.Workspaces()
 	if err != nil {

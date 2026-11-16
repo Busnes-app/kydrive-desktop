@@ -4,6 +4,8 @@ package link
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -37,8 +39,13 @@ func random() string {
 }
 
 // Link opens the approval page and waits up to ten minutes for the browser to come back to
-// the loopback listener with a code, which it exchanges for a device token.
+// the loopback listener with a code, which it exchanges for a device token bound to a new
+// signing key.
 func Link(ctx context.Context, r Request) (api.Token, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return api.Token{}, err
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return api.Token{}, err
@@ -73,7 +80,7 @@ func Link(ctx context.Context, r Request) (api.Token, error) {
 	select {
 	case code := <-codes:
 		c := &api.Client{Base: r.Server, HTTP: r.HTTP}
-		return c.Redeem(ctx, code, verifier)
+		return c.Redeem(ctx, code, verifier, key)
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return api.Token{}, errors.New("linking timed out; start it again")

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"log"
@@ -39,10 +40,11 @@ type daemon struct {
 	open            func(url string) error
 	exit            func(code int) // os.Exit; Quit calls it
 
-	lock   *os.File       // held for the daemon's life: one core per state directory
-	memory *engine.Memory // retry backoff and announced failures, across passes
-	work   sync.Mutex     // one engine operation at a time
-	mu     sync.Mutex     // guards the fields below
+	lock   *os.File          // held for the daemon's life: one core per state directory
+	memory *engine.Memory    // retry backoff and announced failures, across passes
+	work   sync.Mutex        // one engine operation at a time
+	mu     sync.Mutex        // guards the fields below
+	key    *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -72,11 +74,11 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
 	if server := db.Get("server"); server != "" {
-		tok, err := keyring.Get(keyringService, server)
+		tok, key, err := loadCredential(server)
 		if err != nil {
 			d.state, d.lastErr = "signed_out", "the keyring holds no KyDrive credential; sign in again"
 		} else {
-			d.token, d.state = tok, "idle"
+			d.token, d.key, d.state = tok, key, "idle"
 		}
 	}
 	return d, nil
@@ -165,10 +167,10 @@ func (d *daemon) trigger(local bool) {
 // engine builds an engine for one operation. The caller must not hold d.mu.
 func (d *daemon) engine() *engine.Engine {
 	d.mu.Lock()
-	token := d.token
+	token, key := d.token, d.key
 	d.mu.Unlock()
 	return &engine.Engine{Root: d.root, Device: d.db.Get("device"), DB: d.db, Settle: settle, Now: time.Now, Memory: d.memory,
-		API:      &api.Client{Base: d.db.Get("server"), Token: token, HTTP: d.http},
+		API:      &api.Client{Base: d.db.Get("server"), Token: token, Key: key, HTTP: d.http},
 		CaseFold: runtime.GOOS == "windows" || runtime.GOOS == "darwin", WinNames: runtime.GOOS == "windows"}
 }
 
@@ -304,7 +306,7 @@ func (d *daemon) retry() bool {
 	if !due {
 		return false
 	}
-	tok, err := keyring.Get(keyringService, d.db.Get("server"))
+	tok, key, err := loadCredential(d.db.Get("server"))
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.state != "signed_out" {
@@ -315,16 +317,16 @@ func (d *daemon) retry() bool {
 		d.retryAt = time.Now().Add(d.backoff)
 		return false
 	}
-	d.token, d.state = tok, "syncing"
+	d.token, d.key, d.state = tok, key, "syncing"
 	return true
 }
 
-// forget deletes the credential from the keyring. The caller holds d.mu.
+// forget deletes the credential and its signing key from the keyring. The caller holds d.mu.
 func (d *daemon) forget() {
 	if err := keyring.Delete(keyringService, d.db.Get("server")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		log.Printf("keyring: %v", err)
 	}
-	d.token = ""
+	d.token, d.key = "", nil
 }
 
 func openBrowser(url string) error {

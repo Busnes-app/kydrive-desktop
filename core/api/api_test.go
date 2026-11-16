@@ -3,7 +3,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -143,17 +148,20 @@ func TestUploadSurvivesDroppedConnection(t *testing.T) {
 }
 
 func TestRedeem(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	spki := base64.StdEncoding.EncodeToString(der)
 	c := client(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/api/devices/token" || r.Header.Get("Authorization") != "" ||
-			r.FormValue("code") != "c1" || r.FormValue("verifier") != "v1" {
+			r.FormValue("code") != "c1" || r.FormValue("verifier") != "v1" || r.FormValue("publicKey") != spki {
 			http.Error(w, "bad", 400)
 			return
 		}
 		io.WriteString(w, `{"token":"kyd_new","devices_url":"https://drive/account"}`)
 	})
 	c.Token = ""
-	tok, err := c.Redeem(context.Background(), "c1", "v1")
-	if err != nil || tok.Token != "kyd_new" || tok.DevicesURL != "https://drive/account" {
+	tok, err := c.Redeem(context.Background(), "c1", "v1", key)
+	if err != nil || tok.Token != "kyd_new" || tok.DevicesURL != "https://drive/account" || tok.Key != key {
 		t.Fatalf("got %+v, %v", tok, err)
 	}
 }

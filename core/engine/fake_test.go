@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -402,8 +403,9 @@ func (f *fake) trash(w http.ResponseWriter, r *http.Request) {
 
 // remote implementation, for the tests.
 
-func (f *fake) URL() string   { return f.srv.URL }
-func (f *fake) Token() string { return "kyd_test" }
+func (f *fake) URL() string            { return f.srv.URL }
+func (f *fake) Token() string          { return "kyd_test" }
+func (f *fake) Key() *ecdsa.PrivateKey { return nil }
 
 func (f *fake) NewWorkspace(t *testing.T, name string) string {
 	f.mu.Lock()

@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"io"
 	"net/http"
@@ -14,14 +15,15 @@ import (
 )
 
 // server plays KyDrive's token endpoint, checking the PKCE verifier against the challenge the
-// browser carried.
-func server(t *testing.T, challenge *string) *httptest.Server {
+// browser carried, and records the device key sent with it.
+func server(t *testing.T, challenge, publicKey *string) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sum := sha256.Sum256([]byte(r.FormValue("verifier")))
 		if r.URL.Path != "/api/devices/token" || r.FormValue("code") != "code1" || base64.RawURLEncoding.EncodeToString(sum[:]) != *challenge {
 			http.Error(w, `{"error":"bad"}`, 400)
 			return
 		}
+		*publicKey = r.FormValue("publicKey")
 		io.WriteString(w, `{"token":"kyd_tok","devices_url":"x"}`)
 	}))
 	t.Cleanup(srv.Close)
@@ -29,8 +31,8 @@ func server(t *testing.T, challenge *string) *httptest.Server {
 }
 
 func TestLink(t *testing.T) {
-	var challenge string
-	srv := server(t, &challenge)
+	var challenge, publicKey string
+	srv := server(t, &challenge, &publicKey)
 	open := func(raw string) error {
 		u, err := url.Parse(raw)
 		q := u.Query()
@@ -54,8 +56,12 @@ func TestLink(t *testing.T) {
 		return nil
 	}
 	tok, err := Link(context.Background(), Request{Server: srv.URL, Name: "laptop", Platform: "linux", Open: open, HTTP: srv.Client()})
-	if err != nil || tok.Token != "kyd_tok" {
+	if err != nil || tok.Token != "kyd_tok" || tok.Key == nil {
 		t.Fatalf("got %+v, %v", tok, err)
+	}
+	der, _ := x509.MarshalPKIXPublicKey(&tok.Key.PublicKey)
+	if publicKey != base64.StdEncoding.EncodeToString(der) {
+		t.Fatalf("redeemed with key %q, not the token's", publicKey)
 	}
 }
 
