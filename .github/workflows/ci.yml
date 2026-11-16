@@ -233,7 +233,7 @@ jobs:
     needs: [macos-shell, signing]
     if: needs.signing.outputs.configured == 'true'
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 90 # notarytool --wait has no bound of its own
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
