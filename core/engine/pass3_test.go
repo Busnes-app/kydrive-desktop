@@ -101,7 +101,7 @@ func TestSnapshotHonoursDownloadBackoff(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.sync()
 	for _, d := range []string{"n1", "n2", "n3"} {
 		v.r.Put(t, v.ws, d+"/x.txt", []byte(d)) // a new folder: a snapshot

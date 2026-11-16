@@ -89,7 +89,7 @@ func TestForeign404DownloadIsRetried(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.r.Put(t, v.ws, "new.txt", []byte("hello"))
 	v.e.Sync(context.Background())
 	broken.Store(false)
@@ -178,7 +178,7 @@ func TestFailingDownloadBacksOff(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.r.Put(t, v.ws, "big.bin", []byte("data"))
 	for range 4 {
 		v.sync()
@@ -263,7 +263,7 @@ func TestUnservableFileDoesNotStopSync(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.r.Put(t, v.ws, "bad.bin", []byte("x"))
 	v.write("keep.txt", "v2")
 	v.sync()
@@ -331,7 +331,7 @@ func TestBodyCutFileDoesNotStopSync(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.r.Put(t, v.ws, "a.bin", []byte("0123456789"))
 	v.r.Put(t, v.ws, "b.bin", []byte("0123456789"))
 	v.write("keep.txt", "v2")

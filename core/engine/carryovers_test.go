@@ -135,8 +135,7 @@ func TestCarryoverDownloadOutageStopsPass(t *testing.T) {
 				proxy.ServeHTTP(w, r)
 			}))
 			defer front.Close()
-			v.e.API.Base = front.URL
-			v.e.API.HTTP = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+			v.via(front.URL)
 			if err := v.e.Sync(context.Background()); err == nil {
 				t.Error("outage reported a successful pass")
 			}
@@ -153,7 +152,7 @@ func TestCarryoverDownloadOutageStopsPass(t *testing.T) {
 			if len(retries) != 1 {
 				t.Errorf("retry count %d", len(retries))
 			}
-			v.e.API.Base = v.r.URL()
+			v.e.API.HTTP = http.DefaultClient
 			v.sync()
 			if got := tree(t, v.path("")); len(got) != 5 {
 				t.Fatalf("recovery tree %v", got)
@@ -286,7 +285,7 @@ func TestCarryoverUploadDoesNotRecordALaterRewrite(t *testing.T) {
 	}
 	front := httptest.NewServer(proxy)
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.sync()
 	v.sync()
 	if v.remote("vault.bin") != "CCCC" {
@@ -402,7 +401,7 @@ func TestCarryoverBrokenFilesKeepOtherWorkMoving(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	for i := 0; i < 5; i++ {
 		v.r.Put(t, v.ws, fmt.Sprintf("%d.bin", i), []byte("broken"))
 	}

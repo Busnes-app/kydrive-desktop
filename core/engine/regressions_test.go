@@ -133,7 +133,7 @@ func TestForeign404IsNotLostAccess(t *testing.T) {
 		proxy.ServeHTTP(w, r)
 	}))
 	defer front.Close()
-	v.e.API.Base = front.URL
+	v.via(front.URL)
 	v.r.Put(t, v.ws, "b.txt", []byte("b"))
 	if err := v.e.Sync(context.Background()); err == nil {
 		t.Fatal("a proxy 404 passed as success")

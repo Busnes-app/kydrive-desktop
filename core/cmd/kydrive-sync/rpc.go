@@ -19,7 +19,6 @@ import (
 	"github.com/Busnes-app/kydrive-desktop/core/api"
 	"github.com/Busnes-app/kydrive-desktop/core/engine"
 	"github.com/Busnes-app/kydrive-desktop/core/link"
-	"github.com/zalando/go-keyring"
 )
 
 // Core is the JSON-RPC service the shells call, as "Core.<Method>".
@@ -190,7 +189,7 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 
 // activate stores an approved credential and starts syncing with it. The caller holds d.work.
 func (d *daemon) activate(server, name string, tok api.Token) error {
-	if err := keyring.Set(keyringService, server, tok.Token); err != nil {
+	if err := storeCredential(server, tok.Token, tok.Key); err != nil {
 		return errors.New("could not store the credential in the OS keyring: " + err.Error())
 	}
 	for k, v := range map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User, "user_id": tok.UserID} {
@@ -202,7 +201,7 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 		return err
 	}
 	d.mu.Lock()
-	d.token, d.state, d.lastErr, d.backoff = tok.Token, "idle", "", 0
+	d.token, d.key, d.state, d.lastErr, d.backoff = tok.Token, tok.Key, "idle", "", 0
 	d.mu.Unlock()
 	d.trigger(true)
 	return nil
@@ -282,7 +281,7 @@ func (d *daemon) stillWanted(ctx context.Context, server string, tok api.Token) 
 func (d *daemon) revoke(server string, tok api.Token) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := (&api.Client{Base: server, Token: tok.Token, HTTP: d.http}).RevokeSelf(ctx); err != nil {
+	if err := (&api.Client{Base: server, Token: tok.Token, Key: tok.Key, HTTP: d.http}).RevokeSelf(ctx); err != nil {
 		log.Printf("link: the server did not revoke an unused link: %v", err)
 	}
 }

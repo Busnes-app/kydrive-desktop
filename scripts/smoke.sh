@@ -59,8 +59,11 @@ waitfor() { for i in \$(seq 100); do eval "\$1" && return 0; sleep 0.1; done; re
 [ "\$(stat -c %a "$W/run/kydrive/sync.sock")" = 600 ] && ok "socket is 0600" || bad "socket mode \$(stat -c %a "$W/run/kydrive/sync.sock")"
 [ "\$(stat -c %a "$W/run/kydrive")" = 700 ] && ok "socket dir is 0700" || bad "socket dir mode"
 ctl Link '{"Server":"$BASE","Name":"smoke laptop"}' >/dev/null && ok "Link via the approve page" || bad "Link"
-TOKEN=\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null || :)
+ITEM=\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null || :)
+TOKEN=\${ITEM%% *} KEY=\${ITEM#* }
 case "\$TOKEN" in kyd_*) ok "token is in the Secret Service keyring";; *) bad "keyring lookup: '\$TOKEN'";; esac
+[ -n "\$KEY" ] && [ "\$KEY" != "\$ITEM" ] && ok "signing key is beside the token" || bad "no signing key in the keyring item"
+[ "\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \$TOKEN" "$BASE/api/drive/workspaces")" = 401 ] && ok "the token alone is refused" || bad "unsigned request accepted"
 ctl Workspaces | grep -q '"Name": "Docs"' && ok "Workspaces lists Docs" || bad "Workspaces"
 ctl Choose '{"IDs":["$WS"]}' >/dev/null && ok "Choose" || bad "Choose"
 waitfor '[ -f "$HOME/KyDrive/Docs/hello.txt" ]' && ok "hello.txt downloaded" || bad "download"
@@ -69,7 +72,7 @@ waitfor '[ -f "$HOME/KyDrive/Docs/hello.txt" ]' && ok "hello.txt downloaded" || 
 [ "\$(stat -c %a "$HOME/KyDrive")" = 700 ] && ok "sync root is 0700" || bad "sync root mode"
 printf 'from the laptop' >"$HOME/KyDrive/Docs/local.txt"
 waitfor 'curl -s -b "$W/cookies" "$BASE/api/drive/workspaces/$WS/snapshot" | grep -q local.txt' && ok "fsnotify upload of local.txt" || bad "upload after local write"
-if grep -rlaF "\$TOKEN" "$W/home" "$W/run" "$W/sync.log" 2>/dev/null; then bad "token found on disk"; else ok "token in no file under HOME, runtime dir or log"; fi
+if grep -rlaF -e "\$TOKEN" -e "\$KEY" "$W/home" "$W/run" "$W/sync.log" 2>/dev/null; then bad "credential found on disk"; else ok "token and key in no file under HOME, runtime dir or log"; fi
 ctl Status | grep -q '"State": "idle"' && ok "Status idle" || bad "Status: \$(ctl Status)"
 DEV=\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq -r '.[0].id')
 printf 'unuploaded edit' >"$HOME/KyDrive/Docs/hello.txt"
@@ -81,10 +84,11 @@ waitfor 'ctl Status | grep -q "\"State\": \"revoked\""' && ok "revoke reaches th
 [ -z "\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null)" ] && ok "keyring item deleted" || bad "keyring item survived"
 ctl Link '{"Server":"$BASE","Name":"smoke laptop"}' >/dev/null && ok "Link again after a revoke" || bad "relink"
 TOKEN2=\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null || :)
+TOKEN2=\${TOKEN2%% *}
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 1 ] && ok "server lists the new device" || bad "device list"
 ctl Unlink '{"RemoveFiles":false}' >/dev/null && ok "Unlink" || bad "Unlink"
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 0 ] && ok "Unlink revoked the device on the server" || bad "device still listed"
-curl -s -H "Authorization: Bearer \$TOKEN2" "$BASE/api/drive/workspaces" | grep -q '"error":"device_revoked","wipe":false' && ok "old token answers device_revoked without wipe" || bad "old token: \$(curl -s -H "Authorization: Bearer \$TOKEN2" "$BASE/api/drive/workspaces")"
+[ "\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \$TOKEN2" "$BASE/api/drive/workspaces")" = 401 ] && ok "old token is refused" || bad "old token: \$(curl -s -H "Authorization: Bearer \$TOKEN2" "$BASE/api/drive/workspaces")"
 [ -z "\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null)" ] && ok "Unlink deleted the keyring item" || bad "keyring item survived Unlink"
 [ \$FAIL = 0 ] || tail -20 "$W/sync.log"
 kill \$SYNC_PID; wait \$SYNC_PID 2>/dev/null

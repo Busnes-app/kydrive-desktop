@@ -5,7 +5,10 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -70,6 +73,8 @@ type Token struct {
 	UserID     string `json:"user_id"` // immutable account identity; absent on older servers
 	User       string `json:"user"`    // the account that approved the link
 	DevicesURL string `json:"devices_url"`
+	// Key is the signing key enrolled at link; the server issued Token bound to it.
+	Key *ecdsa.PrivateKey `json:"-"`
 }
 
 // Error is a non-2xx answer.
@@ -96,10 +101,22 @@ func Status(err error) int {
 type Client struct {
 	Base  string // server origin, e.g. https://drive.example
 	Token string
+	Key   *ecdsa.PrivateKey // signs every request Token makes; nil for a device linked before signing
 	HTTP  *http.Client
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, header http.Header) (*http.Response, error) {
+	signed := c.Token != "" && c.Key != nil
+	var b []byte
+	if signed && body != nil {
+		// Buffered: the signature covers the body's digest, and a sized body is sent with a
+		// Content-Length, which the server needs for one over 1 MiB (an upload chunk).
+		var err error
+		if b, err = io.ReadAll(body); err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(b)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.Base, "/")+path, body)
 	if err != nil {
 		return nil, err
@@ -109,6 +126,11 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, he
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if signed {
+		if err := sign(req, c.Key, canonicalOrigin(c.Base), b); err != nil {
+			return nil, err
+		}
 	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
@@ -305,9 +327,13 @@ func (c *Client) RevokeSelf(ctx context.Context) error {
 	return err
 }
 
-// Redeem exchanges a link code and its PKCE verifier for a device token.
-func (c *Client) Redeem(ctx context.Context, code, verifier string) (Token, error) {
-	form := url.Values{"code": {code}, "verifier": {verifier}}
+// Redeem exchanges a link code and its PKCE verifier for a device token bound to key.
+func (c *Client) Redeem(ctx context.Context, code, verifier string, key *ecdsa.PrivateKey) (Token, error) {
+	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return Token{}, err
+	}
+	form := url.Values{"code": {code}, "verifier": {verifier}, "publicKey": {base64.StdEncoding.EncodeToString(spki)}}
 	h := http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}
 	res, err := c.do(ctx, "POST", "/api/devices/token", strings.NewReader(form.Encode()), h)
 	if err != nil {
@@ -318,5 +344,6 @@ func (c *Client) Redeem(ctx context.Context, code, verifier string) (Token, erro
 	if err := json.NewDecoder(res.Body).Decode(&t); err != nil || !strings.HasPrefix(t.Token, "kyd_") {
 		return Token{}, fmt.Errorf("token exchange returned no device token")
 	}
+	t.Key = key
 	return t, nil
 }

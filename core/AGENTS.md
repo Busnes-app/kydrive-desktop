@@ -2,7 +2,7 @@
 The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-sync` runs one per user; `kydrive-sync ctl METHOD [JSON]` calls it for debugging.
 
 ## Ownership
-- `api/` — REST client for the KyDrive server; no sync decisions.
+- `api/` — REST client for the KyDrive server, including device request signing (`sign.go`); no sync decisions.
 - `link/` — loopback + PKCE linking.
 - `engine/` — state DB (`db.go`), pull (`pull.go`), push (`push.go`), conflict/evict rules (`engine.go`).
 - `cmd/kydrive-sync/` — daemon: keyring, socket, JSON-RPC service `Core`, watcher, poll loop.
@@ -25,6 +25,7 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
   chain/hostname verification and reject all redirects. Never weaken the runtime
   policy to repair an endpoint: correct its certificate chain. TLS failure must
   preserve credentials, bindings and local work. docs/TLS-KEY-POLICY.md owns operator migration.
+- **Device signing** follows KyDrive-server `internal/api/devicesig.go`; `api/testdata/device-signing-v1.json` is its golden vector, copied byte for byte. `link.Link` generates a P-256 key before redeeming the code and sends its SPKI as `publicKey`. A `Client` with a `Key` signs every request it sends with its token, buffering the body so the digest and Content-Length match what is sent; the signed origin is `Base` canonicalised, so tests that interpose a proxy reroute the transport (`env.via`), never `Base`. The keyring item (`credential.go`) is the token, then a space and the key as std base64 PKCS#8 DER: one item, stored and deleted together. A bare token is a computer linked before signing and stays unsigned. The key is a software key; a non-exportable platform key is not implemented.
 - Linking accepts `https` servers, or `http` on loopback for development. Every approved link clears previous workspace bindings, cursors and item/retry records under the work lock before saving and activating new credentials; files remain untouched and workspaces must be selected afresh. A refused approval preserves existing bindings. Platform names are `windows`, `macos`, `linux`.
 
 ## Work Guidance

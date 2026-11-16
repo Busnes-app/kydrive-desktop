@@ -11,7 +11,8 @@ root.
 ## Security requirements
 
 1. **The device token stays secret.** It lives only in the OS keyring: never on disk in the
-   client's own files, in logs, or in answers over the local socket.
+   client's own files, in logs, or in answers over the local socket. The device's signing key
+   is held the same way, in the same keyring item, and the token alone is refused without it.
 2. **Only this user can drive the core.** Other local users cannot call the sync core.
 3. **The server cannot write outside the sync folder.** No name or path from the server or the
    state database leads outside the workspace folder, including through a symlink.
@@ -70,7 +71,8 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 | Path traversal from server names (CWE-22) | `serverName` refuses empty, `.`/`..`, separators, control and format characters; `Engine.abs` requires `filepath.IsLocal` and refuses backslashes | `core/engine/push.go` (`serverName`), `core/engine/engine.go` (`abs`), `TestServerNamesStayInside`, `TestNameHazards` |
 | Symlink following out of the workspace (CWE-59) | `abs` refuses any ancestor that is a symlink (`os.Lstat`) | `core/engine/engine.go`, `TestSymlinkedParentRefused` |
 | Corrupted or substituted download | Size and SHA-256 must match the server's digest; a file with no digest is refused; content goes to a temp file and is renamed in only if the target is still free or unchanged | `core/api/api.go` (`Download`), `core/engine/pull.go`, `TestDownloadChecksDigest`, `TestDownloadRejectsWrongDigest` |
-| Credential exposure (CWE-522) | Token stored with `keyring.Set` and read with `keyring.Get`; `Status` answers carry `Linked`, not the token; unlink and revoke delete the keyring item | `core/cmd/kydrive-sync/rpc.go`, `core/cmd/kydrive-sync/daemon.go`, `TestTokenOnlyInKeyring`, `TestUnlinkDeletesKeyringItem` |
+| Credential exposure (CWE-522) | Token and signing key stored together in one keyring item (`credential.go`); `Status` answers carry `Linked`, not the token; unlink and revoke delete the keyring item | `core/cmd/kydrive-sync/rpc.go`, `core/cmd/kydrive-sync/daemon.go`, `TestTokenOnlyInKeyring`, `TestUnlinkDeletesKeyringItem` |
+| Stolen bearer token replayed elsewhere | Linking enrols a P-256 key; every request carries an ECDSA signature over origin, method, request URI, date, a random nonce, the server-acted headers and the body's SHA-256; a token whose device enrolled a key is refused unsigned (kydrive-server `devicesig.go`) | `core/api/sign.go`, `core/link/link.go`, `TestSigningGoldenVector`, `TestSignedRequests`, smoke "the token alone is refused" |
 | Weak TLS certificate keys | Go runtime policy refuses RSA below 2048 bits and unsupported EC certificate keys throughout the verified chain; strong controls retain access | `core/go.mod`, `TestDaemonRejectsUndersizedTLSKeys` |
 | Redirect to another origin or cleartext endpoint | Shared daemon HTTP client refuses redirects before forwarding tokens/verifiers; direct loopback HTTP remains development-only | `daemon.go`, `TestDaemonRefusesRedirects` |
 | Cleartext transport (CWE-319) | `serverOrigin` accepts `https`, or `http` only for `localhost`/loopback | `core/cmd/kydrive-sync/rpc.go` (`serverOrigin`), `TestLinkRefusesPlainHTTP` |
@@ -93,6 +95,11 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
   future standard-library fixes.
 - **The Linux core uses the SDK extension's Go**, subject to the module minimum/toolchain selection; the bundled binary must still carry the strong TLS default.
 - **The keyring may persist the token on disk**, encrypted as the OS and keyring decide (README).
+- **The signing key is a software key in the keyring item beside the token**, not a
+  non-exportable TPM or Secure Enclave key, so anything that can read that item can sign. It
+  stops a token read off the wire or from a server-side leak, not a reader of the keyring.
+- **A computer linked before signing sends its token alone** until it is linked again; the
+  server accepts that only while it still allows keyless devices.
 - **The large-delete guard is a threshold**, not a guarantee: smaller deletes go through.
 - **Older-server compatibility is weaker.** Without a recorded immutable ID, Sign in again compares the saved username; a pre-0.7 link with neither identity remains refused. On a server missing the account route, a folder delete uses the existing feed check, which cannot close the last request window. Upgrade the server and let a valid linked client sync before relying on the new identity and atomic-delete protections.
 - **CodeQL scans the Swift, C# and C++ shells only after merge** (push to `main`, weekly), so a
