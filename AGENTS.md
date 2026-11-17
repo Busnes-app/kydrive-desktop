@@ -51,3 +51,7 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 - `linux/` — Qt6/Kirigami tray shell, systemd user unit and Flatpak.
 - `macos/` — SwiftUI menu bar shell, the core as a bundled launch agent, signing.
 - `windows/` — WinUI 3 tray shell, unsigned MSIX and zip.
+
+## Release notes
+
+- `CHANGELOG.md` owns pending application release notes and upgrade impact. A version bump alone does not publish a release.
