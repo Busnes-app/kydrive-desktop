@@ -510,3 +510,19 @@ func TestPinThroughHTTPSProxy(t *testing.T) {
 		t.Fatalf("%d tunnels", tunnels.Load())
 	}
 }
+
+// A host spelled differently from its SNI (a trailing dot) is still the server, never a proxy.
+func TestPinTrailingDotHostStillChecked(t *testing.T) {
+	p := newPinServer(t)
+	a, b := p.leaf(), p.leaf()
+	p.use(b)
+	c := p.client(NewMemoryPins(Pin{Leaf: pinOf(a), Floor: 1}))
+	c.Base = strings.Replace(p.srv.URL, "127.0.0.1", "localhost.", 1)
+	c.HTTP.Transport.(*http.Transport).Proxy = http.ProxyFromEnvironment
+	if _, err := c.Workspaces(ctx); !errors.Is(err, ErrPinChanged) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := p.paths(); len(got) != 0 {
+		t.Fatalf("requests %v", got)
+	}
+}

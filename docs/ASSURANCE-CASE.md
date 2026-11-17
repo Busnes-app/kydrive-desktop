@@ -104,7 +104,8 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
   stops a token read off the wire or from a server-side leak, not a reader of the keyring.
 - **A computer linked before signing sends its token alone** until it is linked again; the
   server accepts that only while it still allows keyless devices.
-- **Pinning trusts the first leaf.** Linking, Sign in again and the first sync of a computer
+- **Pinning trusts the first leaf.** Linking, Sign in again (which keeps the identity key it
+  holds and refuses a reply with another) and the first sync of a computer
   linked before pinning accept whatever leaf system trust accepts at that moment. A server
   without an identity key, or one that cannot sign its certificate (503), makes every renewal a
   sign-in. An older core cannot read a keyring item that holds a pin: downgrading needs a sign-in.

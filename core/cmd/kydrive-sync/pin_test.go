@@ -233,3 +233,34 @@ func TestDaemonRelinkDuringRolloverNotTouched(t *testing.T) {
 		t.Fatalf("new session changed: %q %+v %v", tok, got, err)
 	}
 }
+
+// Sign in again keeps the identity key this computer holds and refuses a reply with another.
+func TestSignInKeepsIdentityKey(t *testing.T) {
+	f := newPinFixture(t)
+	d, ctl := start(t, f.srv)
+	d.http.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: f.roots}
+	var out struct{}
+	if err := ctl("Link", map[string]string{"Server": f.srv.URL, "Name": "laptop"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	held := base64.StdEncoding.EncodeToString(other.Public().(ed25519.PublicKey))
+	d.mu.Lock()
+	d.state, d.pin.IdentityKey = "signed_out", held
+	d.mu.Unlock()
+	if err := ctl("SignIn", struct{}{}, &out); err == nil || !strings.Contains(err.Error(), "different identity key") {
+		t.Fatalf("sign-in with another identity key: %v", err)
+	}
+	if d.pin.IdentityKey != held || d.state != "signed_out" {
+		t.Fatalf("identity key replaced: %+v %q", d.pin, d.state)
+	}
+	d.mu.Lock()
+	d.pin.IdentityKey = f.idKey()
+	d.mu.Unlock()
+	if err := ctl("SignIn", struct{}{}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, pin, err := loadCredential(f.srv.URL); err != nil || pin.IdentityKey != f.idKey() || pin.Leaf != f.leaf {
+		t.Fatalf("after sign-in %+v %v", pin, err)
+	}
+}

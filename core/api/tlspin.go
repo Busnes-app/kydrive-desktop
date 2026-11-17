@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -141,6 +142,15 @@ func pinHost(base string) string {
 	return strings.ToLower(u.Hostname())
 }
 
+// sniName is name as crypto/tls sends it in SNI, lowercased: no trailing dot, "" for an IP.
+func sniName(name string) string {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	if net.ParseIP(name) != nil {
+		return ""
+	}
+	return name
+}
+
 // client is base restricted to leaf. VerifyConnection runs after chain and hostname checks
 // and before any request byte is written.
 func (p *Pins) client(base *http.Client, host, leaf string) (*http.Client, error) {
@@ -160,6 +170,20 @@ func (p *Pins) client(base *http.Client, host, leaf string) (*http.Client, error
 	if tr.TLSClientConfig == nil {
 		tr.TLSClientConfig = &tls.Config{}
 	}
+	// The transport also handshakes with an HTTPS proxy, under the same config. Only a name
+	// the proxy function chose skips the leaf check; the tunnelled handshake is still checked.
+	var proxies sync.Map
+	if proxy := tr.Proxy; proxy != nil {
+		tr.Proxy = func(req *http.Request) (*url.URL, error) {
+			u, err := proxy(req)
+			if u != nil && u.Scheme == "https" {
+				if name := sniName(u.Hostname()); name != "" && name != sniName(host) {
+					proxies.Store(name, true)
+				}
+			}
+			return u, err
+		}
+	}
 	prev := tr.TLSClientConfig.VerifyConnection
 	tr.TLSClientConfig.VerifyConnection = func(cs tls.ConnectionState) error {
 		if prev != nil {
@@ -167,8 +191,7 @@ func (p *Pins) client(base *http.Client, host, leaf string) (*http.Client, error
 				return err
 			}
 		}
-		// An HTTPS proxy's own handshake names the proxy; the tunnelled one is still checked.
-		if cs.ServerName != "" && !strings.EqualFold(cs.ServerName, host) {
+		if _, proxy := proxies.Load(sniName(cs.ServerName)); proxy {
 			return nil
 		}
 		if len(cs.PeerCertificates) == 0 || SPKIPin(cs.PeerCertificates[0]) != leaf {

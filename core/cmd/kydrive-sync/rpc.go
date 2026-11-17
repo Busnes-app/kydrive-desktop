@@ -234,6 +234,10 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 		d.revoke(server, tok)
 		return err
 	}
+	if err := d.keepIdentity(&tok); err != nil {
+		d.revoke(server, tok)
+		return err
+	}
 	unlock := d.lockWork()
 	defer unlock()
 	if err := d.stillWanted(ctx, server, tok); err != nil {
@@ -257,6 +261,22 @@ func (d *daemon) sameAccount(tok api.Token) error {
 	case !strings.EqualFold(tok.User, was): // the server's usernames are unique regardless of case
 		return fmt.Errorf("you signed in as %s, but this computer syncs the files of %s; sign in as %s, or unlink to use another account", tok.User, was, was)
 	}
+	return nil
+}
+
+// keepIdentity carries the server identity key this computer already holds into a sign-in's
+// pin: it is write-once, so a sign-in answered with another key is refused.
+func (d *daemon) keepIdentity(tok *api.Token) error {
+	d.mu.Lock()
+	held := d.pin.IdentityKey
+	d.mu.Unlock()
+	switch {
+	case held == "" || tok.Pin.Leaf == "":
+		return nil
+	case tok.Pin.IdentityKey != "" && tok.Pin.IdentityKey != held:
+		return errors.New("the server answered with a different identity key than the one this computer trusts; something may be intercepting the connection. Sign in from a network you trust, or unlink and link again")
+	}
+	tok.Pin.IdentityKey = held
 	return nil
 }
 
