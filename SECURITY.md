@@ -22,7 +22,7 @@ and disclosure.
 ## Operating requirements
 
 - Store credentials in the platform keystore; do not fall back to plaintext on disk.
-- Verify the server's TLS certificate; never ship an insecure-skip-verify toggle that is on by default.
+- Verify the server's TLS certificate; never ship an insecure-skip-verify toggle that is on by default. The core also pins the server's leaf key and accepts a renewal only when the server's identity key signed it.
 
 ## Security-sensitive changes
 

@@ -132,7 +132,7 @@ func TestTokenOnlyInKeyring(t *testing.T) {
 	if err := ctl("Link", map[string]string{"Server": srv.URL, "Name": "laptop"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	tok, key, err := loadCredential(srv.URL)
+	tok, key, _, err := loadCredential(srv.URL)
 	if err != nil || tok != "kyd_SECRETTOKEN" || key == nil {
 		t.Fatalf("keyring holds %q, key %v, %v", tok, key != nil, err)
 	}
@@ -295,11 +295,11 @@ func TestLinkWaitsForAPendingWipe(t *testing.T) {
 func TestCredentialFormats(t *testing.T) {
 	keyring.MockInit()
 	keyring.Set(keyringService, "https://old", "kyd_OLD")
-	if tok, key, err := loadCredential("https://old"); err != nil || tok != "kyd_OLD" || key != nil {
+	if tok, key, _, err := loadCredential("https://old"); err != nil || tok != "kyd_OLD" || key != nil {
 		t.Fatalf("legacy item: %q %v %v", tok, key, err)
 	}
 	keyring.Set(keyringService, "https://bad", "kyd_X not-a-key")
-	if _, _, err := loadCredential("https://bad"); err == nil {
+	if _, _, _, err := loadCredential("https://bad"); err == nil {
 		t.Fatal("damaged key accepted")
 	}
 }

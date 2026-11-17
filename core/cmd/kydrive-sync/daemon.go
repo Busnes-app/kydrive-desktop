@@ -45,6 +45,8 @@ type daemon struct {
 	work   sync.Mutex        // one engine operation at a time
 	mu     sync.Mutex        // guards the fields below
 	key    *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
+	pin    api.Pin           // token's TLS pin, kept with it in the keyring
+	pins   *api.Pins         // enforces pin for token's session
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -74,11 +76,11 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
 	if server := db.Get("server"); server != "" {
-		tok, key, err := loadCredential(server)
+		tok, key, pin, err := loadCredential(server)
 		if err != nil {
 			d.state, d.lastErr = "signed_out", "the keyring holds no KyDrive credential; sign in again"
 		} else {
-			d.token, d.key, d.state = tok, key, "idle"
+			d.token, d.key, d.pin, d.state = tok, key, pin, "idle"
 		}
 	}
 	return d, nil
@@ -167,10 +169,10 @@ func (d *daemon) trigger(local bool) {
 // engine builds an engine for one operation. The caller must not hold d.mu.
 func (d *daemon) engine() *engine.Engine {
 	d.mu.Lock()
-	token, key := d.token, d.key
+	token, key, pins := d.token, d.key, d.session()
 	d.mu.Unlock()
 	return &engine.Engine{Root: d.root, Device: d.db.Get("device"), DB: d.db, Settle: settle, Now: time.Now, Memory: d.memory,
-		API:      &api.Client{Base: d.db.Get("server"), Token: token, Key: key, HTTP: d.http},
+		API:      &api.Client{Base: d.db.Get("server"), Token: token, Key: key, HTTP: d.http, Pins: pins},
 		CaseFold: runtime.GOOS == "windows" || runtime.GOOS == "darwin", WinNames: runtime.GOOS == "windows"}
 }
 
@@ -284,7 +286,11 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
 		d.retryAt = time.Now().Add(d.backoff)
 		if !retried {
-			d.db.Log("warn", "KyDrive refused this computer's credentials; syncing stopped until you sign in again")
+			msg := "KyDrive refused this computer's credentials; syncing stopped until you sign in again"
+			if errors.Is(err, api.ErrPinChanged) {
+				msg = api.ErrPinChanged.Error()
+			}
+			d.db.Log("warn", msg)
 		}
 	case errors.Is(err, context.Canceled):
 		d.state, d.lastErr = "idle", ""
@@ -306,7 +312,7 @@ func (d *daemon) retry() bool {
 	if !due {
 		return false
 	}
-	tok, key, err := loadCredential(d.db.Get("server"))
+	tok, key, pin, err := loadCredential(d.db.Get("server"))
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.state != "signed_out" {
@@ -317,7 +323,51 @@ func (d *daemon) retry() bool {
 		d.retryAt = time.Now().Add(d.backoff)
 		return false
 	}
-	d.token, d.key, d.state = tok, key, "syncing"
+	d.token, d.key, d.pin, d.state = tok, key, pin, "syncing"
+	return true
+}
+
+// session is the pin enforcer for d.token, new for each credential. The caller holds d.mu.
+func (d *daemon) session() *api.Pins {
+	if d.token == "" {
+		return nil
+	}
+	if d.pins == nil || d.pins.Store.(*sessionPins).token != d.token {
+		d.pins = &api.Pins{Store: &sessionPins{d: d, token: d.token}}
+	}
+	return d.pins
+}
+
+// sessionPins is d's pin for one token. Once that token is gone (unlink, revoke, a new link)
+// Current fails, so its requests send nothing, and Replace writes nothing.
+type sessionPins struct {
+	d     *daemon
+	token string
+}
+
+var errSessionEnded = errors.New("this computer's KyDrive session has ended")
+
+func (s *sessionPins) Current() (api.Pin, error) {
+	s.d.mu.Lock()
+	defer s.d.mu.Unlock()
+	if s.d.token != s.token {
+		return api.Pin{}, errSessionEnded
+	}
+	return s.d.pin, nil
+}
+
+func (s *sessionPins) Replace(old, new api.Pin) bool {
+	d := s.d
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.token != s.token || d.pin != old {
+		return false
+	}
+	if err := storeCredential(d.db.Get("server"), d.token, d.key, new); err != nil {
+		log.Printf("keyring: %v", err)
+		return false
+	}
+	d.pin = new
 	return true
 }
 
@@ -326,7 +376,7 @@ func (d *daemon) forget() {
 	if err := keyring.Delete(keyringService, d.db.Get("server")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		log.Printf("keyring: %v", err)
 	}
-	d.token, d.key = "", nil
+	d.token, d.key, d.pin, d.pins = "", nil, api.Pin{}, nil
 }
 
 func openBrowser(url string) error {

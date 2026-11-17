@@ -189,7 +189,7 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 
 // activate stores an approved credential and starts syncing with it. The caller holds d.work.
 func (d *daemon) activate(server, name string, tok api.Token) error {
-	if err := storeCredential(server, tok.Token, tok.Key); err != nil {
+	if err := storeCredential(server, tok.Token, tok.Key, tok.Pin); err != nil {
 		return errors.New("could not store the credential in the OS keyring: " + err.Error())
 	}
 	for k, v := range map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User, "user_id": tok.UserID} {
@@ -201,7 +201,7 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 		return err
 	}
 	d.mu.Lock()
-	d.token, d.key, d.state, d.lastErr, d.backoff = tok.Token, tok.Key, "idle", "", 0
+	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff = tok.Token, tok.Key, tok.Pin, "idle", "", 0
 	d.mu.Unlock()
 	d.trigger(true)
 	return nil
@@ -212,9 +212,13 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	d := c.d
 	server, name := d.db.Get("server"), d.db.Get("device")
+	var pins *api.Pins
 	ctx, end, err := c.begin(func() error {
 		if server == "" || d.state != "signed_out" {
 			return errors.New("this computer is not signed out")
+		}
+		if d.pin.Leaf != "" { // with no pin yet (linked before pinning), trust on first use
+			pins = d.session()
 		}
 		return nil
 	})
@@ -226,11 +230,18 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	if err := d.finishWipe(); err != nil {
 		return err
 	}
-	tok, err := link.Link(ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
+	tok, err := link.Link(ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http, Pins: pins})
+	if errors.Is(err, api.ErrPinChanged) {
+		return errSignInPin
+	}
 	if err != nil {
 		return linkErr(ctx, err)
 	}
 	if err := d.sameAccount(tok); err != nil {
+		d.revoke(server, tok)
+		return err
+	}
+	if err := d.keepPin(&tok); err != nil {
 		d.revoke(server, tok)
 		return err
 	}
@@ -260,6 +271,29 @@ func (d *daemon) sameAccount(tok api.Token) error {
 	return nil
 }
 
+var errSignInPin = errors.New("KyDrive's certificate changed and the server did not vouch for the new one, so this computer cannot sign in again safely. Unlink, then link again: files stay on this computer, but you choose its workspaces again")
+
+// keepPin carries the pin this computer holds, rolled over if the server signed a renewal,
+// into a sign-in's credential. The identity key is write-once: a reply with another is refused.
+func (d *daemon) keepPin(tok *api.Token) error {
+	d.mu.Lock()
+	held := d.pin
+	d.mu.Unlock()
+	switch {
+	case held.Leaf == "":
+		return nil
+	case tok.Pin.Leaf != held.Leaf:
+		return errSignInPin
+	case tok.Pin.IdentityKey != "" && held.IdentityKey != "" && tok.Pin.IdentityKey != held.IdentityKey:
+		return errors.New("the server answered with a different identity key than the one this computer trusts; something may be intercepting the connection. Sign in from a network you trust, or unlink and link again")
+	}
+	tok.Pin.Floor = held.Floor
+	if held.IdentityKey != "" {
+		tok.Pin.IdentityKey = held.IdentityKey
+	}
+	return nil
+}
+
 // stillWanted refuses an approval that arrived after CancelLink or Unlink, revoking it;
 // otherwise the link is committed and nothing is left to cancel. The caller holds d.work,
 // which Unlink takes after cancelling.
@@ -281,7 +315,7 @@ func (d *daemon) stillWanted(ctx context.Context, server string, tok api.Token) 
 func (d *daemon) revoke(server string, tok api.Token) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if err := (&api.Client{Base: server, Token: tok.Token, Key: tok.Key, HTTP: d.http}).RevokeSelf(ctx); err != nil {
+	if err := (&api.Client{Base: server, Token: tok.Token, Key: tok.Key, HTTP: d.http, Pins: &api.Pins{Store: api.NewMemoryPins(tok.Pin)}}).RevokeSelf(ctx); err != nil {
 		log.Printf("link: the server did not revoke an unused link: %v", err)
 	}
 }

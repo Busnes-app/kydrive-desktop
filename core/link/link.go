@@ -30,6 +30,7 @@ type Request struct {
 	Platform string
 	Open     func(url string) error // opens the system browser
 	HTTP     *http.Client
+	Pins     *api.Pins // signing in again: only the pinned leaf or a successor its identity key signed
 }
 
 func random() string {
@@ -42,6 +43,13 @@ func random() string {
 // the loopback listener with a code, which it exchanges for a device token bound to a new
 // signing key.
 func Link(ctx context.Context, r Request) (api.Token, error) {
+	c := &api.Client{Base: r.Server, HTTP: r.HTTP, Pins: r.Pins}
+	// Credential-free, before the browser: a held pin refuses an unvouched leaf up front.
+	if r.Pins != nil {
+		if err := c.Reach(ctx); err != nil {
+			return api.Token{}, err
+		}
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return api.Token{}, err
@@ -79,7 +87,6 @@ func Link(ctx context.Context, r Request) (api.Token, error) {
 	defer cancel()
 	select {
 	case code := <-codes:
-		c := &api.Client{Base: r.Server, HTTP: r.HTTP}
 		return c.Redeem(ctx, code, verifier, key)
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

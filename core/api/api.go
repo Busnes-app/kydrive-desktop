@@ -75,6 +75,8 @@ type Token struct {
 	DevicesURL string `json:"devices_url"`
 	// Key is the signing key enrolled at link; the server issued Token bound to it.
 	Key *ecdsa.PrivateKey `json:"-"`
+	// Pin is the leaf the redemption met and the server's identity key; zero without TLS.
+	Pin Pin `json:"-"`
 }
 
 // Error is a non-2xx answer.
@@ -103,36 +105,42 @@ type Client struct {
 	Token string
 	Key   *ecdsa.PrivateKey // signs every request Token makes; nil for a device linked before signing
 	HTTP  *http.Client
+	Pins  *Pins // the session's TLS pin; nil sends over system trust alone (linking)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, header http.Header) (*http.Response, error) {
-	signed := c.Token != "" && c.Key != nil
 	var b []byte
-	if signed && body != nil {
-		// Buffered: the signature covers the body's digest, and a sized body is sent with a
-		// Content-Length, which the server needs for one over 1 MiB (an upload chunk).
+	if body != nil {
+		// Buffered: the signature covers the body's digest, a sized body is sent with a
+		// Content-Length (the server needs one over 1 MiB, an upload chunk), and a rollover
+		// retry sends it again.
 		var err error
 		if b, err = io.ReadAll(body); err != nil {
 			return nil, err
 		}
-		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.Base, "/")+path, body)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range header {
-		req.Header[k] = v
-	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	if signed {
-		if err := sign(req, c.Key, canonicalOrigin(c.Base), b); err != nil {
+	res, err := c.pinned(ctx, func(hc *http.Client) (*http.Response, error) {
+		var r io.Reader
+		if body != nil {
+			r = bytes.NewReader(b)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.Base, "/")+path, r)
+		if err != nil {
 			return nil, err
 		}
-	}
-	res, err := c.HTTP.Do(req)
+		for k, v := range header {
+			req.Header[k] = v
+		}
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+			if c.Key != nil {
+				if err := sign(req, c.Key, canonicalOrigin(c.Base), b); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return hc.Do(req)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -176,19 +184,33 @@ type Account struct {
 
 // DeviceAccount is unavailable (404) on older servers. A malformed success is not an old server.
 func (c *Client) DeviceAccount(ctx context.Context) (Account, error) {
-	var out Account
+	var out struct {
+		Account
+		IdentityKey string `json:"identity_key"`
+	}
 	res, err := c.do(ctx, "GET", "/api/drive/device", nil, nil)
 	if err != nil {
-		return out, err
+		return out.Account, err
 	}
 	defer res.Body.Close()
 	if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&out); err != nil {
-		return out, err
+		return out.Account, err
+	}
+	if c.Pins != nil {
+		c.Pins.learn(res, out.IdentityKey)
 	}
 	if out.UserID == "" || out.User == "" {
-		return out, errors.New("KyDrive did not confirm this computer's account identity")
+		return out.Account, errors.New("KyDrive did not confirm this computer's account identity")
 	}
-	return out, nil
+	return out.Account, nil
+}
+
+// LearnIdentity asks for the server's identity key, once per Pins, when the session is pinned
+// without one (a computer linked before pinning).
+func (c *Client) LearnIdentity(ctx context.Context) {
+	if c.Pins != nil && c.Pins.wantIdentity() {
+		c.DeviceAccount(ctx)
+	}
 }
 
 func (c *Client) Workspaces(ctx context.Context) ([]Workspace, error) {
@@ -340,10 +362,20 @@ func (c *Client) Redeem(ctx context.Context, code, verifier string, key *ecdsa.P
 		return Token{}, err
 	}
 	defer res.Body.Close()
-	var t Token
-	if err := json.NewDecoder(res.Body).Decode(&t); err != nil || !strings.HasPrefix(t.Token, "kyd_") {
+	var t struct {
+		Token
+		IdentityKey string `json:"identity_key"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&t); err != nil || !strings.HasPrefix(t.Token.Token, "kyd_") {
 		return Token{}, fmt.Errorf("token exchange returned no device token")
 	}
 	t.Key = key
-	return t, nil
+	// Trust on first use: the leaf this redemption met, from now on.
+	if leaf := leafPin(res); leaf != "" {
+		t.Pin = Pin{Leaf: leaf, Floor: time.Now().Unix()}
+		if identityKey(t.IdentityKey) != nil {
+			t.Pin.IdentityKey = t.IdentityKey
+		}
+	}
+	return t.Token, nil
 }

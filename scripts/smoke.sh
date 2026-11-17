@@ -15,7 +15,7 @@ trap cleanup EXIT
 
 KY_ENV=development KY_CAPTCHA_PROVIDER=none KY_DB_DRIVER=sqlite KY_DATA_DIR=$W/data KY_BACKUP_DIR=$W/backups \
   KY_HOST=127.0.0.1 KY_PORT=$PORT KY_APP_URL=$BASE KY_ADMIN_PASSWORD='SmokeBootPass123!' \
-  KY_SCIM_ENABLED=true KY_SCIM_TOKEN=smoke-scim-token-0123456789 "$SRV_BIN" >"$W/server.log" 2>&1 &
+  KY_SCIM_ENABLED=true KY_SCIM_TOKEN=smoke-scim-token-0123456789 PUSH_RELAY_URL= APNS_RELAY_URL= "$SRV_BIN" >"$W/server.log" 2>&1 &
 SRV_PID=$!
 curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-all-errors "$BASE/healthz"
 

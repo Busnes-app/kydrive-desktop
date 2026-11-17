@@ -1,6 +1,7 @@
 # Troubleshooting
 
 - **Nothing syncs:** check core status, pause state, workspace selection, network access and server compatibility.
+- **Syncing stopped because the server's certificate changed:** the new certificate was not signed by the server's identity key (the server has no `KYDRIVE_TLS_CERT_FILE`, or something between you and the server presented its own certificate). Ask the operator to check the server's certificate setup, then sign in again: it succeeds only once the server vouches for its certificate. If Sign in again is refused with "Unlink, then link again", the only way back is to unlink this computer and link it again from a network you trust. Your files stay on disk, but you choose its workspaces again, and they sync into new folders beside the old ones.
 - **Keyring error:** unlock/start the OS keyring service; do not put the token in a configuration file as a workaround.
 - **Conflict copy appears:** compare it with the server version before deleting either one.
 - **Files vanish after access changes:** check workspace grants and `~/KyDrive/Unsynced/` for edits that had not uploaded.
