@@ -38,4 +38,28 @@ newer supported Go release. `go version -m /path/to/kydrive-sync` must show
 TLS tests exercise real daemon requests with weak/strong certificate chains and
 normal verification, rather than inferring strength from cipher names.
 
+## TLS leaf pinning
+
+On top of normal trust and hostname verification, the core pins the server's TLS leaf: the
+SHA-256 of the leaf's SubjectPublicKeyInfo, checked inside the handshake, so a different leaf
+fails before the token or a signature is sent. Linking pins the leaf the code redemption met
+and stores the server's Ed25519 identity key from its reply; a computer linked before pinning
+pins the leaf of its next successful request and learns the key from `GET /api/drive/device`.
+The pin, identity key and a freshness floor share the token's keyring item.
+
+After a renewal the core makes one request with no credential, `GET /api/devices/tls-pin`, over
+normal trust, and repins only if the statement names the leaf that request met, names this
+host, is within 24 hours of this computer's clock, is newer than the current pin, and verifies
+with the stored identity key. The identity key is learned once and never replaced. Anything
+else, including a server without an identity key or answering 503, keeps the old pin and stops
+syncing. Operators avoid that by giving the server its certificate (`KYDRIVE_TLS_CERT_FILE`;
+kydrive-server `docs/CLIENTS-AND-EDITOR.md`, "TLS pin rollover").
+
+Sign in again on a pinned computer applies the same rule before anything else: one
+credential-free check, before the browser opens, must meet the pinned leaf or a successor the
+identity key signed, and the code redemption goes over that leaf. Otherwise it is refused and
+the only recovery is Unlink then Link again, which trusts the leaf it meets (do it from a network
+you trust). Files stay on disk; the workspaces are chosen again. A computer linked before
+pinning signs in by trust on first use, as at link.
+
 Primary reference: [Go runtime policy](https://go.dev/doc/security/fips140).

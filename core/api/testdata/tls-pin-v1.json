@@ -1,0 +1,10 @@
+{
+  "comment": "KyDrive TLS pin statement golden vector (kydrive-tls-pin/1). Test key only (RFC 8032 test 1 seed). Ed25519 is deterministic: compare the exact signature; `openssl pkeyutl -sign -rawin` agrees.",
+  "host": "drive.example.com",
+  "identity_key": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "issued_at": 1794844800,
+  "pin": "sha256/Y7NDZ8IpLOXohWKxDNkLJh8TVXxPrhajRfRkYgJvV5U=",
+  "seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "signature": "yDiMibvk/yFyDeqzvuLseWz4Q/1Pm+X7Zt6DFjA3PDvH3h1v4tSQRUOSg57/jL3USF1WSCwmUZmZjMQsmwLKBg==",
+  "statement": "kydrive-tls-pin/1\ndrive.example.com\nsha256/Y7NDZ8IpLOXohWKxDNkLJh8TVXxPrhajRfRkYgJvV5U=\n1794844800"
+}

@@ -97,7 +97,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Busnes-app/kydrive-server
-          ref: 30fb145cb00076e5e637bafefd6a759692ecbbf7 # device request signing (#147)
+          ref: b049e69dd2bfd59eddccb7f560ac099694a7073a # signed TLS pin rollover (#149)
           path: .ci/kydrive-server
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

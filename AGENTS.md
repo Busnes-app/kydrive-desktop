@@ -15,7 +15,7 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 
 ## Local Contracts
 - **User work is never deleted.** No path deletes a local edit that never uploaded: stale edits become conflict copies uploaded beside the server version; lost access, unchoosing a workspace, a server-side removal and a revoke with wipe move such files to `~/KyDrive/Unsynced/`.
-- **Tokens and device signing keys live only in the OS keyring** (service `KyDrive`, user = server origin, one item holding both). Never on disk, in logs or in IPC answers.
+- **Tokens, device signing keys and the TLS pin live only in the OS keyring** (service `KyDrive`, user = server origin, one item holding all of them). Never on disk, in logs or in IPC answers.
 - **IPC is owner-only:** a Unix socket at 0600 inside a 0700 directory (Windows: the per-user profile's ACL).
 - **Strong TLS is the core default:** `core/go.mod` sets `godebug fips140=on` for
   every packaged core; runtime overrides must retain it in the supported profile.

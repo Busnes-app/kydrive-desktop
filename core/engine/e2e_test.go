@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Busnes-app/kydrive-desktop/core/api"
 	"github.com/Busnes-app/kydrive-desktop/core/link"
 )
 
@@ -34,12 +35,24 @@ func init() {
 type real struct {
 	base, group, token string
 	key                *ecdsa.PrivateKey
+	pin                api.Pin      // the leaf the link met; zero over plain HTTP
 	web                *http.Client // the admin's browser session
+}
+
+// tlsFront puts the server behind a TLS front at url; env configures the server for it and
+// client trusts it.
+type tlsFront struct {
+	url    string
+	env    []string
+	client *http.Client
+	start  func(target string)
 }
 
 const scimToken = "e2e-scim-token-0123456789abcdef"
 
-func startServer(t *testing.T, bin string) *real {
+func startServer(t *testing.T, bin string) *real { return startServerAt(t, bin, nil) }
+
+func startServerAt(t *testing.T, bin string, front *tlsFront) *real {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -65,8 +78,15 @@ func startServer(t *testing.T, bin string) *real {
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "KY_ENV=development", "KY_CAPTCHA_PROVIDER=none", "KY_DB_DRIVER=sqlite",
 		"KY_DATA_DIR="+filepath.Join(dir, "data"), "KY_BACKUP_DIR="+filepath.Join(dir, "backups"),
-		"KY_HOST=127.0.0.1", "KY_PORT="+port, "KY_APP_URL=http://127.0.0.1:"+port,
+		"KY_HOST=127.0.0.1", "KY_PORT="+port, "PUSH_RELAY_URL=", "APNS_RELAY_URL=",
 		"KY_ADMIN_PASSWORD=E2eBootstrapPass123!", "KY_SCIM_ENABLED=true", "KY_SCIM_TOKEN="+scimToken)
+	base, hc := "http://127.0.0.1:"+port, http.DefaultClient
+	if front != nil {
+		base, hc = front.url, front.client
+		cmd.Env = append(cmd.Env, front.env...)
+		front.start("127.0.0.1:" + port)
+	}
+	cmd.Env = append(cmd.Env, "KY_APP_URL="+base)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -81,9 +101,9 @@ func startServer(t *testing.T, bin string) *real {
 		}
 	})
 	jar, _ := cookiejar.New(nil)
-	r := &real{base: "http://127.0.0.1:" + port, web: &http.Client{Jar: jar, Timeout: time.Minute}}
+	r := &real{base: base, web: &http.Client{Jar: jar, Timeout: time.Minute, Transport: hc.Transport}}
 	for i := 0; ; i++ {
-		res, err := http.Get(r.base + "/healthz")
+		res, err := hc.Get(r.base + "/healthz")
 		if err == nil && res.StatusCode == 200 {
 			res.Body.Close()
 			break
@@ -106,7 +126,7 @@ func startServer(t *testing.T, bin string) *real {
 	req, _ := http.NewRequest("POST", r.base+"/scim/v2/Groups", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+scimToken)
 	req.Header.Set("Content-Type", "application/scim+json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := hc.Do(req)
 	if err != nil || res.StatusCode != 201 {
 		t.Fatalf("SCIM group: %v %v", res, err)
 	}
@@ -129,11 +149,11 @@ func startServer(t *testing.T, bin string) *real {
 		go http.Get(out.Redirect)
 		return nil
 	}
-	tok, err := link.Link(context.Background(), link.Request{Server: r.base, Name: "laptop", Platform: "linux", Open: approve, HTTP: http.DefaultClient})
+	tok, err := link.Link(context.Background(), link.Request{Server: r.base, Name: "laptop", Platform: "linux", Open: approve, HTTP: hc})
 	if err != nil {
 		t.Fatalf("link: %v", err)
 	}
-	r.token, r.key = tok.Token, tok.Key
+	r.token, r.key, r.pin = tok.Token, tok.Key, tok.Pin
 	return r
 }
 
