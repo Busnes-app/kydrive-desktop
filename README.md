@@ -17,6 +17,12 @@ KyDrive server.
   item as the token, not a non-exportable TPM or Secure Enclave key: whatever can read the
   keyring item gets both. A computer linked before signing keeps working unsigned until it
   links again.
+- **The server's certificate is pinned.** Linking pins the TLS leaf key it met; from then on a
+  connection to any other leaf fails before a request byte is sent, so an interceptor holding
+  a certificate this computer trusts cannot read or alter file bytes. A renewed certificate is
+  accepted only if the server's long-term identity key signed it for this host
+  ([TLS key policy](docs/TLS-KEY-POLICY.md#tls-leaf-pinning)); otherwise the computer asks you
+  to sign in again. A computer linked before pinning pins the leaf of its next successful sync.
 - **Linking happens in your browser:** you sign in to KyDrive as usual and approve the
   computer. Revoke it any time from your KyDrive account page.
 

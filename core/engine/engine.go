@@ -216,6 +216,8 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		} else if api.Status(err) != 404 {
 			return err
 		}
+	} else {
+		e.API.LearnIdentity(ctx)
 	}
 	ws, err := e.DB.Workspaces()
 	if err != nil {
@@ -377,11 +379,15 @@ func (e *Engine) workspace(id string) (Workspace, error) {
 	return Workspace{}, err
 }
 
-// fail turns a revoked or refused credential into ErrRevoked or ErrSignedOut, wiping first
+// fail turns a revoked or refused credential, or a certificate change the server did not
+// vouch for, into ErrRevoked or ErrSignedOut, wiping first
 // when the server says so.
 func (e *Engine) fail(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, api.ErrPinChanged) {
+		return errors.Join(ErrSignedOut, err)
 	}
 	var ae *api.Error
 	if !errors.As(err, &ae) || ae.Status != 401 {
