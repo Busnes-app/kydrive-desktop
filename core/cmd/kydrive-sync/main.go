@@ -18,7 +18,7 @@ import (
 )
 
 // version is this release; docs/RELEASING.md lists it with the shells' version fields.
-const version = "0.6.0"
+const version = "0.6.1"
 
 func main() {
 	log.SetFlags(0)

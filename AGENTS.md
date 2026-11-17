@@ -11,6 +11,8 @@ KyDrive desktop sync: a linked Windows, macOS or Linux computer keeps chosen KyD
 ## Ownership
 Root owns the repo layout, CI, licence, dependency list and the app icon: `assets/kydrive-icon.svg` (the busnes.app site icon without its page background) is the only source, and `scripts/icons.sh` renders every platform's icon files from it; never edit those by hand. One Go core per user (`core/`) does all syncing; a thin native shell per OS drives it over local JSON-RPC. One repo so core and shells version together.
 
+`CHANGELOG.md` owns pending application release notes and upgrade impact. A version bump alone does not publish a release.
+
 ## Local Contracts
 - **User work is never deleted.** No path deletes a local edit that never uploaded: stale edits become conflict copies uploaded beside the server version; lost access, unchoosing a workspace, a server-side removal and a revoke with wipe move such files to `~/KyDrive/Unsynced/`.
 - **Tokens, device signing keys and the TLS pin live only in the OS keyring** (service `KyDrive`, user = server origin, one item holding all of them). Never on disk, in logs or in IPC answers.

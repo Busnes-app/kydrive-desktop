@@ -244,10 +244,18 @@ func TestPinTrustOnFirstUseAndSignedRollover(t *testing.T) {
 	if next.Leaf != pinOf(b) || next.IdentityKey != p.idKey() || next.Floor <= pin.Floor {
 		t.Fatalf("pin after renewal: %+v", next)
 	}
-	// The old leaf is retired: presenting it again is a mismatch, not a rollback.
+	// Replay the retired leaf's earlier statement, not a newly authorized rollover.
+	retired := p.sign(p.identity, "127.0.0.1", pinOf(a), pin.Floor)
+	p.statement = func(string) any { return retired }
 	p.use(a)
 	if _, err := c.Workspaces(ctx); !errors.Is(err, ErrPinChanged) {
 		t.Fatalf("old leaf accepted: %v", err)
+	}
+	if got := p.paths(); !eq(got, []string{"/api/devices/tls-pin"}) {
+		t.Fatalf("requests reaching the retired leaf: %v", got)
+	}
+	if held, _ := store.Current(); held != next {
+		t.Fatal("retired statement changed the stored pin")
 	}
 }
 
