@@ -32,9 +32,11 @@ type pinFixture struct {
 	leaf  string // the served leaf's pin
 	id    ed25519.PrivateKey
 
-	mu    sync.Mutex
-	paths []string
-	onPin func() // runs inside GET /api/devices/tls-pin, before it answers
+	mu        sync.Mutex
+	paths     []string
+	creds     []string // requests carrying a token, signature or link code verifier
+	onPin     func()   // runs inside GET /api/devices/tls-pin, before it answers
+	pinStatus int      // nonzero: GET /api/devices/tls-pin answers only this status
 }
 
 func newPinFixture(t *testing.T) *pinFixture {
@@ -47,12 +49,20 @@ func newPinFixture(t *testing.T) *pinFixture {
 	f.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.paths = append(f.paths, r.URL.Path)
-		onPin := f.onPin
+		body, _ := io.ReadAll(r.Body)
+		if r.Header.Get("Authorization") != "" || r.Header.Get("KyDrive-Signature") != "" || strings.Contains(string(body), "verifier") {
+			f.creds = append(f.creds, r.URL.Path)
+		}
+		onPin, pinStatus := f.onPin, f.pinStatus
 		f.mu.Unlock()
 		switch r.URL.Path {
 		case "/api/devices/tls-pin":
 			if onPin != nil {
 				onPin()
+			}
+			if pinStatus != 0 {
+				w.WriteHeader(pinStatus)
+				return
 			}
 			at := time.Now().Unix()
 			msg := "kydrive-tls-pin/1\n127.0.0.1\n" + f.leaf + "\n" + strconv.FormatInt(at, 10)
@@ -262,5 +272,117 @@ func TestSignInKeepsIdentityKey(t *testing.T) {
 	}
 	if _, _, pin, err := loadCredential(f.srv.URL); err != nil || pin.IdentityKey != f.idKey() || pin.Leaf != f.leaf {
 		t.Fatalf("after sign-in %+v %v", pin, err)
+	}
+}
+
+func (f *pinFixture) credentials() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.creds
+}
+
+// pinnedSignedOut links d to f over TLS, then signs it out holding pin.
+func pinnedSignedOut(t *testing.T, f *pinFixture, pin api.Pin) (*daemon, func(string, any, any) error, *int) {
+	t.Helper()
+	d, ctl := start(t, f.srv)
+	d.http.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: f.roots}
+	var out struct{}
+	if err := ctl("Link", map[string]string{"Server": f.srv.URL, "Name": "laptop"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	approve, opened := d.open, new(int)
+	d.open = func(raw string) error { *opened++; return approve(raw) }
+	d.mu.Lock()
+	d.state, d.pin = "signed_out", pin
+	storeCredential(f.srv.URL, d.token, d.key, pin)
+	d.mu.Unlock()
+	f.mu.Lock()
+	f.paths, f.creds = nil, nil
+	f.mu.Unlock()
+	return d, ctl, opened
+}
+
+// Sign in again over the leaf already pinned keeps that pin, floor included.
+func TestSignInOverStoredLeaf(t *testing.T) {
+	f := newPinFixture(t)
+	pin := api.Pin{Leaf: f.leaf, IdentityKey: f.idKey(), Floor: 7}
+	d, ctl, _ := pinnedSignedOut(t, f, pin)
+	var out struct{}
+	if err := ctl("SignIn", struct{}{}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, got, err := loadCredential(f.srv.URL); err != nil || got != pin || d.pin != pin {
+		t.Fatalf("pin %+v %v", got, err)
+	}
+}
+
+// Sign in again over a renewed leaf the identity key signed repins, then redeems over it.
+func TestSignInOverSignedRenewal(t *testing.T) {
+	f := newPinFixture(t)
+	d, ctl, _ := pinnedSignedOut(t, f, api.Pin{Leaf: retiredLeaf, IdentityKey: f.idKey(), Floor: 7})
+	var out struct{}
+	if err := ctl("SignIn", struct{}{}, &out); err != nil {
+		t.Fatal(err)
+	}
+	tok, _, got, err := loadCredential(f.srv.URL)
+	if err != nil || tok != "kyd_PINNED" || got.Leaf != f.leaf || got.IdentityKey != f.idKey() || got.Floor <= 7 || d.state == "signed_out" {
+		t.Fatalf("keyring %q %+v %v, state %q", tok, got, err, d.state)
+	}
+}
+
+// Sign in again over a leaf the identity key did not sign (an interceptor's, a server that
+// cannot sign, a computer with no identity key) is refused before any credential is sent.
+func TestSignInOverUnvouchedLeafRefused(t *testing.T) {
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	otherKey := base64.StdEncoding.EncodeToString(other.Public().(ed25519.PublicKey))
+	for name, c := range map[string]struct {
+		identity  func(*pinFixture) string
+		pinStatus int
+	}{
+		"interceptor":     {identity: func(*pinFixture) string { return otherKey }},
+		"503":             {identity: (*pinFixture).idKey, pinStatus: http.StatusServiceUnavailable},
+		"no identity key": {identity: func(*pinFixture) string { return "" }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPinFixture(t)
+			pin := api.Pin{Leaf: retiredLeaf, IdentityKey: c.identity(f), Floor: 7}
+			d, ctl, opened := pinnedSignedOut(t, f, pin)
+			f.pinStatus = c.pinStatus
+			var out struct{}
+			err := ctl("SignIn", struct{}{}, &out)
+			if err == nil || !strings.Contains(err.Error(), "Unlink, then link again") || !strings.Contains(err.Error(), "files stay") {
+				t.Fatalf("sign-in: %v", err)
+			}
+			if got := f.credentials(); len(got) != 0 {
+				t.Fatalf("credentials reached the server: %v", got)
+			}
+			for _, p := range f.took() {
+				if p != "/api/devices/tls-pin" {
+					t.Fatalf("request to %s", p)
+				}
+			}
+			if *opened != 0 {
+				t.Fatal("the browser was opened")
+			}
+			if _, _, got, err := loadCredential(f.srv.URL); err != nil || got != pin || d.state != "signed_out" {
+				t.Fatalf("pin %+v %v, state %q", got, err, d.state)
+			}
+		})
+	}
+}
+
+// After Unlink a fresh Link trusts the leaf it meets, whatever was pinned before.
+func TestLinkAfterUnlinkTrustsOnFirstUse(t *testing.T) {
+	f := newPinFixture(t)
+	d, ctl, _ := pinnedSignedOut(t, f, api.Pin{Leaf: retiredLeaf, Floor: 7})
+	var out struct{}
+	if err := ctl("Unlink", map[string]bool{"RemoveFiles": false}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl("Link", map[string]string{"Server": f.srv.URL, "Name": "laptop"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, got, err := loadCredential(f.srv.URL); err != nil || got.Leaf != f.leaf || got.IdentityKey != f.idKey() || d.pin != got {
+		t.Fatalf("pin %+v %v", got, err)
 	}
 }

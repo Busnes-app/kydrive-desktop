@@ -212,9 +212,13 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	d := c.d
 	server, name := d.db.Get("server"), d.db.Get("device")
+	var pins *api.Pins
 	ctx, end, err := c.begin(func() error {
 		if server == "" || d.state != "signed_out" {
 			return errors.New("this computer is not signed out")
+		}
+		if d.pin.Leaf != "" { // with no pin yet (linked before pinning), trust on first use
+			pins = d.session()
 		}
 		return nil
 	})
@@ -226,7 +230,10 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	if err := d.finishWipe(); err != nil {
 		return err
 	}
-	tok, err := link.Link(ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http})
+	tok, err := link.Link(ctx, link.Request{Server: server, Name: name, Platform: platform(), Open: d.open, HTTP: d.http, Pins: pins})
+	if errors.Is(err, api.ErrPinChanged) {
+		return errSignInPin
+	}
 	if err != nil {
 		return linkErr(ctx, err)
 	}
@@ -234,7 +241,7 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 		d.revoke(server, tok)
 		return err
 	}
-	if err := d.keepIdentity(&tok); err != nil {
+	if err := d.keepPin(&tok); err != nil {
 		d.revoke(server, tok)
 		return err
 	}
@@ -264,19 +271,26 @@ func (d *daemon) sameAccount(tok api.Token) error {
 	return nil
 }
 
-// keepIdentity carries the server identity key this computer already holds into a sign-in's
-// pin: it is write-once, so a sign-in answered with another key is refused.
-func (d *daemon) keepIdentity(tok *api.Token) error {
+var errSignInPin = errors.New("KyDrive's certificate changed and the server did not vouch for the new one, so this computer cannot sign in again safely. Unlink, then link again: files stay on this computer, but you choose its workspaces again")
+
+// keepPin carries the pin this computer holds, rolled over if the server signed a renewal,
+// into a sign-in's credential. The identity key is write-once: a reply with another is refused.
+func (d *daemon) keepPin(tok *api.Token) error {
 	d.mu.Lock()
-	held := d.pin.IdentityKey
+	held := d.pin
 	d.mu.Unlock()
 	switch {
-	case held == "" || tok.Pin.Leaf == "":
+	case held.Leaf == "":
 		return nil
-	case tok.Pin.IdentityKey != "" && tok.Pin.IdentityKey != held:
+	case tok.Pin.Leaf != held.Leaf:
+		return errSignInPin
+	case tok.Pin.IdentityKey != "" && held.IdentityKey != "" && tok.Pin.IdentityKey != held.IdentityKey:
 		return errors.New("the server answered with a different identity key than the one this computer trusts; something may be intercepting the connection. Sign in from a network you trust, or unlink and link again")
 	}
-	tok.Pin.IdentityKey = held
+	tok.Pin.Floor = held.Floor
+	if held.IdentityKey != "" {
+		tok.Pin.IdentityKey = held.IdentityKey
+	}
 	return nil
 }
 

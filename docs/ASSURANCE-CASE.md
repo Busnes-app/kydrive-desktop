@@ -76,7 +76,7 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 | Corrupted or substituted download | Size and SHA-256 must match the server's digest; a file with no digest is refused; content goes to a temp file and is renamed in only if the target is still free or unchanged | `core/api/api.go` (`Download`), `core/engine/pull.go`, `TestDownloadChecksDigest`, `TestDownloadRejectsWrongDigest` |
 | Credential exposure (CWE-522) | Token and signing key stored together in one keyring item (`credential.go`); `Status` answers carry `Linked`, not the token; unlink and revoke delete the keyring item | `core/cmd/kydrive-sync/rpc.go`, `core/cmd/kydrive-sync/daemon.go`, `TestTokenOnlyInKeyring`, `TestUnlinkDeletesKeyringItem` |
 | Stolen bearer token replayed elsewhere | Linking enrols a P-256 key; every request carries an ECDSA signature over origin, method, request URI, date, a random nonce, the server-acted headers and the body's SHA-256; a token whose device enrolled a key is refused unsigned (kydrive-server `devicesig.go`) | `core/api/sign.go`, `core/link/link.go`, `TestSigningGoldenVector`, `TestSignedRequests`, smoke "the token alone is refused" |
-| Interceptor holding a certificate the computer trusts (corporate or malicious CA) | Leaf SPKI pinned at link and checked in `VerifyConnection`, before any request byte; a renewal needs a statement signed by the identity key learned over the pinned leaf, naming the observed leaf and host, within 24 h, newer than the pin's floor; one credential-free fetch, compare-and-swap save, one retry; otherwise sign in again | `core/api/tlspin.go`, `core/cmd/kydrive-sync/daemon.go` (`sessionPins`), `TestTLSPinGoldenVector`, `TestPinWrongLeafSendsNothing`, `TestPinRolloverRefusals`, `TestPinStatementOlderThanFirstPinRefused`, `TestDaemonUnlinkDuringRolloverNotUndone`, `TestRealServerTLSPinRollover` |
+| Interceptor holding a certificate the computer trusts (corporate or malicious CA) | Leaf SPKI pinned at link and checked in `VerifyConnection`, before any request byte; a renewal needs a statement signed by the identity key learned over the pinned leaf, naming the observed leaf and host, within 24 h, newer than the pin's floor; one credential-free fetch, compare-and-swap save, one retry; otherwise syncing stops. Sign in again obeys the same rule before the browser opens and redeems over that leaf, or is refused (Unlink and Link again) | `core/api/tlspin.go`, `core/cmd/kydrive-sync/daemon.go` (`sessionPins`), `core/cmd/kydrive-sync/rpc.go` (`SignIn`, `keepPin`), `TestTLSPinGoldenVector`, `TestPinWrongLeafSendsNothing`, `TestPinRolloverRefusals`, `TestPinStatementOlderThanFirstPinRefused`, `TestDaemonUnlinkDuringRolloverNotUndone`, `TestSignInOverUnvouchedLeafRefused`, `TestRealServerTLSPinRollover` |
 | Weak TLS certificate keys | Go runtime policy refuses RSA below 2048 bits and unsupported EC certificate keys throughout the verified chain; strong controls retain access | `core/go.mod`, `TestDaemonRejectsUndersizedTLSKeys` |
 | Redirect to another origin or cleartext endpoint | Shared daemon HTTP client refuses redirects before forwarding tokens/verifiers; direct loopback HTTP remains development-only | `daemon.go`, `TestDaemonRefusesRedirects` |
 | Cleartext transport (CWE-319) | `serverOrigin` accepts `https`, or `http` only for `localhost`/loopback | `core/cmd/kydrive-sync/rpc.go` (`serverOrigin`), `TestLinkRefusesPlainHTTP` |
@@ -104,11 +104,13 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
   stops a token read off the wire or from a server-side leak, not a reader of the keyring.
 - **A computer linked before signing sends its token alone** until it is linked again; the
   server accepts that only while it still allows keyless devices.
-- **Pinning trusts the first leaf.** Linking, Sign in again (which keeps the identity key it
-  holds and refuses a reply with another) and the first sync of a computer
-  linked before pinning accept whatever leaf system trust accepts at that moment. A server
-  without an identity key, or one that cannot sign its certificate (503), makes every renewal a
-  sign-in. An older core cannot read a keyring item that holds a pin: downgrading needs a sign-in.
+- **Pinning trusts the first leaf.** Linking (including after Unlink), and the first sync or
+  Sign in again of a computer linked before pinning, accept whatever leaf system trust
+  accepts at that moment. Sign in again on a pinned computer does not: it needs the pinned
+  leaf or a signed successor. A server without an identity key, or one that cannot sign its
+  certificate (503), therefore makes every renewal an Unlink and Link again, which drops the
+  workspace bindings (files stay). An older core cannot read a keyring item that holds a pin:
+  downgrading needs a sign-in.
 - **The large-delete guard is a threshold**, not a guarantee: smaller deletes go through.
 - **Older-server compatibility is weaker.** Without a recorded immutable ID, Sign in again compares the saved username; a pre-0.7 link with neither identity remains refused. On a server missing the account route, a folder delete uses the existing feed check, which cannot close the last request window. Upgrade the server and let a valid linked client sync before relying on the new identity and atomic-delete protections.
 - **CodeQL scans the Swift, C# and C++ shells only after merge** (push to `main`, weekly), so a
@@ -134,7 +136,8 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
   normal trust/hostname controls. Requests include link redemption and file transfers;
   a failed TLS operation retains the credential, workspace binding and local edit.
   Pinning tests use httptest TLS servers with a test-only CA (rollover, each refusal, the
-  freshness floor, concurrency, flapping, HTTPS proxies, unlink and re-link during the fetch),
+  freshness floor, concurrency, flapping, HTTPS proxies, unlink and re-link during the fetch,
+  sign-in again over the stored, a signed renewed and an unvouched leaf, link after unlink),
   and `TestRealServerTLSPinRollover` renews behind a TLS front against the pinned real server.
 - **Static analysis:** `go vet` and `gofmt` on the core; compiler warnings on the Linux shell;
   `tst_qml` fails on QML warnings. CodeQL (`security-extended`) scans Go and the workflows on

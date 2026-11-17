@@ -329,3 +329,19 @@ func (c *Client) roll(ctx context.Context, failed Pin) (bool, error) {
 	p.drop(stored.Leaf)
 	return true, nil
 }
+
+// Reach makes one credential-free request through the session's pin: it fails unless the
+// server holds the pinned leaf or a successor the identity key signed.
+func (c *Client) Reach(ctx context.Context) error {
+	res, err := c.pinned(ctx, func(hc *http.Client) (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(c.Base, "/")+"/api/devices/tls-pin", nil)
+		if err != nil {
+			return nil, err
+		}
+		return hc.Do(req)
+	})
+	if err != nil {
+		return err
+	}
+	return res.Body.Close()
+}
