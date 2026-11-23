@@ -46,6 +46,9 @@ func (d *daemon) account() api.Account {
 }
 
 func (d *daemon) credentialID() string {
+	if d.db.Get("server") == "" { // retained identity metadata no longer owns a credential
+		return ""
+	}
 	if id := d.db.Get("account_id"); id != "" {
 		return "account:" + id
 	}

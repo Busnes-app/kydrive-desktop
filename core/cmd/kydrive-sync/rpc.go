@@ -189,6 +189,12 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	if err := d.stillWanted(ctx, server, tok); err != nil {
 		return err
 	}
+	if d.prepareAccount != nil {
+		if err := d.prepareAccount(server, tok); err != nil {
+			d.revoke(server, tok)
+			return err
+		}
+	}
 	previous, err := d.db.Workspaces()
 	if err != nil {
 		return err
@@ -201,14 +207,9 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	return d.activate(server, name, tok)
 }
 
-// activate stores an approved credential and starts syncing with it. The caller holds d.work.
+// activate stores a prepared approval and starts syncing. The caller holds d.work;
+// manager callers also hold m.add and have checked identity ownership before mutation.
 func (d *daemon) activate(server, name string, tok api.Token) error {
-	if d.prepareAccount != nil {
-		if err := d.prepareAccount(server, tok); err != nil {
-			d.revoke(server, tok)
-			return err
-		}
-	}
 	id := accountID(server, tokenAccount(tok))
 	slot := make([]byte, 32)
 	if _, err := rand.Read(slot); err != nil {
@@ -293,6 +294,12 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	defer unlock()
 	if err := d.stillWanted(ctx, server, tok); err != nil {
 		return err
+	}
+	if d.prepareAccount != nil {
+		if err := d.prepareAccount(server, tok); err != nil {
+			d.revoke(server, tok)
+			return err
+		}
 	}
 	return d.activate(server, name, tok)
 }

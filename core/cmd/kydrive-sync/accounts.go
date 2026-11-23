@@ -51,8 +51,10 @@ func newAccountManager(ctx context.Context, primary *daemon) (*accountManager, e
 			d.db.Close()
 			return nil, errors.New("account state does not match its identity")
 		}
+		d.prepareAccount = func(server string, tok api.Token) error { return m.checkAccount(d, server, tok) }
 		m.accounts[id] = d
 	}
+	primary.prepareAccount = func(server string, tok api.Token) error { return m.checkAccount(primary, server, tok) }
 	return m, nil
 }
 
@@ -129,6 +131,23 @@ func (m *accountManager) start() {
 	}
 }
 
+// Approval callers hold m.add through checking and publication, including browser waits.
+// The owner may renew its own credential, but cannot publish another account's identity.
+func (m *accountManager) checkAccount(owner *daemon, server string, tok api.Token) error {
+	id := accountID(server, tokenAccount(tok))
+	if id == "" { // identity-less old servers remain supported by primary Link
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range append([]*daemon{m.primary}, values(m.accounts)...) {
+		if existing != owner && existing.db.Get("server") != "" && accountID(existing.db.Get("server"), existing.account()) == id {
+			return errors.New("this account is already added; select it to sign in again")
+		}
+	}
+	return nil
+}
+
 // AddAccount always uses a fresh, privately owned staging database. No browser
 // approval can replace another account's credential or bindings.
 func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
@@ -168,13 +187,11 @@ func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
 		if id == "" {
 			return errors.New("KyDrive did not supply an immutable account identity; update the server before adding accounts")
 		}
+		if err := m.checkAccount(d, server, t); err != nil {
+			return err
+		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		for _, existing := range append([]*daemon{m.primary}, values(m.accounts)...) {
-			if accountID(existing.db.Get("server"), existing.account()) == id && existing.db.Get("server") != "" {
-				return errors.New("this account is already added; select it to sign in again")
-			}
-		}
 
 		if existing := m.accounts[id]; existing != nil && existing.db.Get("wipe") != "" {
 			return errors.New("this account still has an unfinished file removal; retry when it completes")
@@ -223,7 +240,8 @@ func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
 		return openErr
 	}
 	d.db = db
-	d.prepareAccount = nil
+	owner := d
+	d.prepareAccount = func(server string, tok api.Token) error { return m.checkAccount(owner, server, tok) }
 	m.mu.Lock()
 	m.accounts[id] = d
 	started := m.started
@@ -279,6 +297,10 @@ func (c *AccountsCore) Status(in struct{ AccountID string }, out *Status) error 
 }
 
 func (c *AccountsCore) SignIn(in struct{ AccountID string }, out *struct{}) error {
+	if !c.m.add.TryLock() {
+		return errors.New("finish or cancel adding an account first")
+	}
+	defer c.m.add.Unlock()
 	core, err := c.m.resolve(in.AccountID)
 	if err != nil {
 		return err

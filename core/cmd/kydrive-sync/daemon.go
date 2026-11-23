@@ -412,8 +412,10 @@ func (s *sessionPins) Replace(old, new api.Pin) bool {
 
 // forget deletes the credential and its signing key from the keyring. The caller holds d.mu.
 func (d *daemon) forget() {
-	if err := keyring.Delete(keyringService, d.credentialID()); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		log.Printf("keyring: %v", err)
+	if id := d.credentialID(); id != "" {
+		if err := keyring.Delete(keyringService, id); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			log.Printf("keyring: %v", err)
+		}
 	}
 	d.token, d.key, d.pin, d.pins, d.credentialUnread = "", nil, api.Pin{}, nil, false
 }

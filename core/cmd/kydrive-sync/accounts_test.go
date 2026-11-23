@@ -161,6 +161,7 @@ func TestAccountsOnOneOriginAreIsolatedAndRemovalKeepsOthers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	removedSlot := d1.credentialID()
 	saved, _ := keyring.Get(keyringService, d2.credentialID())
 	if err := service.RemoveAccount(struct {
 		AccountID   string
@@ -168,7 +169,7 @@ func TestAccountsOnOneOriginAreIsolatedAndRemovalKeepsOthers(t *testing.T) {
 	}{one.ID, false}, &struct{}{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := keyring.Get(keyringService, d1.credentialID()); !errors.Is(err, keyring.ErrNotFound) {
+	if _, err := keyring.Get(keyringService, removedSlot); !errors.Is(err, keyring.ErrNotFound) {
 		t.Fatal("removed account retained credential")
 	}
 	kept, _ := keyring.Get(keyringService, d2.credentialID())

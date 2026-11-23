@@ -2,6 +2,8 @@
 
 ## 0.7.0 — pending
 
+- Reject duplicate identities across primary and added account linking before changing bindings or credentials; unlinking an inactive primary cannot delete another account’s link.
+
 - Wait for saved credential recovery before signing in again when the OS keyring is unavailable.
 
 - Refresh account workspaces and warning cursors consistently after adding an account or falling back when a selected account disappears.
