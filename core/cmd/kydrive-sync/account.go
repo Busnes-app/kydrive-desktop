@@ -22,6 +22,11 @@ var migrationDelete = keyring.Delete
 // Hash a length-delimited tuple, never a username or token. Legacy local IDs have
 // their own namespace; they are not KyIdentity subjects.
 func accountID(server string, a api.Account) string {
+	origin, err := serverOrigin(server)
+	if err != nil {
+		return ""
+	}
+	server = origin // only the server origin; KyIdentity claims remain byte-for-byte
 	namespace := "kyidentity"
 	if a.Issuer == "" && a.Sub == "" && a.OrgID == "" {
 		if a.UserID == "" {
@@ -68,13 +73,13 @@ func (d *daemon) migrateCredential() error {
 }
 func (d *daemon) migrateCredentialLocked() error {
 	server := d.db.Get("server")
+	if server == "" {
+		return nil
+	}
 	account := d.account()
 	id := accountID(server, account)
 	if id == "" && (account.Issuer != "" || account.Sub != "" || account.OrgID != "") {
 		return errors.New("stored KyIdentity account identity is incomplete")
-	}
-	if server == "" {
-		return nil
 	}
 	if id == "" { // identity-less primary links still retire their previous item
 		return d.finishCredentialMigrationLocked()
@@ -97,6 +102,10 @@ func (d *daemon) migrateCredentialLocked() error {
 	}
 	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		return fmt.Errorf("%w: could not read account credential", errKeyringUnavailable)
+	}
+	// Preserve an earlier source marker before committing another identity migration.
+	if err := d.finishCredentialMigrationLocked(); err != nil {
+		return err
 	}
 	if err := migrationSet(keyringService, target, value); err != nil {
 		return fmt.Errorf("%w: could not migrate account credential", errKeyringUnavailable)

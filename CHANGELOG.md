@@ -2,6 +2,8 @@
 
 ## 0.7.0 — pending
 
+- Treat legacy server hostname case and default ports as the same account, preserving the original keyring migration source, sync folder and storage selector.
+
 - Finish activation once its credential pointer is committed, even if retiring the previous item fails. Retry pending cleanup without restart and reserve the old slot until cleanup completes.
 
 - Re-add migrated accounts in their original database and sync folder, preserving the storage selector, state and retained files.

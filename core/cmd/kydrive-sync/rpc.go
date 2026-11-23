@@ -437,9 +437,13 @@ func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.forget()
+	identity := d.db.Get("account_id")
+	if id := accountID(d.db.Get("server"), d.account()); id != "" {
+		identity = id
+	}
+	d.forget() // delete through the original pointer before retaining the canonical identity
 	d.state, d.lastErr = "unlinked", ""
-	return errors.Join(wiped, d.db.Set("server", ""), d.db.Set("devices_url", ""), d.db.Set("user", ""))
+	return errors.Join(wiped, d.db.SetConfig(map[string]string{"server": "", "devices_url": "", "user": "", "account_id": identity}))
 }
 
 type Choice struct {
