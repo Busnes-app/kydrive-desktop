@@ -83,6 +83,10 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 		}}
 	if server := db.Get("server"); server != "" {
 		if err := d.migrateCredential(); err != nil {
+			if errors.Is(err, errKeyringUnavailable) {
+				d.state, d.lastErr = "signed_out", err.Error()
+				return d, nil
+			}
 			db.Close()
 			return nil, err
 		}
@@ -298,7 +302,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	case errors.Is(err, engine.ErrRevoked):
 		d.state, d.lastErr = "revoked", err.Error()
 		d.forget()
-	case errors.Is(err, engine.ErrSignedOut):
+	case errors.Is(err, engine.ErrSignedOut), errors.Is(err, errKeyringUnavailable):
 		d.state, d.lastErr = "signed_out", err.Error()
 		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
 		d.retryAt = time.Now().Add(d.backoff)
@@ -306,6 +310,8 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 			msg := "KyDrive refused this computer's credentials; syncing stopped until you sign in again"
 			if errors.Is(err, api.ErrPinChanged) {
 				msg = api.ErrPinChanged.Error()
+			} else if errors.Is(err, errKeyringUnavailable) {
+				msg = errKeyringUnavailable.Error()
 			}
 			d.db.Log("warn", msg)
 		}
@@ -329,13 +335,28 @@ func (d *daemon) retry() bool {
 	if !due {
 		return false
 	}
-	tok, key, pin, err := loadCredential(d.credentialID())
+	// Complete migration before recovering a token, including unfinished cleanup.
+	migrationErr := d.migrateCredential()
+	var tok string
+	var key *ecdsa.PrivateKey
+	var pin api.Pin
+	err := migrationErr
+	if err == nil {
+		tok, key, pin, err = loadCredential(d.credentialID())
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.state != "signed_out" {
 		return false
 	}
 	if err != nil {
+		if migrationErr != nil {
+			d.lastErr = migrationErr.Error()
+			if !errors.Is(migrationErr, errKeyringUnavailable) {
+				d.state = "error" // identity/credential conflicts never fall back to the old item
+				return false
+			}
+		}
 		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
 		d.retryAt = time.Now().Add(d.backoff)
 		return false

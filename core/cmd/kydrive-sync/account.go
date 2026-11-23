@@ -5,11 +5,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Busnes-app/kydrive-desktop/core/api"
 	"github.com/zalando/go-keyring"
 )
+
+// OS keyring boundary; tests inject availability failures without changing its store.
+var errKeyringUnavailable = errors.New("OS keyring unavailable; unlock it and KyDrive will retry")
+
+var migrationGet = keyring.Get
+var migrationSet = keyring.Set
+var migrationDelete = keyring.Delete
 
 // Hash a length-delimited tuple, never a username or token. Legacy local IDs have
 // their own namespace; they are not KyIdentity subjects.
@@ -57,7 +65,11 @@ func (d *daemon) migrateCredential() error {
 }
 func (d *daemon) migrateCredentialLocked() error {
 	server := d.db.Get("server")
-	id := accountID(server, d.account())
+	account := d.account()
+	id := accountID(server, account)
+	if id == "" && (account.Issuer != "" || account.Sub != "" || account.OrgID != "") {
+		return errors.New("stored KyIdentity account identity is incomplete")
+	}
 	if server == "" || id == "" {
 		return nil
 	}
@@ -65,29 +77,29 @@ func (d *daemon) migrateCredentialLocked() error {
 	target := "account:" + id
 	if old == target {
 		if source := d.db.Get("credential_migration"); source != "" && source != target {
-			if err := keyring.Delete(keyringService, d.db.Get("credential_migration")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-				return errors.New("could not finish credential migration")
+			if err := migrationDelete(keyringService, d.db.Get("credential_migration")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+				return fmt.Errorf("%w: could not finish credential migration", errKeyringUnavailable)
 			}
 			return d.db.Set("credential_migration", "")
 		}
 		return nil
 	}
-	value, err := keyring.Get(keyringService, old)
+	value, err := migrationGet(keyringService, old)
 	if errors.Is(err, keyring.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
-		return errors.New("could not read credential for migration")
+		return fmt.Errorf("%w: could not read credential for migration", errKeyringUnavailable)
 	}
-	prior, err := keyring.Get(keyringService, target)
+	prior, err := migrationGet(keyringService, target)
 	if err == nil && prior != value {
 		return errors.New("this account already has a different device link")
 	}
 	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		return errors.New("could not read account credential")
+		return fmt.Errorf("%w: could not read account credential", errKeyringUnavailable)
 	}
-	if err := keyring.Set(keyringService, target, value); err != nil {
-		return errors.New("could not migrate account credential")
+	if err := migrationSet(keyringService, target, value); err != nil {
+		return fmt.Errorf("%w: could not migrate account credential", errKeyringUnavailable)
 	}
 	if err := d.db.SetConfig(map[string]string{"credential_migration": old, "account_id": id, "credential_slot": target}); err != nil {
 		return err

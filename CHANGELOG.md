@@ -2,6 +2,8 @@
 
 ## 0.7.0 — pending
 
+- Keep older-core upgrades and linking after the last account removal working on Windows; automatically retry account migration when the OS keyring is temporarily unavailable.
+
 - Bump all six version fields to 0.7.0 so each updated shell replaces an older single-account daemon.
 - Isolate desktop accounts, credentials and state on shared KyDrive origins; add account selection, browser linking and removal to each shell, with idempotent legacy credential migration.
 
