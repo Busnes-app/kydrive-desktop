@@ -44,7 +44,7 @@ func storeCredential(server, token string, key *ecdsa.PrivateKey, pin api.Pin) e
 	if pin.Leaf != "" {
 		v += " " + pin.Leaf + " " + dash(pin.IdentityKey) + " " + strconv.FormatInt(pin.Floor, 10)
 	}
-	return keyring.Set(keyringService, server, v)
+	return migrationSet(keyringService, server, v)
 }
 
 func dash(s string) string {

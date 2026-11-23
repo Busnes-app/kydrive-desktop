@@ -88,13 +88,16 @@ waitfor 'ctl Status | grep -q "\"State\": \"revoked\""' && ok "revoke reaches th
 [ "\$(cat "$HOME/KyDrive/Unsynced/Docs/hello.txt" 2>/dev/null)" = "unuploaded edit" ] && ok "unuploaded edit kept in Unsynced/" || bad "edit lost: \$(find "$HOME/KyDrive")"
 [ "\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null)" = "-" ] && ok "revocation removed token/key and retained known unpinned state" || bad "revocation credential marker"
 ctl Link '{"Server":"$BASE","Name":"smoke laptop"}' >/dev/null && ok "Link again after a revoke" || bad "relink"
-ITEM2=\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null || :)
+ACCOUNT_KEY2=\$(python3 -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT value FROM config WHERE key=\"credential_slot\"").fetchone()[0])' "$W/home/.config/kydrive/state.db")
+[ "\$ACCOUNT_KEY2" != "$ACCOUNT_KEY" ] && ok "replacement owns a different physical slot" || bad "replacement reused the previous credential slot"
+[ -z "\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null)" ] && ok "replacement retired previous pin-only record" || bad "old pin-only record retained"
+ITEM2=\$(secret-tool lookup service KyDrive username "\$ACCOUNT_KEY2" 2>/dev/null || :)
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 1 ] && ok "server lists the new device" || bad "device list"
 signed "\$ITEM2" /api/drive/workspaces | grep -q '"Docs"' && ok "a signed request is accepted" || bad "signed request: \$(signed "\$ITEM2" /api/drive/workspaces)"
 ctl Unlink '{"RemoveFiles":false}' >/dev/null && ok "Unlink" || bad "Unlink"
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 0 ] && ok "Unlink revoked the device on the server" || bad "device still listed"
 signed "\$ITEM2" /api/drive/workspaces | grep -q '"error":"device_revoked","wipe":false' && ok "old token, signed with its key, answers device_revoked without wipe" || bad "old token: \$(signed "\$ITEM2" /api/drive/workspaces)"
-[ -z "\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null)" ] && ok "Unlink deleted the keyring item" || bad "keyring item survived Unlink"
+[ -z "\$(secret-tool lookup service KyDrive username "\$ACCOUNT_KEY2" 2>/dev/null)" ] && ok "Unlink deleted the keyring item" || bad "keyring item survived Unlink"
 [ \$FAIL = 0 ] || tail -20 "$W/sync.log"
 kill \$SYNC_PID; wait \$SYNC_PID 2>/dev/null
 exit \$FAIL

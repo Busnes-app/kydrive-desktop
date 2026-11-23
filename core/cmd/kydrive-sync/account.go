@@ -54,11 +54,11 @@ func (d *daemon) credentialID() string {
 	if d.db.Get("server") == "" { // retained identity metadata no longer owns a credential
 		return ""
 	}
-	if id := d.db.Get("account_id"); id != "" {
-		return "account:" + id
-	}
 	if slot := d.db.Get("credential_slot"); slot != "" {
 		return slot
+	}
+	if id := d.db.Get("account_id"); id != "" {
+		return "account:" + id
 	}
 	return d.db.Get("server") // only an existing link whose identity is not known yet
 }
@@ -86,7 +86,7 @@ func (d *daemon) migrateCredentialLocked() error {
 	}
 	old := d.credentialID()
 	target := "account:" + id
-	if old == target {
+	if old == target || (d.db.Get("account_id") == id && strings.HasPrefix(old, target+":")) {
 		return d.finishCredentialMigrationLocked()
 	}
 	value, err := migrationGet(keyringService, old)

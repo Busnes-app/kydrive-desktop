@@ -2,6 +2,8 @@
 
 ## 0.7.0 — pending
 
+- Keep the previous sign-in credential intact until a replacement commits, and recover interrupted keyring cleanup without changing account folders or workspace choices.
+
 - Restore selected revoked accounts through their existing Link form, preserving folders/workspaces and enforcing the original identity and certificate pin. Explicit Add account stays separate; revoked tokens/signing keys are replaced by pin-only keyring records.
 
 - Treat legacy server hostname case and default ports as the same account, preserving the original keyring migration source, sync folder and storage selector.

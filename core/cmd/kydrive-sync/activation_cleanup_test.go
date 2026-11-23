@@ -191,6 +191,10 @@ func TestPendingCleanupReservesOldAccountSlotUntilUnlinkedRecovery(t *testing.T)
 		t.Fatal(err)
 	}
 	d := f.primary
+	d.state = "signed_out"
+	if err := f.core.SignIn(AccountArgs{AccountID: "legacy"}, &struct{}{}); err != nil {
+		t.Fatal(err)
+	}
 	previousIdentity := f.identity.Load().(api.Account)
 	source := d.credentialID()
 	before, _ := keyring.Get(keyringService, source)
@@ -250,15 +254,18 @@ func TestPendingCleanupReservesOldAccountSlotUntilUnlinkedRecovery(t *testing.T)
 	if err := f.core.AddAccount(LinkArgs{Server: f.server.URL}, &added); err != nil {
 		t.Fatal(err)
 	}
-	saved, err := keyring.Get(keyringService, source)
+	other := f.core.m.accounts[added.ID]
+	saved, err := keyring.Get(keyringService, other.credentialID())
+	if _, err := keyring.Get(keyringService, source); !errors.Is(err, keyring.ErrNotFound) {
+		t.Fatal("recovered physical source was retained")
+	}
 	if err != nil || saved == before {
 		t.Fatal("recovered slot did not receive the new account's credential")
 	}
 	d.pass(t.Context(), false)
-	if kept, _ := keyring.Get(keyringService, source); kept != saved {
+	if kept, _ := keyring.Get(keyringService, other.credentialID()); kept != saved {
 		t.Fatal("stale cleanup deleted another account's new credential")
 	}
-	other := f.core.m.accounts[added.ID]
 	other.pass(t.Context(), false)
 	if other.state != "idle" || other.lastSync == 0 {
 		t.Fatal("account could not sync after old-slot recovery")

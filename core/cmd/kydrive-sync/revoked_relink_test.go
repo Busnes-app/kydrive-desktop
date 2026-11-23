@@ -52,6 +52,7 @@ func TestRevokedSelectedAccountRelinksWithoutLosingBindings(t *testing.T) {
 				t.Fatal(err)
 			}
 			slot, root, dir, oldToken := d.credentialID(), d.root, d.dir, d.token
+			identity := d.db.Get("account_id")
 			held := d.pin
 			held.Floor = 123
 			d.pin = held
@@ -73,9 +74,13 @@ func TestRevokedSelectedAccountRelinksWithoutLosingBindings(t *testing.T) {
 			if item, err := d.db.Item("kept"); err != nil || item == nil {
 				t.Fatal("revoked relink lost sync records")
 			}
-			if d.pin != held || d.token == "" || d.token == oldToken || d.credentialID() != slot || d.root != root || d.dir != dir {
+			if d.pin != held || d.token == "" || d.token == oldToken || d.credentialID() == slot || d.db.Get("account_id") != identity || d.root != root || d.dir != dir {
 				t.Fatal("revoked relink changed account storage or held pin")
 			}
+			if _, err := keyring.Get(keyringService, slot); !errors.Is(err, keyring.ErrNotFound) {
+				t.Fatal("replacement retained old physical credential")
+			}
+			slot = d.credentialID()
 			d.lastSync = 0
 			d.pass(t.Context(), false)
 			if d.state != "idle" || d.lastSync == 0 {

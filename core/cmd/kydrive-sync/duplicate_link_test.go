@@ -256,12 +256,12 @@ func TestManagedSignInKeepsItsOwnIdentity(t *testing.T) {
 			if err := d.db.PutWorkspace(binding); err != nil {
 				t.Fatal(err)
 			}
-			slot, oldToken := d.credentialID(), d.token
+			slot, oldToken, identity := d.credentialID(), d.token, d.db.Get("account_id")
 			d.state = "signed_out"
 			if err := f.core.SignIn(struct{ AccountID string }{id}, &struct{}{}); err != nil {
 				t.Fatal(err)
 			}
-			if d.credentialID() != slot || d.token == oldToken || d.token == "" {
+			if d.credentialID() == slot || d.token == oldToken || d.token == "" || d.db.Get("account_id") != identity {
 				t.Fatal("owner could not renew its own credential")
 			}
 			ws, err := d.db.Workspaces()

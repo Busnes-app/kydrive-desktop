@@ -223,17 +223,16 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 // activate stores a prepared approval and starts syncing. The caller holds d.work;
 // manager callers also hold m.add and have checked identity ownership before mutation.
 func (d *daemon) activate(server, name string, tok api.Token) error {
+	committed := false
+	defer func() {
+		if !committed {
+			d.revoke(server, tok)
+		}
+	}()
 	id := accountID(server, tokenAccount(tok))
 	slot := make([]byte, 32)
 	if _, err := rand.Read(slot); err != nil {
 		return err
-	}
-	credential := "pending:" + hex.EncodeToString(slot)
-	if held := d.db.Get("credential_slot"); id == "" && strings.HasPrefix(held, "pending:") {
-		credential = held
-	}
-	if id != "" {
-		credential = "account:" + id
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -241,17 +240,33 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 	if err := d.finishCredentialMigrationLocked(); err != nil {
 		return err
 	}
-	if err := storeCredential(credential, tok.Token, tok.Key, tok.Pin); err != nil {
-		return errors.New("could not store the credential in the OS keyring: " + err.Error())
-	}
-
 	if err := os.MkdirAll(d.root, 0700); err != nil {
 		return errors.New("could not create account sync folder")
 	}
 	old := d.credentialID()
+	credential := "pending:" + hex.EncodeToString(slot)
+	if id != "" {
+		credential = "account:" + id
+		if old != "" {
+			credential += ":" + hex.EncodeToString(slot)
+		}
+	}
+	// Before commit this marker owns the abandoned stage; afterward it owns the old item.
+	if err := d.db.Set("credential_migration", credential); err != nil {
+		return err
+	}
+	defer func() {
+		if !committed {
+			_ = d.finishCredentialMigrationLocked()
+		}
+	}()
+	if err := storeCredential(credential, tok.Token, tok.Key, tok.Pin); err != nil {
+		return errors.New("could not store the credential in the OS keyring: " + err.Error())
+	}
 	if err := d.db.SetConfig(map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User, "user_id": tok.UserID, "issuer": tok.Issuer, "sub": tok.Sub, "org_id": tok.OrgID, "account_id": id, "credential_slot": credential, "credential_migration": old, "identity_checked": ""}); err != nil {
 		return err
 	}
+	committed = true
 	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff, d.credentialUnread = tok.Token, tok.Key, tok.Pin, "idle", "", 0, false
 	d.pins = nil
 	// The committed session is authoritative; cleanup failures retain the retry marker.

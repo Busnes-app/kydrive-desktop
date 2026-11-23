@@ -15,7 +15,7 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 
 ## Local Contracts
 - **User work is never deleted.** No path deletes a local edit that never uploaded: stale edits become conflict copies uploaded beside the server version; lost access, unchoosing a workspace, a server-side removal and a revoke with wipe move such files to `~/KyDrive/Unsynced/`.
-- **Tokens, device signing keys and the TLS pin live only in the OS keyring** (service `KyDrive`, user = `account:<SHA-256 identity tuple>`, one item per account holding all of them). Never on disk, in logs or in IPC answers.
+- **Tokens, device signing keys and the TLS pin live only in the OS keyring** (service `KyDrive`, user = `account:<SHA-256 identity tuple>` with a random suffix for replacement slots; each active item holds all of them, and pending cleanup items stay reserved). Never on disk, in logs or in IPC answers.
 - Account identity is `(server origin, KyIdentity issuer, sub, org_id)`; old servers use a separate local-`user_id` namespace, and identity-less legacy links have a private provisional slot. Origin-keyed items are read only for migration. Each account owns its database, root, watcher and retry memory; removal never adopts or deletes another account’s data.
 - **IPC is owner-only:** a Unix socket at 0600 inside a 0700 directory (Windows: the per-user profile's ACL).
 - **Strong TLS is the core default:** `core/go.mod` sets `godebug fips140=on` for

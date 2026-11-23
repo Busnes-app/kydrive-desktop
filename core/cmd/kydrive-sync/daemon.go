@@ -24,7 +24,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-// keyringService names the OS keyring item; its user is account:<identity hash> (origin only until legacy migration).
+// keyringService names the OS keyring item; its user is the owned account credential slot (origin only until legacy migration).
 const keyringService = "KyDrive"
 
 const (
