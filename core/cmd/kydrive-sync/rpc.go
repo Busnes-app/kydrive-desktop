@@ -21,7 +21,6 @@ import (
 	"github.com/Busnes-app/kydrive-desktop/core/api"
 	"github.com/Busnes-app/kydrive-desktop/core/engine"
 	"github.com/Busnes-app/kydrive-desktop/core/link"
-	"github.com/zalando/go-keyring"
 )
 
 // Core is the JSON-RPC service the shells call, as "Core.<Method>".
@@ -224,6 +223,10 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// A replacement must not overwrite an earlier cleanup marker.
+	if err := d.finishCredentialMigrationLocked(); err != nil {
+		return err
+	}
 	if err := storeCredential(credential, tok.Token, tok.Key, tok.Pin); err != nil {
 		return errors.New("could not store the credential in the OS keyring: " + err.Error())
 	}
@@ -235,16 +238,9 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 	if err := d.db.SetConfig(map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User, "user_id": tok.UserID, "issuer": tok.Issuer, "sub": tok.Sub, "org_id": tok.OrgID, "account_id": id, "credential_slot": credential, "credential_migration": old, "identity_checked": ""}); err != nil {
 		return err
 	}
-	if old != "" && old != credential {
-		if err := keyring.Delete(keyringService, old); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-			return errors.New("could not retire previous account credential")
-		}
-	}
-	if err := d.db.Set("credential_migration", ""); err != nil {
-		return err
-	}
-
 	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff, d.credentialUnread = tok.Token, tok.Key, tok.Pin, "idle", "", 0, false
+	// The committed session is authoritative; cleanup failures retain the retry marker.
+	_ = d.finishCredentialMigrationLocked()
 	d.trigger(true)
 	return nil
 }

@@ -73,19 +73,16 @@ func (d *daemon) migrateCredentialLocked() error {
 	if id == "" && (account.Issuer != "" || account.Sub != "" || account.OrgID != "") {
 		return errors.New("stored KyIdentity account identity is incomplete")
 	}
-	if server == "" || id == "" {
+	if server == "" {
 		return nil
+	}
+	if id == "" { // identity-less primary links still retire their previous item
+		return d.finishCredentialMigrationLocked()
 	}
 	old := d.credentialID()
 	target := "account:" + id
 	if old == target {
-		if source := d.db.Get("credential_migration"); source != "" && source != target {
-			if err := migrationDelete(keyringService, d.db.Get("credential_migration")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-				return fmt.Errorf("%w: could not finish credential migration", errKeyringUnavailable)
-			}
-			return d.db.Set("credential_migration", "")
-		}
-		return nil
+		return d.finishCredentialMigrationLocked()
 	}
 	value, err := migrationGet(keyringService, old)
 	if errors.Is(err, keyring.ErrNotFound) {
@@ -108,6 +105,21 @@ func (d *daemon) migrateCredentialLocked() error {
 		return err
 	}
 	return d.migrateCredentialLocked()
+}
+
+// The marker was committed with the new credential pointer. Keep its old slot
+// reserved until deletion and marker cleanup both succeed. Caller holds d.mu.
+func (d *daemon) finishCredentialMigrationLocked() error {
+	source := d.db.Get("credential_migration")
+	if source == "" {
+		return nil
+	}
+	if source != d.credentialID() {
+		if err := migrationDelete(keyringService, source); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			return fmt.Errorf("%w: could not finish credential migration", errKeyringUnavailable)
+		}
+	}
+	return d.db.Set("credential_migration", "")
 }
 
 func validAccountID(id string) bool {

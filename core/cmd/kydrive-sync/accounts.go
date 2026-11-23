@@ -141,6 +141,9 @@ func (m *accountManager) checkAccount(owner *daemon, server string, tok api.Toke
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range append([]*daemon{m.primary}, values(m.accounts)...) {
+		if existing != owner && existing.db.Get("credential_migration") == "account:"+id {
+			return errors.New("this account's previous credential is still being retired; retry when cleanup completes")
+		}
 		if existing != owner && existing.db.Get("server") != "" && accountID(existing.db.Get("server"), existing.account()) == id {
 			return errors.New("this account is already added; select it to sign in again")
 		}

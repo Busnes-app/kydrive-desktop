@@ -331,6 +331,9 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 // holds d.work.
 func (d *daemon) retry() bool {
 	d.mu.Lock()
+	if d.state != "signed_out" { // a known session (or explicit unlink) can finish cleanup independently
+		_ = d.finishCredentialMigrationLocked()
+	}
 	due := d.state == "signed_out" && d.linking == nil && d.db.Get("paused") == "" && !time.Now().Before(d.retryAt)
 	d.mu.Unlock()
 	if !due {
