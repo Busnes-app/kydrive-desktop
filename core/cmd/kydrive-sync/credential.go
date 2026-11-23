@@ -18,6 +18,8 @@ import (
 // (Unix seconds). One item, so all of it is stored and deleted together. A software key the
 // keyring guards; a platform key that cannot be exported (TPM, Secure Enclave) would be stronger.
 
+var errCredentialUnread = errors.New("the saved KyDrive credential is unavailable; unlock or restore the OS keyring and wait for recovery before signing in again, or unlink and link again")
+
 var errDamaged = errors.New("the keyring's KyDrive credential is damaged; sign in again")
 
 func storeCredential(server, token string, key *ecdsa.PrivateKey, pin api.Pin) error {

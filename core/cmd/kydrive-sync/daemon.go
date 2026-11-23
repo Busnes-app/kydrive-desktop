@@ -42,13 +42,14 @@ type daemon struct {
 	open            func(url string) error
 	exit            func(code int) // os.Exit; Quit calls it
 
-	lock   *os.File          // held for the daemon's life: one core per state directory
-	memory *engine.Memory    // retry backoff and announced failures, across passes
-	work   sync.Mutex        // one engine operation at a time
-	mu     sync.Mutex        // guards the fields below
-	key    *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
-	pin    api.Pin           // token's TLS pin, kept with it in the keyring
-	pins   *api.Pins         // enforces pin for token's session
+	lock             *os.File          // held for the daemon's life: one core per state directory
+	memory           *engine.Memory    // retry backoff and announced failures, across passes
+	work             sync.Mutex        // one engine operation at a time
+	mu               sync.Mutex        // guards the fields below
+	key              *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
+	pin              api.Pin           // token's TLS pin, kept with it in the keyring
+	pins             *api.Pins         // enforces pin for token's session
+	credentialUnread bool              // failed startup read: an unknown pin is not an absent pin
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -84,7 +85,7 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	if server := db.Get("server"); server != "" {
 		if err := d.migrateCredential(); err != nil {
 			if errors.Is(err, errKeyringUnavailable) {
-				d.state, d.lastErr = "signed_out", err.Error()
+				d.state, d.lastErr, d.credentialUnread = "signed_out", err.Error(), true
 				return d, nil
 			}
 			db.Close()
@@ -92,7 +93,7 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 		}
 		tok, key, pin, err := loadCredential(d.credentialID())
 		if err != nil {
-			d.state, d.lastErr = "signed_out", "the keyring holds no KyDrive credential; sign in again"
+			d.state, d.lastErr, d.credentialUnread = "signed_out", errCredentialUnread.Error(), true
 		} else {
 			d.token, d.key, d.pin, d.state = tok, key, pin, "idle"
 		}
@@ -361,7 +362,7 @@ func (d *daemon) retry() bool {
 		d.retryAt = time.Now().Add(d.backoff)
 		return false
 	}
-	d.token, d.key, d.pin, d.state = tok, key, pin, "syncing"
+	d.token, d.key, d.pin, d.state, d.credentialUnread = tok, key, pin, "syncing", false
 	return true
 }
 
@@ -414,7 +415,7 @@ func (d *daemon) forget() {
 	if err := keyring.Delete(keyringService, d.credentialID()); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		log.Printf("keyring: %v", err)
 	}
-	d.token, d.key, d.pin, d.pins = "", nil, api.Pin{}, nil
+	d.token, d.key, d.pin, d.pins, d.credentialUnread = "", nil, api.Pin{}, nil, false
 }
 
 func openBrowser(url string) error {

@@ -243,7 +243,7 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 		return err
 	}
 
-	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff = tok.Token, tok.Key, tok.Pin, "idle", "", 0
+	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff, d.credentialUnread = tok.Token, tok.Key, tok.Pin, "idle", "", 0, false
 	d.trigger(true)
 	return nil
 }
@@ -257,6 +257,9 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	ctx, end, err := c.begin(func() error {
 		if server == "" || d.state != "signed_out" {
 			return errors.New("this computer is not signed out")
+		}
+		if d.credentialUnread {
+			return errCredentialUnread
 		}
 		if d.pin.Leaf != "" { // with no pin yet (linked before pinning), trust on first use
 			pins = d.session()
