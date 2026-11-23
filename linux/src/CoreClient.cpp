@@ -263,9 +263,9 @@ void CoreClient::waitForBrowser(const QString& method, const QVariantMap& params
     m_linking = true;
     emit linkingChanged();
     call(method, params, [this, method](const QJsonValue& result, const QString& error) {
+        setError(error);
         m_linking = false;
         emit linkingChanged();
-        setError(error);
         if (error.isEmpty() && method == QStringLiteral("AddAccount")) {
             selectAccount(result.toObject().value(QStringLiteral("ID")).toString());
             return;

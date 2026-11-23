@@ -154,6 +154,74 @@ private slots:
         QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
     }
 
+    void failedAddKeepsIntentUntilCancelOrSuccess()
+    {
+        QTemporaryDir dir;
+        FakeCore core(dir.filePath(QStringLiteral("s")));
+        core.accounts = {QJsonObject{{QStringLiteral("ID"), QStringLiteral("one")}}};
+        fillLinked(core);
+        core.workspaces = {QJsonObject{{QStringLiteral("ID"), QStringLiteral("a")}, {QStringLiteral("Name"), QStringLiteral("A")}, {QStringLiteral("Chosen"), true}}};
+        CoreClient client(dir.filePath(QStringLiteral("s")), QString());
+        QQmlApplicationEngine engine;
+        auto* item = render(engine, client, QStringLiteral("add-failure"));
+        QVERIFY(item);
+        auto* root = engine.rootObjects().first();
+        const auto button = [item](const QString& text) -> QQuickItem* {
+            QList<QQuickItem*> todo{item};
+            while (!todo.isEmpty()) {
+                auto* current = todo.takeFirst(); todo << current->childItems();
+                if (current->property("placeholderText").toString() == QStringLiteral("https://drive.example.com"))
+                    current->setProperty("text", QStringLiteral("https://drive.example.com"));
+                if (current->property("text").toString() == text && current->metaObject()->indexOfSignal("clicked()") >= 0) return current;
+            }
+            return nullptr;
+        };
+        QTRY_COMPARE(client.accountID(), QStringLiteral("one"));
+        QTRY_COMPARE(client.workspaces().size(), 1);
+        const auto originalStatus = client.status();
+        const auto originalWorkspaces = client.workspaces();
+        QCOMPARE(client.error(), QString());
+        QVERIFY(button(QStringLiteral("Add account")));
+        QVERIFY(QMetaObject::invokeMethod(button(QStringLiteral("Add account")), "clicked"));
+        QVERIFY(root->property("addingAccount").toBool());
+        core.addError = QStringLiteral("approval refused");
+        auto* link = button(QStringLiteral("Link")); QVERIFY(link);
+        for (int attempt = 1; attempt <= 2; ++attempt) {
+            QTRY_VERIFY(link->property("enabled").toBool());
+            QVERIFY(QMetaObject::invokeMethod(link, "clicked"));
+            QTRY_COMPARE(core.methods.count(QStringLiteral("Core.AddAccount")), attempt);
+            QTRY_VERIFY(!client.linking());
+            QCOMPARE(client.error(), core.addError);
+            QVERIFY(root->property("addingAccount").toBool());
+            QVERIFY(link->isVisible());
+            QCOMPARE(client.accountID(), QStringLiteral("one"));
+            QCOMPARE(client.status(), originalStatus);
+            QCOMPARE(client.workspaces(), originalWorkspaces);
+            QVERIFY(!core.methods.contains(QStringLiteral("Core.Link")));
+            for (const auto& req : core.requests) if (req.value(QStringLiteral("method")) == QStringLiteral("Core.AddAccount"))
+                QVERIFY(!req.value(QStringLiteral("params")).toArray().first().toObject().contains(QStringLiteral("AccountID")));
+        }
+        auto* cancel = button(QStringLiteral("Cancel adding account")); QVERIFY(cancel);
+        QVERIFY(QMetaObject::invokeMethod(cancel, "clicked"));
+        QVERIFY(!root->property("addingAccount").toBool());
+        QVERIFY(!link->isVisible());
+        QCOMPARE(client.accountID(), QStringLiteral("one"));
+        QVERIFY(QMetaObject::invokeMethod(button(QStringLiteral("Add account")), "clicked"));
+        core.addError.clear();
+        core.addedAccount = {{QStringLiteral("ID"), QStringLiteral("two")}};
+        core.accounts.append(core.addedAccount);
+        core.workspaces = {QJsonObject{{QStringLiteral("ID"), QStringLiteral("b")}, {QStringLiteral("Name"), QStringLiteral("B")}, {QStringLiteral("Chosen"), true}}};
+        QTRY_VERIFY(link->property("enabled").toBool());
+        QVERIFY(QMetaObject::invokeMethod(link, "clicked"));
+        QTRY_COMPARE(client.accountID(), QStringLiteral("two"));
+        QTRY_VERIFY(!client.linking());
+        QVERIFY(!root->property("addingAccount").toBool());
+        QCOMPARE(client.error(), QString());
+        QTRY_COMPARE(client.workspaces().size(), 1);
+        QTRY_COMPARE(client.workspaces().first().toMap().value(QStringLiteral("ID")).toString(), QStringLiteral("b"));
+        QVERIFY2(m_warnings.isEmpty(), qPrintable(m_warnings.join(QLatin1Char('\n'))));
+    }
+
     void unlinked()
     {
         QTemporaryDir dir;

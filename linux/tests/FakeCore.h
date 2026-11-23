@@ -26,6 +26,7 @@ public:
     QList<QJsonObject> requests;
     QJsonArray accounts;
     QJsonObject addedAccount;
+    QString addError;
     qint64 activityId = 7;
     QString activityMessage = QStringLiteral("Lost access to Docs");
     QJsonObject status{{QStringLiteral("Linked"), true}, {QStringLiteral("State"), QStringLiteral("idle")}};
@@ -55,7 +56,7 @@ private:
             m_held = QJsonObject{{QStringLiteral("id"), req[QStringLiteral("id")]}, {QStringLiteral("result"), QJsonObject{}}, {QStringLiteral("error"), QJsonValue::Null}};
             return;
         }
-        s->write(QJsonDocument(QJsonObject{{QStringLiteral("id"), req[QStringLiteral("id")]}, {QStringLiteral("result"), result}, {QStringLiteral("error"), QJsonValue::Null}}).toJson(QJsonDocument::Compact) + '\n');
+        s->write(QJsonDocument(QJsonObject{{QStringLiteral("id"), req[QStringLiteral("id")]}, {QStringLiteral("result"), result}, {QStringLiteral("error"), method == QStringLiteral("Core.AddAccount") && !addError.isEmpty() ? QJsonValue(addError) : QJsonValue(QJsonValue::Null)}}).toJson(QJsonDocument::Compact) + '\n');
         if (!m_held.isEmpty() && method == QStringLiteral("Core.Status")) {
             s->write(QJsonDocument(m_held).toJson(QJsonDocument::Compact) + '\n');
             m_held = {};

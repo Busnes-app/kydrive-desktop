@@ -2,6 +2,9 @@
 
 ## 0.7.0 — pending
 
+- Accept complete matching hosted identities without a legacy local user ID, preserving strict issuer/subject/organization checks and account storage through upgrades.
+- Keep the Linux Add account form in add mode after approval fails, so retry cannot accidentally relink the selected account.
+
 - Keep the previous sign-in credential intact until a replacement commits, and recover interrupted keyring cleanup without changing account folders or workspace choices.
 
 - Restore selected revoked accounts through their existing Link form, preserving folders/workspaces and enforcing the original identity and certificate pin. Explicit Add account stays separate; revoked tokens/signing keys are replaced by pin-only keyring records.

@@ -220,7 +220,8 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 		account, err := e.API.DeviceAccount(ctx)
 
 		if err == nil {
-			if held := e.DB.Get("user_id"); held != "" && held != account.UserID {
+			// Complete hosted claims are authoritative; local IDs belong to legacy servers.
+			if held := e.DB.Get("user_id"); account.Issuer == "" && held != "" && held != account.UserID {
 				return errors.New("KyDrive returned a different account identity")
 			}
 			if held := e.DB.Get("issuer"); held != "" && (held != account.Issuer || e.DB.Get("sub") != account.Sub || e.DB.Get("org_id") != account.OrgID) {
