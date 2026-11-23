@@ -41,6 +41,7 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
   normal TMPDIR; test-name paths can exceed the server's Unix setup-socket limit.
 
 ## Verification
+- HTTPS CONNECT test tunnels forward the buffered reader returned by Hijack; `TestPinThroughHTTPSProxy` deliberately buffers the ClientHello, requires the held leaf or `ErrPinChanged`, and checks that a refusal sends no request and leaves the pin unchanged.
 - `duplicate_link_test.go` covers primary duplicate approval before binding reset, exact credential/key/pin and state/file preservation, sync after rejection/unlink, retained primary references, old-server linking, owner credential renewal and both concurrent approval orders.
 - `migration_pin_test.go` combines failed migration cleanup with a trusted, unvouched TLS leaf: SignIn must stop before the browser or credential exchange, preserve the held pin and enforce it after recovery. A read legacy credential may establish its first pin.
 - `migration_retry_test.go` injects source/target reads, copy and cleanup failures; verifies live RPC and other-account state, byte-identical exactly-once recovery and resumed sync; partial identities and conflicting credentials refuse startup/retry.
