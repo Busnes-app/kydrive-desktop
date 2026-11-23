@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0 — pending
+
+- Bump all six version fields to 0.7.0 so each updated shell replaces an older single-account daemon.
+- Isolate desktop accounts, credentials and state on shared KyDrive origins; add account selection, browser linking and removal to each shell, with idempotent legacy credential migration.
+
 ## 0.6.1 — pending
 
 - TLS pin rollover regression tests replay the retired leaf's earlier signed statement, avoiding a wall-clock boundary flake while retaining pin and no-credential-leak assertions. Runtime TLS behavior is unchanged.

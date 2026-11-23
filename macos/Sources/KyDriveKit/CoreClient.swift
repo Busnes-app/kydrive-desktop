@@ -29,6 +29,7 @@ public enum CoreError: LocalizedError, Equatable {
 }
 
 public struct Status: Decodable, Equatable {
+    var accountID: String? = nil
     var version: String? = nil // the core's release; absent from a core older than Core.Quit
     var linked = false
     var server = "", devicesURL = "", root = "", state = "", error = ""
@@ -37,7 +38,7 @@ public struct Status: Decodable, Equatable {
     var workspaces: [WorkspaceStatus]? = nil // null when none are chosen
 
     enum CodingKeys: String, CodingKey {
-        case version = "Version", linked = "Linked", server = "Server", devicesURL = "DevicesURL", root = "Root", state = "State",
+        case accountID = "AccountID", version = "Version", linked = "Linked", server = "Server", devicesURL = "DevicesURL", root = "Root", state = "State",
              error = "Error", paused = "Paused", lastSync = "LastSync", workspaces = "Workspaces"
     }
 }
@@ -70,12 +71,23 @@ struct Activity: Decodable {
 
 struct Empty: Decodable {}
 
+public struct DriveAccount: Decodable, Equatable, Identifiable {
+    public var id: String
+    var server: String, user: String, orgID: String
+    enum CodingKeys: String, CodingKey { case id = "ID", server = "Server", user = "User", orgID = "OrgID" }
+    var label: String { user + " — " + server + (orgID.isEmpty ? "" : " — " + orgID) }
+}
+
 public struct CoreClient: Sendable {
+    var accountID = ""
+
     public let socketPath: String
     public init(socketPath: String) { self.socketPath = socketPath }
 
     func call<R: Decodable>(_ method: String, _ params: [String: Any] = [:]) async throws -> R {
-        let request = try JSONSerialization.data(withJSONObject: ["method": "Core." + method, "params": [params], "id": 1])
+        var scoped = params
+        if method != "Accounts" && method != "AddAccount" { scoped["AccountID"] = accountID }
+        let request = try JSONSerialization.data(withJSONObject: ["method": "Core." + method, "params": [scoped], "id": 1])
             + Data("\n".utf8)
         let path = socketPath
         let line = try await Task.detached { try Self.exchange(path, request) }.value

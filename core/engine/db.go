@@ -324,3 +324,18 @@ func (d *DB) Activity(after int64) ([]Activity, error) {
 	}
 	return out, rows.Err()
 }
+
+// SetConfig commits an account's non-secret metadata together.
+func (d *DB) SetConfig(values map[string]string) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for k, v := range values {
+		if _, err := tx.Exec(`INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, k, v); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

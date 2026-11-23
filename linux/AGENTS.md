@@ -18,7 +18,9 @@ The Linux shell: a Qt6/Kirigami tray app (`kydrive-desktop`, app id `com.kysecur
 - Danger, warning and success never reuse the accent and never stand alone: each has a word and a Kirigami message icon or a dot.
 - Look: content is one column capped at 720px; groups are flat cards (panel, 1px line, no shadow); one filled primary button per group (dimmed, still filled, when disabled), destructive actions in danger; form labels sit above full-width fields, buttons, text fields (`KyField`) and the theme box take the 8px control radius; never accent text on accent-soft.
 - Settings keys: `appearance/pair`, `appearance/mode` and (Flatpak only) `autostart/enabled` in the app's QSettings. A legacy `theme` value migrates once: Busnes Light/Dark keep that half forced; anything removed becomes Busnes following the system.
-- Flatpak: `~/KyDrive` only, plus `org.freedesktop.secrets` for go-keyring (it needs the Secret Service itself, not the Secret portal). The Go module is built with network access, so a Flathub build needs vendored modules.
+- Flatpak: `~/KyDrive` and `~/KyDrive Accounts` only, plus `org.freedesktop.secrets` for go-keyring (it needs the Secret Service itself, not the Secret portal). The Go module is built with network access, so a Flathub build needs vendored modules.
+
+- Account controls list identity/server/organization, add via browser approval, and remove only the selected account. Each client request carries its own `AccountID`; switching clears workspace choices and notification cursors.
 
 ## Work Guidance
 - Build in a capped scope (root `AGENTS.md`).

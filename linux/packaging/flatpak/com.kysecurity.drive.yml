@@ -12,6 +12,7 @@ finish-args:
   - --share=network
   - --device=dri
   - --filesystem=~/KyDrive:create
+  - --filesystem=~/KyDrive Accounts:create
   # go-keyring speaks the Secret Service D-Bus API itself, so it needs the service, not the
   # Secret portal (which only hands out an app key for a local store).
   - --talk-name=org.freedesktop.secrets

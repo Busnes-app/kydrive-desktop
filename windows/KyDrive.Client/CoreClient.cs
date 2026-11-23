@@ -7,7 +7,12 @@ namespace KyDrive;
 
 // Wire shapes of core/cmd/kydrive-sync/rpc.go and core/engine/db.go.
 public sealed record Status(bool Linked, string? Server, string? DevicesURL, string? Root, string? State, string? Error,
-    bool Paused, long LastSync, WorkspaceStatus[]? Workspaces, string? Version = null);
+    bool Paused, long LastSync, WorkspaceStatus[]? Workspaces, string? Version = null, string? AccountID = null);
+
+public sealed record DriveAccount(string ID, string Server, string User, string OrgID)
+{
+    public string Label => User + " — " + Server + (string.IsNullOrEmpty(OrgID) ? "" : " — " + OrgID);
+}
 
 public sealed record WorkspaceStatus(string ID, string Name, string Dir, int HeldDeletes);
 
@@ -58,8 +63,12 @@ public sealed class CoreNotRunningException(string message) : CoreException(mess
 // The shell's only link to kydrive-sync: JSON-RPC 1.0 ("Core.<Method>", one JSON object per
 // line) over the core's AF_UNIX socket, one connection per call so a held Link never blocks
 // the others. No sync logic: it returns what the core reports.
-public sealed class CoreClient(string socketPath)
+public sealed class CoreClient(string socketPath, string accountID = "")
 {
+    public string AccountID => accountID;
+    public CoreClient ForAccount(string id) => new(socketPath, id);
+    public async Task<DriveAccount[]> Accounts(CancellationToken ct = default) => await Call<DriveAccount[]?>("Accounts", null, ct) ?? [];
+    public Task<DriveAccount> AddAccount(string server, string name, CancellationToken ct = default) => Call<DriveAccount>("AddAccount", new {Server = server, Name = name}, ct);
     public Task<Status> Status(CancellationToken ct = default) => Call<Status>("Status", null, ct);
     public async Task<Choice[]> Workspaces(CancellationToken ct = default) => await Call<Choice[]?>("Workspaces", null, ct) ?? [];
     public async Task<Issue[]> Conflicts(CancellationToken ct = default) => await Call<Issue[]?>("Conflicts", null, ct) ?? [];
@@ -71,7 +80,7 @@ public sealed class CoreClient(string socketPath)
     public Task CancelLink(CancellationToken ct = default) => Call<object>("CancelLink", null, ct);
     // Ends an idle core so a newer one can start; refused while it syncs.
     public Task Quit(CancellationToken ct = default) => Call<object>("Quit", null, ct);
-    public Task Unlink(bool removeFiles, CancellationToken ct = default) => Call<object>("Unlink", new { RemoveFiles = removeFiles }, ct);
+    public Task Unlink(bool removeFiles, CancellationToken ct = default) => Call<object>("RemoveAccount", new { RemoveFiles = removeFiles }, ct);
     public Task Choose(IEnumerable<string> ids, CancellationToken ct = default) => Call<object>("Choose", new { IDs = ids.ToArray() }, ct);
     public Task Pause(bool paused, CancellationToken ct = default) => Call<object>("Pause", new { Paused = paused }, ct);
     public Task ConfirmDeletes(string workspace, bool allow, CancellationToken ct = default) => Call<object>("ConfirmDeletes", new { Workspace = workspace, Allow = allow }, ct);
@@ -108,7 +117,9 @@ public sealed class CoreClient(string socketPath)
         try
         {
             await using var stream = new NetworkStream(socket);
-            var request = JsonSerializer.SerializeToUtf8Bytes(new { method = "Core." + method, @params = new[] { args ?? new object() }, id = 1 });
+            var scoped = args == null ? new Dictionary<string, JsonElement>() : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(args))!;
+            if (method != "Accounts" && method != "AddAccount") scoped["AccountID"] = JsonSerializer.SerializeToElement(accountID);
+            var request = JsonSerializer.SerializeToUtf8Bytes(new { method = "Core." + method, @params = new[] { scoped }, id = 1 });
             await stream.WriteAsync(request.Append((byte)'\n').ToArray(), ct);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             using var reply = JsonDocument.Parse(await reader.ReadLineAsync(ct) ?? throw new IOException("connection closed"));

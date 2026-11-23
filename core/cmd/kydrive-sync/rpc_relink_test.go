@@ -87,7 +87,7 @@ func TestLinkRefusesActivationWhenWorkspaceResetFails(t *testing.T) {
 	if token != "" {
 		t.Fatal("failed link activated a credential")
 	}
-	if _, err := keyring.Get(keyringService, srv.URL); !errors.Is(err, keyring.ErrNotFound) {
+	if _, err := keyring.Get(keyringService, d.credentialID()); !errors.Is(err, keyring.ErrNotFound) {
 		t.Fatal("failed workspace reset published a new keyring credential", err)
 	}
 }

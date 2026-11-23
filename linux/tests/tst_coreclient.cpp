@@ -20,6 +20,23 @@ class TestCoreClient : public QObject
 {
     Q_OBJECT
 private slots:
+    void requestsKeepTheirAccount()
+    {
+        QTemporaryDir dir;
+        FakeCore core(dir.filePath(QStringLiteral("sync.sock")));
+        CoreClient client(dir.filePath(QStringLiteral("sync.sock")), QString());
+        client.selectAccount(QStringLiteral("one"));
+        client.pause(true);
+        client.selectAccount(QStringLiteral("two"));
+        client.pause(false);
+        QTRY_VERIFY(core.methods.count(QStringLiteral("Core.Pause")) == 2);
+        QStringList ids;
+        for (const auto& req : core.requests)
+            if (req.value(QStringLiteral("method")).toString() == QStringLiteral("Core.Pause"))
+                ids << req.value(QStringLiteral("params")).toArray().first().toObject().value(QStringLiteral("AccountID")).toString();
+        QCOMPARE(ids, QStringList({QStringLiteral("one"),QStringLiteral("two")}));
+    }
+
     void refreshFillsStatusAndConflicts()
     {
         QTemporaryDir dir;

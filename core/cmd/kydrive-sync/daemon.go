@@ -24,7 +24,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-// keyringService names the OS keyring item; its user is the server origin.
+// keyringService names the OS keyring item; its user is account:<identity hash> (origin only until legacy migration).
 const keyringService = "KyDrive"
 
 const (
@@ -34,6 +34,8 @@ const (
 )
 
 type daemon struct {
+	manager         *accountManager
+	prepareAccount  func(string, api.Token) error
 	dir, root, sock string
 	db              *engine.DB
 	http            *http.Client
@@ -69,6 +71,10 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := db.Set("identity_checked", ""); err != nil {
+		db.Close()
+		return nil, err
+	}
 	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, exit: os.Exit, kick: make(chan bool, 1), state: "unlinked", memory: engine.NewMemory(),
 		http: &http.Client{
 			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute},
@@ -76,7 +82,11 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
 	if server := db.Get("server"); server != "" {
-		tok, key, pin, err := loadCredential(server)
+		if err := d.migrateCredential(); err != nil {
+			db.Close()
+			return nil, err
+		}
+		tok, key, pin, err := loadCredential(d.credentialID())
 		if err != nil {
 			d.state, d.lastErr = "signed_out", "the keyring holds no KyDrive credential; sign in again"
 		} else {
@@ -121,7 +131,11 @@ func (d *daemon) listen() (net.Listener, error) {
 
 func (d *daemon) serve(ctx context.Context, ln net.Listener) {
 	srv := rpc.NewServer()
-	srv.RegisterName("Core", &Core{d: d, ctx: ctx})
+	if d.manager != nil {
+		srv.RegisterName("Core", &AccountsCore{m: d.manager})
+	} else {
+		srv.RegisterName("Core", &Core{d: d, ctx: ctx})
+	}
 	var delay time.Duration
 	for {
 		c, err := ln.Accept()
@@ -252,7 +266,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	e.Context = ctx
 	// A wipe the server asked for continues even after the credential is gone.
 	if err := e.ResumeWipe(); err != nil {
-		log.Printf("wipe: %v", err)
+		log.Print("wipe unfinished; see account status")
 	}
 	retried := d.retry()
 	d.mu.Lock()
@@ -275,6 +289,9 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		time.AfterFunc(settle+time.Second, func() { d.trigger(true) })
 	}
 
+	if err == nil {
+		err = d.migrateCredential()
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	switch {
@@ -296,7 +313,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		d.state, d.lastErr = "idle", ""
 	case err != nil:
 		d.state, d.lastErr = "error", err.Error()
-		log.Printf("sync: %v", err)
+		log.Print("sync failed; see account status")
 	default:
 		d.state, d.lastErr, d.lastSync, d.backoff = "idle", "", time.Now().Unix(), 0
 	}
@@ -312,7 +329,7 @@ func (d *daemon) retry() bool {
 	if !due {
 		return false
 	}
-	tok, key, pin, err := loadCredential(d.db.Get("server"))
+	tok, key, pin, err := loadCredential(d.credentialID())
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.state != "signed_out" {
@@ -363,7 +380,7 @@ func (s *sessionPins) Replace(old, new api.Pin) bool {
 	if d.token != s.token || d.pin != old {
 		return false
 	}
-	if err := storeCredential(d.db.Get("server"), d.token, d.key, new); err != nil {
+	if err := storeCredential(d.credentialID(), d.token, d.key, new); err != nil {
 		log.Printf("keyring: %v", err)
 		return false
 	}
@@ -373,7 +390,7 @@ func (s *sessionPins) Replace(old, new api.Pin) bool {
 
 // forget deletes the credential and its signing key from the keyring. The caller holds d.mu.
 func (d *daemon) forget() {
-	if err := keyring.Delete(keyringService, d.db.Get("server")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+	if err := keyring.Delete(keyringService, d.credentialID()); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		log.Printf("keyring: %v", err)
 	}
 	d.token, d.key, d.pin, d.pins = "", nil, api.Pin{}, nil

@@ -132,7 +132,7 @@ func TestTokenOnlyInKeyring(t *testing.T) {
 	if err := ctl("Link", map[string]string{"Server": srv.URL, "Name": "laptop"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	tok, key, _, err := loadCredential(srv.URL)
+	tok, key, _, err := loadCredential(d.credentialID())
 	if err != nil || tok != "kyd_SECRETTOKEN" || key == nil {
 		t.Fatalf("keyring holds %q, key %v, %v", tok, key != nil, err)
 	}
@@ -170,7 +170,7 @@ func TestLinkRefusesPlainHTTP(t *testing.T) {
 func TestUnlinkDeletesKeyringItem(t *testing.T) {
 	selfRevoked.Store(0)
 	srv := server(t)
-	_, ctl := start(t, srv)
+	d, ctl := start(t, srv)
 	var out struct{}
 	if err := ctl("Link", map[string]string{"Server": srv.URL}, &out); err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestUnlinkDeletesKeyringItem(t *testing.T) {
 	if err := ctl("Unlink", map[string]bool{"RemoveFiles": false}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := keyring.Get(keyringService, srv.URL); err != keyring.ErrNotFound {
+	if _, err := keyring.Get(keyringService, d.credentialID()); err != keyring.ErrNotFound {
 		t.Fatalf("keyring item survived unlink: %v", err)
 	}
 	if selfRevoked.Load() != 1 {

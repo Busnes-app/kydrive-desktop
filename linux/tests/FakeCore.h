@@ -23,6 +23,8 @@ public:
         });
     }
     QList<QString> methods;
+    QList<QJsonObject> requests;
+    QJsonArray accounts;
     qint64 activityId = 7;
     QString activityMessage = QStringLiteral("Lost access to Docs");
     QJsonObject status{{QStringLiteral("Linked"), true}, {QStringLiteral("State"), QStringLiteral("idle")}};
@@ -34,8 +36,11 @@ private:
     {
         const QString method = req[QStringLiteral("method")].toString();
         methods << method;
+        requests << req;
         QJsonValue result;
-        if (method == QStringLiteral("Core.Status"))
+        if (method == QStringLiteral("Core.Accounts"))
+            result = accounts;
+        else if (method == QStringLiteral("Core.Status"))
             result = status;
         else if (method == QStringLiteral("Core.Conflicts"))
             result = conflicts;

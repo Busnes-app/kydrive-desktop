@@ -16,6 +16,8 @@
 class CoreClient : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantList accounts READ accounts NOTIFY accountsChanged)
+    Q_PROPERTY(QString accountID READ accountID NOTIFY accountsChanged)
     Q_PROPERTY(QVariantMap status READ status NOTIFY statusChanged)
     Q_PROPERTY(QVariantList workspaces READ workspaces NOTIFY workspacesChanged)
     Q_PROPERTY(QVariantList conflicts READ conflicts NOTIFY conflictsChanged)
@@ -32,6 +34,10 @@ public:
 
     static QString defaultSocketPath();
 
+    QVariantList accounts() const { return m_accounts; }
+    QString accountID() const { return m_accountID; }
+    Q_INVOKABLE void selectAccount(const QString& id);
+    Q_INVOKABLE void addAccount(const QString& server, const QString& name);
     QVariantMap status() const { return m_status; }
     QVariantList workspaces() const { return m_workspaces; }
     QVariantList conflicts() const { return m_conflicts; }
@@ -54,6 +60,7 @@ public:
     Q_INVOKABLE void openInBrowser();
 
 signals:
+    void accountsChanged();
     void statusChanged();
     void workspacesChanged();
     void conflictsChanged();
@@ -86,6 +93,8 @@ private:
     QString m_quitVersion; // the version it reported: one that comes back is the installed core
     bool m_unversionedEnded = false; // an unversioned (0.6.0) core was sent SIGTERM
     bool m_linking = false;
+    QVariantList m_accounts;
+    QString m_accountID;
     QVariantMap m_status;
     QVariantList m_workspaces;
     QVariantList m_conflicts;

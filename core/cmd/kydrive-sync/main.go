@@ -18,13 +18,13 @@ import (
 )
 
 // version is this release; docs/RELEASING.md lists it with the shells' version fields.
-const version = "0.6.1"
+const version = "0.7.0"
 
 func main() {
 	log.SetFlags(0)
 	dir, root, sock, err := paths()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("could not initialize KyDrive; check state permissions and whether another core is running")
 	}
 	switch {
 	case len(os.Args) > 1 && os.Args[1] == "ctl":
@@ -37,20 +37,26 @@ func main() {
 		// Earlier releases kept state in roaming %APPDATA%.
 		if cfg, err := os.UserConfigDir(); err == nil {
 			if err := moveState(filepath.Join(cfg, "kydrive"), dir); err != nil {
-				log.Fatal(err)
+				log.Fatal("could not initialize KyDrive; check state permissions and whether another core is running")
 			}
 		}
 	}
 	d, err := newDaemon(dir, root, sock)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("could not initialize KyDrive; check state permissions and whether another core is running")
 	}
 	ln, err := d.listen()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("could not initialize KyDrive; check state permissions and whether another core is running")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	m, err := newAccountManager(ctx, d)
+	if err != nil {
+		log.Fatal("could not load KyDrive accounts")
+	}
+	d.manager = m
+	m.start()
 	go d.serve(ctx, ln)
 	d.run(ctx)
 	ln.Close()
@@ -68,7 +74,7 @@ func paths() (dir, root, sock string, err error) {
 		return
 	}
 	if !filepath.IsAbs(cfg) {
-		return "", "", "", fmt.Errorf("state directory %q is not absolute", cfg)
+		return "", "", "", fmt.Errorf("state directory is not absolute")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -90,7 +96,7 @@ func moveState(old, dir string) error {
 		return nil
 	}
 	if _, err := os.Stat(filepath.Join(dir, "state.db")); err == nil {
-		log.Printf("ignoring old state in %s: %s already has state", old, dir)
+		log.Print("ignoring old roaming state: local state already exists")
 		return nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -98,7 +104,7 @@ func moveState(old, dir string) error {
 	}
 	for _, n := range []string{"state.db-wal", "state.db-shm", "state.db"} { // the database last
 		if err := os.Rename(filepath.Join(old, n), filepath.Join(dir, n)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("moving %s to %s: %w", n, dir, err)
+			return fmt.Errorf("could not move old roaming state")
 		}
 	}
 	return nil
@@ -106,7 +112,7 @@ func moveState(old, dir string) error {
 
 func ctl(sock string, args []string) int {
 	if len(args) == 0 || len(args) > 2 {
-		fmt.Fprintln(os.Stderr, "usage: kydrive-sync ctl METHOD [JSON-PARAMS]\nmethods: Status Link SignIn CancelLink Unlink Workspaces Choose Pause Conflicts Activity ConfirmDeletes Quit")
+		fmt.Fprintln(os.Stderr, "usage: kydrive-sync ctl METHOD [JSON-PARAMS]\nmethods: Accounts AddAccount RemoveAccount Status Link SignIn CancelLink Unlink Workspaces Choose Pause Conflicts Activity ConfirmDeletes Quit")
 		return 2
 	}
 	params := "{}"

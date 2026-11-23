@@ -66,6 +66,16 @@ final class CoreClientTests: XCTestCase {
         XCTAssertThrowsError(try unixAddress("/" + String(repeating: "a", count: 103)))
     }
 
+    func testRequestsKeepTheirAccount() async throws {
+        var one = CoreClient(socketPath: fake.path)
+        one.accountID = "one"
+        var two = one
+        two.accountID = "two"
+        let _: Empty = try await one.call("Pause", ["Paused": true])
+        let _: Empty = try await two.call("Pause", ["Paused": false])
+        XCTAssertEqual(fake.params("Core.Pause").compactMap { $0["AccountID"] as? String }, ["one", "two"])
+    }
+
     func testRefreshFillsStatusAndConflicts() async {
         fake.answer("Core.Conflicts", [["ID": 1, "Workspace": "w", "Path": "a (conflict).txt", "Kind": "conflict", "Detail": "kept both", "Created": 0]])
         await model.refresh()
@@ -73,7 +83,7 @@ final class CoreClientTests: XCTestCase {
         XCTAssertTrue(model.status.linked)
         XCTAssertEqual(model.status.state, "idle")
         XCTAssertEqual(model.conflicts.map(\.path), ["a (conflict).txt"])
-        XCTAssertEqual(fake.methods.prefix(3), ["Core.Status", "Core.Conflicts", "Core.Activity"])
+        XCTAssertEqual(fake.methods.prefix(4), ["Core.Accounts", "Core.Status", "Core.Conflicts", "Core.Activity"])
     }
 
     func testActionsSendTheCoresParams() async {
@@ -85,7 +95,7 @@ final class CoreClientTests: XCTestCase {
         XCTAssertEqual(fake.params("Core.Pause").first?["Paused"] as? Bool, true)
         XCTAssertEqual(fake.params("Core.ConfirmDeletes").first?["Workspace"] as? String, "w")
         XCTAssertEqual(fake.params("Core.ConfirmDeletes").first?["Allow"] as? Bool, true)
-        XCTAssertEqual(fake.params("Core.Unlink").first?["RemoveFiles"] as? Bool, true)
+        XCTAssertEqual(fake.params("Core.RemoveAccount").first?["RemoveFiles"] as? Bool, true)
     }
 
     // A failed action's error stays up through the refresh that follows it.

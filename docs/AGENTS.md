@@ -13,6 +13,7 @@ Own the product's user manual and documentation workflow.
 
 - `book.toml` and `src/` own the user manual; `src/SUMMARY.md` lists every chapter.
 - Describe implemented behavior and preserve release/readiness limits. Root README and referenced runbooks remain authoritative for exact commands and policy.
+- `src/using.md` owns account addition, selection, removal and migration behavior.
 - Keep setup, user tasks, troubleshooting, security references and contribution guidance current when product behavior changes.
 - `book/` is generated and ignored. `.github/workflows/docs.yml` builds/checks the book and uploads an artifact; public-site publication is separate.
 - Verify with `mdbook build docs` and `python3 docs/check-links.py` from the repository root. The checker validates generated local links/anchors, not external URLs.

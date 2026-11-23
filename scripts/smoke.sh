@@ -7,15 +7,12 @@ SRV_BIN=$1 SYNC_BIN=$2
 W=$(mktemp -d)
 PORT=18471
 BASE=http://127.0.0.1:$PORT
-FAIL=0
-ok() { echo "  [ok]   $1"; }
-bad() { echo "  [FAIL] $1"; FAIL=1; }
 cleanup() { kill "${SYNC_PID:-}" "${SRV_PID:-}" 2>/dev/null || :; wait 2>/dev/null || :; rm -rf "$W"; }
 trap cleanup EXIT
 
 KY_ENV=development KY_CAPTCHA_PROVIDER=none KY_DB_DRIVER=sqlite KY_DATA_DIR=$W/data KY_BACKUP_DIR=$W/backups \
   KY_HOST=127.0.0.1 KY_PORT=$PORT KY_APP_URL=$BASE KY_ADMIN_PASSWORD='SmokeBootPass123!' \
-  KY_SCIM_ENABLED=true KY_SCIM_TOKEN=smoke-scim-token-0123456789 PUSH_RELAY_URL= APNS_RELAY_URL= "$SRV_BIN" >"$W/server.log" 2>&1 &
+  KY_SCIM_ENABLED=true KY_SCIM_TOKEN=smoke-scim-token-0123456789 PUSH_RELAY_URL='' APNS_RELAY_URL='' "$SRV_BIN" >"$W/server.log" 2>&1 &
 SRV_PID=$!
 curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-all-errors "$BASE/healthz"
 
@@ -25,6 +22,7 @@ curl "${J[@]}" -d '{"username":"admin","password":"SmokeBootPass123!"}' "$BASE/a
 curl "${J[@]}" -H "X-CSRF-Token: $(csrf)" -d '{"current_password":"SmokeBootPass123!","new_password":"SmokeFinalPass456!"}' "$BASE/api/auth/change-password" >/dev/null
 curl "${J[@]}" -d '{"username":"admin","password":"SmokeFinalPass456!"}' "$BASE/api/auth/login" >/dev/null
 ME=$(curl "${J[@]}" "$BASE/api/auth/me" | jq -r .user.id)
+ACCOUNT_KEY=$(python3 -c 'import hashlib,json,sys; print("account:"+hashlib.sha256(json.dumps(["kydrive-local",sys.argv[1],sys.argv[1],sys.argv[2],""],separators=(",", ":")).encode()).hexdigest())' "$BASE" "$ME")
 GROUP=$(curl -s -H 'Authorization: Bearer smoke-scim-token-0123456789' -H 'Content-Type: application/scim+json' \
   -d '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"sync","members":[{"value":"'"$ME"'"}]}' "$BASE/scim/v2/Groups" | jq -r .id)
 WS=$(curl "${J[@]}" -H "X-CSRF-Token: $(csrf)" -d '{"name":"Docs","quota":1073741824}' "$BASE/api/drive/workspaces" | jq -r .id)
@@ -66,9 +64,9 @@ signed() {
 [ "\$(stat -c %a "$W/run/kydrive/sync.sock")" = 600 ] && ok "socket is 0600" || bad "socket mode \$(stat -c %a "$W/run/kydrive/sync.sock")"
 [ "\$(stat -c %a "$W/run/kydrive")" = 700 ] && ok "socket dir is 0700" || bad "socket dir mode"
 ctl Link '{"Server":"$BASE","Name":"smoke laptop"}' >/dev/null && ok "Link via the approve page" || bad "Link"
-ITEM=\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null || :)
+ITEM=\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null || :)
 TOKEN=\${ITEM%% *} KEY=\${ITEM#* }
-case "\$TOKEN" in kyd_*) ok "token is in the Secret Service keyring";; *) bad "keyring lookup: '\$TOKEN'";; esac
+case "\$TOKEN" in kyd_*) ok "token is in the Secret Service keyring";; *) bad "keyring lookup failed";; esac
 [ -n "\$KEY" ] && [ "\$KEY" != "\$ITEM" ] && ok "signing key is beside the token" || bad "no signing key in the keyring item"
 [ "\$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer \$TOKEN" "$BASE/api/drive/workspaces")" = 401 ] && ok "the token alone is refused" || bad "unsigned request accepted"
 ctl Workspaces | grep -q '"Name": "Docs"' && ok "Workspaces lists Docs" || bad "Workspaces"
@@ -88,15 +86,15 @@ ctl Pause '{"Paused":false}' >/dev/null
 waitfor 'ctl Status | grep -q "\"State\": \"revoked\""' && ok "revoke reaches the core" || bad "not revoked: \$(ctl Status)"
 [ ! -e "$HOME/KyDrive/Docs/local.txt" ] && ok "wipe removed the synced copy" || bad "synced copy kept"
 [ "\$(cat "$HOME/KyDrive/Unsynced/Docs/hello.txt" 2>/dev/null)" = "unuploaded edit" ] && ok "unuploaded edit kept in Unsynced/" || bad "edit lost: \$(find "$HOME/KyDrive")"
-[ -z "\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null)" ] && ok "keyring item deleted" || bad "keyring item survived"
+[ -z "\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null)" ] && ok "keyring item deleted" || bad "keyring item survived"
 ctl Link '{"Server":"$BASE","Name":"smoke laptop"}' >/dev/null && ok "Link again after a revoke" || bad "relink"
-ITEM2=\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null || :)
+ITEM2=\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null || :)
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 1 ] && ok "server lists the new device" || bad "device list"
 signed "\$ITEM2" /api/drive/workspaces | grep -q '"Docs"' && ok "a signed request is accepted" || bad "signed request: \$(signed "\$ITEM2" /api/drive/workspaces)"
 ctl Unlink '{"RemoveFiles":false}' >/dev/null && ok "Unlink" || bad "Unlink"
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 0 ] && ok "Unlink revoked the device on the server" || bad "device still listed"
 signed "\$ITEM2" /api/drive/workspaces | grep -q '"error":"device_revoked","wipe":false' && ok "old token, signed with its key, answers device_revoked without wipe" || bad "old token: \$(signed "\$ITEM2" /api/drive/workspaces)"
-[ -z "\$(secret-tool lookup service KyDrive username "$BASE" 2>/dev/null)" ] && ok "Unlink deleted the keyring item" || bad "keyring item survived Unlink"
+[ -z "\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null)" ] && ok "Unlink deleted the keyring item" || bad "keyring item survived Unlink"
 [ \$FAIL = 0 ] || tail -20 "$W/sync.log"
 kill \$SYNC_PID; wait \$SYNC_PID 2>/dev/null
 exit \$FAIL

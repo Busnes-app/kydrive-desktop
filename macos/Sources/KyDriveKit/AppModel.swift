@@ -4,6 +4,7 @@ import UserNotifications
 /// What the menu shows. Holds no sync logic: every value comes from the core's answers.
 @MainActor
 public final class AppModel: ObservableObject {
+    @Published private(set) var accounts: [DriveAccount] = []
     @Published private(set) var status = Status()
     @Published private(set) var workspaces: [Choice] = []
     @Published private(set) var conflicts: [Issue] = []
@@ -31,9 +32,10 @@ public final class AppModel: ObservableObject {
     private var unversionedEnded: Date?
     @Published private(set) var olderRunning = false // an unversioned core could not be ended
 
-    let core: CoreClient
+    var core: CoreClient
     private var lastActivity: Int64 = -1
     private var refreshing = false
+    private var actions = 0
     private var timer: Timer?
 
     public init(core: CoreClient) { self.core = core }
@@ -60,7 +62,17 @@ public final class AppModel: ObservableObject {
         defer { refreshing = false }
         startAtLogin = startsAtLogin()
         do {
-            let s: Status = try await core.call("Status")
+            let startedWith = core.accountID
+            let list: [DriveAccount] = (try? await core.call("Accounts")) ?? []
+            guard startedWith == core.accountID else { return }
+            accounts = list
+            if !accounts.isEmpty && !accounts.contains(where: { $0.id == core.accountID }) {
+                core.accountID = accounts[0].id
+                workspaces = []; conflicts = []; lastActivity = -1
+            }
+            let client = core
+            let s: Status = try await client.call("Status")
+            guard client.accountID == core.accountID else { return }
             let wasLinked = status.linked
             status = s
             offline = nil
@@ -79,8 +91,11 @@ public final class AppModel: ObservableObject {
                     olderRunning = !end()
                 }
             }
-            conflicts = try await core.call("Conflicts")
-            announce(try await core.call("Activity", ["After": max(lastActivity, 0)]))
+            let issues: [Issue] = try await client.call("Conflicts")
+            let activity: [Activity] = try await client.call("Activity", ["After": max(lastActivity, 0)])
+            guard client.accountID == core.accountID else { return }
+            conflicts = issues
+            announce(activity)
             if s.linked && !wasLinked { await loadWorkspaces() }
         } catch {
             offline = error.localizedDescription
@@ -99,8 +114,11 @@ public final class AppModel: ObservableObject {
     }
 
     func loadWorkspaces() async {
+        let selected = core.accountID
         do {
-            workspaces = try await core.call("Workspaces")
+            let list: [Choice] = try await core.call("Workspaces")
+            guard selected == core.accountID else { return }
+            workspaces = list
             actionError = ""
         } catch {
             actionError = error.localizedDescription
@@ -109,7 +127,26 @@ public final class AppModel: ObservableObject {
 
     /// Link and SignIn return once the user approves in the browser, after the core's
     /// ten-minute timeout, or on CancelLink.
-    func link(server: String, name: String) async { await waitForBrowser("Link", ["Server": server, "Name": name]) }
+    func link(server: String, name: String) async {
+        if accounts.isEmpty { await waitForBrowser("Link", ["Server": server, "Name": name]); return }
+        linking = true
+        do {
+            let account: DriveAccount = try await core.call("AddAccount", ["Server": server, "Name": name])
+            core.accountID = account.id
+            workspaces = []; conflicts = []; lastActivity = -1
+            actionError = ""
+        } catch { actionError = error.localizedDescription }
+        linking = false
+        await refresh()
+        if actionError.isEmpty { await loadWorkspaces() }
+    }
+    func selectAccount(_ id: String) async {
+        guard !linking, !refreshing, actions == 0 else { return }
+        core.accountID = id
+        status = Status(); workspaces = []; conflicts = []; lastActivity = -1
+        await refresh()
+        if status.linked { await loadWorkspaces() }
+    }
     func signIn() async { await waitForBrowser("SignIn", [:]) }
     func cancelLink() async { await act("CancelLink", [:]) }
 
@@ -130,7 +167,7 @@ public final class AppModel: ObservableObject {
         startAtLogin = startsAtLogin()
     }
 
-    func unlink(removeFiles: Bool) async { await act("Unlink", ["RemoveFiles": removeFiles]) }
+    func unlink(removeFiles: Bool) async { await act("RemoveAccount", ["RemoveFiles": removeFiles]); await selectAccount("") }
     func pause(_ paused: Bool) async { await act("Pause", ["Paused": paused]) }
     func confirmDeletes(workspace: String, allow: Bool) async {
         await act("ConfirmDeletes", ["Workspace": workspace, "Allow": allow])
@@ -141,6 +178,7 @@ public final class AppModel: ObservableObject {
     }
 
     private func act(_ method: String, _ params: [String: Any]) async {
+        actions += 1; defer { actions -= 1 }
         do {
             let _: Empty = try await core.call(method, params)
             actionError = ""

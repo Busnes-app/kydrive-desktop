@@ -1,0 +1,101 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"strings"
+
+	"github.com/Busnes-app/kydrive-desktop/core/api"
+	"github.com/zalando/go-keyring"
+)
+
+// Hash a length-delimited tuple, never a username or token. Legacy local IDs have
+// their own namespace; they are not KyIdentity subjects.
+func accountID(server string, a api.Account) string {
+	namespace := "kyidentity"
+	if a.Issuer == "" && a.Sub == "" && a.OrgID == "" {
+		if a.UserID == "" {
+			return ""
+		}
+		namespace, a.Issuer, a.Sub = "kydrive-local", server, a.UserID
+	}
+	if a.Issuer == "" || a.Sub == "" {
+		return ""
+	}
+	b, _ := json.Marshal([]string{namespace, server, a.Issuer, a.Sub, a.OrgID})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func tokenAccount(t api.Token) api.Account {
+	return api.Account{Issuer: t.Issuer, Sub: t.Sub, OrgID: t.OrgID, UserID: t.UserID, User: t.User}
+}
+
+func (d *daemon) account() api.Account {
+	return api.Account{Issuer: d.db.Get("issuer"), Sub: d.db.Get("sub"), OrgID: d.db.Get("org_id"), UserID: d.db.Get("user_id"), User: d.db.Get("user")}
+}
+
+func (d *daemon) credentialID() string {
+	if id := d.db.Get("account_id"); id != "" {
+		return "account:" + id
+	}
+	if slot := d.db.Get("credential_slot"); slot != "" {
+		return slot
+	}
+	return d.db.Get("server") // only an existing link whose identity is not known yet
+}
+
+// Copy, commit the pointer, then remove the old item. A crash at any boundary
+// leaves at least one credential, and retry never overwrites a different link.
+// Caller owns d.work (or the daemon has not started).
+func (d *daemon) migrateCredential() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.migrateCredentialLocked()
+}
+func (d *daemon) migrateCredentialLocked() error {
+	server := d.db.Get("server")
+	id := accountID(server, d.account())
+	if server == "" || id == "" {
+		return nil
+	}
+	old := d.credentialID()
+	target := "account:" + id
+	if old == target {
+		if source := d.db.Get("credential_migration"); source != "" && source != target {
+			if err := keyring.Delete(keyringService, d.db.Get("credential_migration")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+				return errors.New("could not finish credential migration")
+			}
+			return d.db.Set("credential_migration", "")
+		}
+		return nil
+	}
+	value, err := keyring.Get(keyringService, old)
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("could not read credential for migration")
+	}
+	prior, err := keyring.Get(keyringService, target)
+	if err == nil && prior != value {
+		return errors.New("this account already has a different device link")
+	}
+	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return errors.New("could not read account credential")
+	}
+	if err := keyring.Set(keyringService, target, value); err != nil {
+		return errors.New("could not migrate account credential")
+	}
+	if err := d.db.SetConfig(map[string]string{"credential_migration": old, "account_id": id, "credential_slot": target}); err != nil {
+		return err
+	}
+	return d.migrateCredentialLocked()
+}
+
+func validAccountID(id string) bool {
+	b, err := hex.DecodeString(id)
+	return err == nil && len(b) == 32 && strings.ToLower(id) == id
+}

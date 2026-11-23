@@ -48,7 +48,7 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 2. **Shell → core**, over a local socket: on Unix a `0600` socket in a `0700` directory; on
    Windows the per-user `%LOCALAPPDATA%` profile's ACL. Shells contain no sync logic.
 3. **Browser → loopback listener** during linking: PKCE plus a random `state`.
-4. **Core → OS keyring** for the token, signing key and TLS pin.
+4. **Core → OS keyring** for each account’s token, signing key and TLS pin. Account entries use a SHA-256 hash of the server origin, KyIdentity issuer, subject and optional organization; old local-user IDs use a separate namespace. Migration copies the complete credential before committing an atomic database pointer/cleanup marker, then deletes the old entry. `Accounts` and scoped RPCs expose no credentials. Each account owns its database, root, watcher and retry memory; opaque request selectors prevent a UI switch from redirecting another account’s operation. The original installation keeps its paths; new roots are siblings under `~/KyDrive Accounts`. Tests in `accounts_test.go` cover shared-origin isolation, migration/retry, removal, duplicate refusal and restart.
 5. **Release workflow → user**: SHA-256 checksums and build provenance attestations
    ([VERIFYING-RELEASES.md](VERIFYING-RELEASES.md)).
 

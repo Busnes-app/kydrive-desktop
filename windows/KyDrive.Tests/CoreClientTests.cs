@@ -22,6 +22,16 @@ public class CoreClientTests
     }
 
     [Fact]
+    public async Task RequestsKeepTheirAccount()
+    {
+        using var core = new FakeCore();
+        var client = new CoreClient(core.Path);
+        await client.ForAccount("one").Pause(true);
+        await client.ForAccount("two").Pause(false);
+        Assert.Equal(new[] {"one", "two"},core.Requests.Select(r => (string?)r["params"]![0]!["AccountID"]));
+    }
+
+    [Fact]
     public async Task RequestIsOneJsonRpc10Line()
     {
         using var core = new FakeCore();
