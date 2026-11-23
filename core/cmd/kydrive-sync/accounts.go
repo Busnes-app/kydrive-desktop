@@ -182,6 +182,8 @@ func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
 		}
 	}()
 	d.http, d.open = m.primary.http, m.primary.open
+	var storageID string
+	var retained *daemon
 	d.prepareAccount = func(server string, t api.Token) error {
 		id := accountID(server, tokenAccount(t))
 		if id == "" {
@@ -193,11 +195,19 @@ func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		if existing := m.accounts[id]; existing != nil && existing.db.Get("wipe") != "" {
-			return errors.New("this account still has an unfinished file removal; retry when it completes")
-		}
-
+		storageID = id
 		d.root = accountRoot(m.primary.root, id)
+		// Credential identity can migrate; the first storage selector and root stay owned.
+		for selector, existing := range m.accounts {
+			if existing.db.Get("account_id") != id {
+				continue
+			}
+			if existing.db.Get("wipe") != "" {
+				return errors.New("this account still has an unfinished file removal; retry when it completes")
+			}
+			storageID, retained, d.root = selector, existing, existing.root
+			break
+		}
 		return nil
 	}
 	m.mu.Lock()
@@ -208,13 +218,9 @@ func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
 		return err
 	}
 	cleanupKey = d.credentialID()
-	id := d.db.Get("account_id")
-	if err := d.db.Set("storage_id", id); err != nil {
+	if err := d.db.Set("storage_id", storageID); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	retained := m.accounts[id]
-	m.mu.Unlock()
 	if retained != nil {
 		unlock := retained.lockWork()
 		defer unlock()
@@ -224,17 +230,17 @@ func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
 		if err := retained.activate(d.db.Get("server"), d.db.Get("device"), api.Token{Token: d.token, Key: d.key, Pin: d.pin, User: d.db.Get("user"), UserID: d.db.Get("user_id"), Issuer: d.db.Get("issuer"), Sub: d.db.Get("sub"), OrgID: d.db.Get("org_id"), DevicesURL: d.db.Get("devices_url")}); err != nil {
 			return err
 		}
-		*out = accountSummary(id, retained)
+		*out = accountSummary(storageID, retained)
 		committed = true
 		return nil
 	}
 	if err := d.db.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(staging, filepath.Join(dir, id)); err != nil {
+	if err := os.Rename(staging, filepath.Join(dir, storageID)); err != nil {
 		return errors.New("could not commit account state")
 	}
-	d.dir = filepath.Join(dir, id)
+	d.dir = filepath.Join(dir, storageID)
 	db, openErr := engine.Open(filepath.Join(d.dir, "state.db"))
 	if openErr != nil {
 		return openErr
@@ -243,10 +249,10 @@ func (m *accountManager) addAccount(in LinkArgs, out *AccountStatus) error {
 	owner := d
 	d.prepareAccount = func(server string, tok api.Token) error { return m.checkAccount(owner, server, tok) }
 	m.mu.Lock()
-	m.accounts[id] = d
+	m.accounts[storageID] = d
 	started := m.started
 	m.mu.Unlock()
-	*out = accountSummary(id, d)
+	*out = accountSummary(storageID, d)
 	if started {
 		go d.run(m.ctx)
 	}

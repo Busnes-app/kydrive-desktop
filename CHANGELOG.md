@@ -2,6 +2,8 @@
 
 ## 0.7.0 — pending
 
+- Re-add migrated accounts in their original database and sync folder, preserving the storage selector, state and retained files.
+
 - Preserve buffered TLS handshake bytes in the HTTPS proxy test fixture; keep strict pin-refusal and no-request assertions deterministic. Production transport behavior is unchanged.
 
 - Reject duplicate identities across primary and added account linking before changing bindings or credentials; unlinking an inactive primary cannot delete another account’s link.
