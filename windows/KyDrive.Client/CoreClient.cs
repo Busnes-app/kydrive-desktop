@@ -67,7 +67,17 @@ public sealed class CoreClient(string socketPath, string accountID = "")
 {
     public string AccountID => accountID;
     public CoreClient ForAccount(string id) => new(socketPath, id);
-    public async Task<DriveAccount[]> Accounts(CancellationToken ct = default) => await Call<DriveAccount[]?>("Accounts", null, ct) ?? [];
+    public CoreClient ForAccounts(DriveAccount[] accounts)
+    {
+        var id = accounts.FirstOrDefault(a => a.ID == accountID)?.ID ?? accounts.FirstOrDefault()?.ID ?? "";
+        return id == accountID ? this : ForAccount(id);
+    }
+    public async Task<DriveAccount[]> Accounts(CancellationToken ct = default)
+    {
+        try { return await Call<DriveAccount[]?>("Accounts", null, ct) ?? []; }
+        // Older single-account cores still need Status/Quit to finish their upgrade.
+        catch (CoreException e) when (e.Message == "rpc: can't find method Core.Accounts") { return []; }
+    }
     public Task<DriveAccount> AddAccount(string server, string name, CancellationToken ct = default) => Call<DriveAccount>("AddAccount", new {Server = server, Name = name}, ct);
     public Task<Status> Status(CancellationToken ct = default) => Call<Status>("Status", null, ct);
     public async Task<Choice[]> Workspaces(CancellationToken ct = default) => await Call<Choice[]?>("Workspaces", null, ct) ?? [];

@@ -15,6 +15,8 @@ sealed class FakeCore : IDisposable
 
     public string Path { get; }
     public ConcurrentQueue<JsonObject> Requests { get; } = new();
+    public string? AccountsError { get; set; }
+    public JsonArray Accounts { get; set; } = new();
     public JsonNode Status { get; set; } = JsonNode.Parse("""{"Linked":true,"Server":"https://drive.example.com","State":"idle","Workspaces":[{"ID":"w1","Name":"Docs","Dir":"Docs","HeldDeletes":3}]}""")!;
 
     public FakeCore()
@@ -50,8 +52,17 @@ sealed class FakeCore : IDisposable
             string? error = null;
             switch ((string?)req["method"])
             {
+                case "Core.Accounts": result = Accounts.DeepClone(); error = AccountsError; break;
                 case "Core.Status": result = Status.DeepClone(); break;
-                case "Core.Link": await release.Task; result = new JsonObject(); break;
+                case "Core.RemoveAccount":
+                    var selected = (string?)req["params"]![0]!["AccountID"];
+                    for (var i = Accounts.Count - 1; i >= 0; i--)
+                        if ((string?)Accounts[i]!["ID"] == selected) Accounts.RemoveAt(i);
+                    result = new JsonObject(); break;
+                case "Core.Link":
+                    if (!string.IsNullOrEmpty((string?)req["params"]![0]!["AccountID"])) error = "use AddAccount to add an account, or SignIn to restore its link";
+                    else { await release.Task; result = new JsonObject(); }
+                    break;
                 case "Core.Choose": error = "workspace not found"; break;
                 case "Core.Conflicts": result = JsonNode.Parse("""[{"ID":1,"Workspace":"w1","Path":"a (conflict).txt","Kind":"conflict","Detail":"edited on both","Created":5}]"""); break;
                 default: result = null; break;

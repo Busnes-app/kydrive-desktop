@@ -155,8 +155,9 @@ sealed class MainWindow : Window
         try
         {
             var accounts = await core.Accounts();
-            if (accounts.Length > 0 && !accounts.Any(a => a.ID == core.AccountID) && !linking) {
-                core = core.ForAccount(accounts[0].ID); ResetAccount();
+            var next = core.ForAccounts(accounts);
+            if (!ReferenceEquals(next, core) && !linking) {
+                core = next; ResetAccount();
             }
             var selected = core;
             status = await selected.Status();
