@@ -190,6 +190,39 @@ final class CoreClientTests: XCTestCase {
     }
 
     // The first activity read only sets the baseline; later warnings are announced once.
+    func testAddingAccountResetsWorkspaceAndNotificationState() async {
+        let one: [String: Any] = ["ID": "one", "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]
+        let two: [String: Any] = ["ID": "two", "Server": "https://drive.example.com", "User": "person", "OrgID": "two"]
+        fake.answer("Core.Accounts", [one])
+        fake.answer("Core.Workspaces", [["ID": "one-workspace", "Name": "One", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 100, "Created": 0, "Level": "warn", "Message": "Old warning"]])
+        await model.selectAccount("one")
+        var warnings: [String] = []
+        model.onWarning = { warnings.append($0) }
+        fake.answer("Core.Accounts", [one, two])
+        fake.answer("Core.AddAccount", two)
+        fake.answer("Core.Workspaces", [["ID": "two-workspace", "Name": "Two", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 7, "Created": 0, "Level": "warn", "Message": "Baseline"]])
+        await model.link(server: "https://drive.example.com", name: "computer")
+        XCTAssertEqual(model.core.accountID, "two")
+        XCTAssertEqual(model.workspaces.map(\.id), ["two-workspace"])
+        XCTAssertTrue(warnings.isEmpty)
+        fake.answer("Core.Activity", [["ID": 8, "Created": 0, "Level": "warn", "Message": "New account warning"]])
+        await model.refresh()
+        XCTAssertEqual(warnings, ["New account warning"])
+    }
+
+    func testAccountsReadFailureKeepsTheCurrentSelection() async {
+        fake.answer("Core.Accounts", [["ID": "one", "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]])
+        fake.answer("Core.Workspaces", [["ID": "one-workspace", "Name": "One", "Kind": "group", "Role": "editor", "Chosen": true]])
+        await model.selectAccount("one")
+        fake.fail("Core.Accounts", "temporarily unavailable")
+        await model.refresh()
+        XCTAssertEqual(model.core.accountID, "one")
+        XCTAssertEqual(model.accounts.map(\.id), ["one"])
+        XCTAssertEqual(model.workspaces.map(\.id), ["one-workspace"])
+    }
+
     func testExternalRemovalLoadsFallbackWorkspacesAndResetsNotifications() async {
         let one: [String: Any] = ["ID": "one", "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]
         let two: [String: Any] = ["ID": "two", "Server": "https://drive.example.com", "User": "person", "OrgID": "two"]

@@ -50,7 +50,11 @@ private slots:
         QTRY_COMPARE(client.workspaces().first().toMap().value(QStringLiteral("ID")).toString(), QStringLiteral("new-workspace"));
         QTRY_VERIFY(client.conflicts().isEmpty());
         // The first read is a baseline; the next warning has a lower ID than old's cursor.
-        QTest::qWait(50);
+        // Responses share one ordered socket: this reply follows the initial Activity
+        // response, so its callback has run before we publish the next warning.
+        bool baselineRead = false;
+        client.call(QStringLiteral("Status"), {}, [&](const QJsonValue&, const QString& error) { baselineRead = error.isEmpty(); });
+        QTRY_VERIFY(baselineRead);
         QCOMPARE(warnings.count(), 0);
         core.activityId = 8;
         core.activityMessage = QStringLiteral("New account warning");

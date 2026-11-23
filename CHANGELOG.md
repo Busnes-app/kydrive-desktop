@@ -2,6 +2,8 @@
 
 ## 0.7.0 — pending
 
+- Refresh account workspaces and warning cursors consistently after adding an account or falling back when a selected account disappears.
+
 - Keep older-core upgrades and linking after the last account removal working on Windows; automatically retry account migration when the OS keyring is temporarily unavailable.
 
 - Bump all six version fields to 0.7.0 so each updated shell replaces an older single-account daemon.

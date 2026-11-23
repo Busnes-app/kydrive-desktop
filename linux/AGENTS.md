@@ -20,12 +20,13 @@ The Linux shell: a Qt6/Kirigami tray app (`kydrive-desktop`, app id `com.kysecur
 - Settings keys: `appearance/pair`, `appearance/mode` and (Flatpak only) `autostart/enabled` in the app's QSettings. A legacy `theme` value migrates once: Busnes Light/Dark keep that half forced; anything removed becomes Busnes following the system.
 - Flatpak: `~/KyDrive` and `~/KyDrive Accounts` only, plus `org.freedesktop.secrets` for go-keyring (it needs the Secret Service itself, not the Secret portal). The Go module is built with network access, so a Flathub build needs vendored modules.
 
-- Account controls list identity/server/organization, add via browser approval, and remove only the selected account. Each client request carries its own `AccountID`; switching clears workspace choices and notification cursors.
+- Account controls list identity/server/organization, add via browser approval, and remove only the selected account. Each client request carries its own `AccountID`; adding, selecting, removing and automatic fallback use `selectAccount`, clearing status, workspace choices, conflicts and the notification cursor together. An empty account list returns to the primary selector.
 
 ## Work Guidance
 - Build in a capped scope (root `AGENTS.md`).
 
 ## Verification
+- `tst_coreclient` covers old high activity IDs followed by lower IDs on a newly added account, fresh workspace state on external-removal fallback and return to primary after the last account disappears.
 - `cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build && ctest --test-dir build --output-on-failure`. `tst_qml` fails on any QML warning and renders every theme half (main window, Appearance, link form); set `KYDRIVE_SHOT_DIR` to save 1440x900 screenshots.
 - CI also builds the Flatpak, validates the desktop file and metainfo, and uploads the single-file bundle `KyDrive-linux.flatpak` (artifact `kydrive-linux-flatpak`).
 

@@ -133,10 +133,13 @@ void CoreClient::refresh()
         if (!error.isEmpty()) return;
         m_accounts = result.toArray().toVariantList();
         emit accountsChanged();
-        if (!m_accounts.isEmpty() && !m_linking) {
+        if (!m_linking) {
             bool found = false;
             for (const auto& account : m_accounts) if (account.toMap().value(QStringLiteral("ID")).toString() == m_accountID) found = true;
-            if (!found) selectAccount(m_accounts.first().toMap().value(QStringLiteral("ID")).toString());
+            if (!found) {
+                const QString next = m_accounts.isEmpty() ? QString() : m_accounts.first().toMap().value(QStringLiteral("ID")).toString();
+                if (next != m_accountID) selectAccount(next);
+            }
         }
     });
     call(QStringLiteral("Status"), {}, [this](const QJsonValue& result, const QString& error) {
@@ -260,10 +263,13 @@ void CoreClient::waitForBrowser(const QString& method, const QVariantMap& params
     m_linking = true;
     emit linkingChanged();
     call(method, params, [this, method](const QJsonValue& result, const QString& error) {
-        if (error.isEmpty() && method == QStringLiteral("AddAccount")) m_accountID = result.toObject().value(QStringLiteral("ID")).toString();
         m_linking = false;
         emit linkingChanged();
         setError(error);
+        if (error.isEmpty() && method == QStringLiteral("AddAccount")) {
+            selectAccount(result.toObject().value(QStringLiteral("ID")).toString());
+            return;
+        }
         if (error.isEmpty())
             loadWorkspaces();
         refresh();
