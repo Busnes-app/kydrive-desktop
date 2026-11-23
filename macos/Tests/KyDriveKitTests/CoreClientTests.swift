@@ -190,6 +190,38 @@ final class CoreClientTests: XCTestCase {
     }
 
     // The first activity read only sets the baseline; later warnings are announced once.
+    func testExternalRemovalLoadsFallbackWorkspacesAndResetsNotifications() async {
+        let one: [String: Any] = ["ID": "one", "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]
+        let two: [String: Any] = ["ID": "two", "Server": "https://drive.example.com", "User": "person", "OrgID": "two"]
+        fake.answer("Core.Accounts", [one, two])
+        fake.answer("Core.Workspaces", [["ID": "one-workspace", "Name": "One", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 100, "Created": 0, "Level": "warn", "Message": "Old account warning"]])
+        var warnings: [String] = []
+        model.onWarning = { warnings.append($0) }
+        await model.selectAccount("one")
+        XCTAssertEqual(model.workspaces.map(\.id), ["one-workspace"])
+        fake.answer("Core.Accounts", [two]) // removal by ctl/another shell
+        fake.answer("Core.Workspaces", [["ID": "two-workspace", "Name": "Two", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 7, "Created": 0, "Level": "warn", "Message": "Baseline"]])
+        await model.refresh()
+        XCTAssertEqual(model.core.accountID, "two")
+        XCTAssertEqual(model.workspaces.map(\.id), ["two-workspace"])
+        XCTAssertEqual(fake.params("Core.Workspaces").last?["AccountID"] as? String, "two")
+        XCTAssertTrue(warnings.isEmpty)
+        fake.answer("Core.Activity", [["ID": 8, "Created": 0, "Level": "warn", "Message": "Two's new warning"]])
+        await model.refresh()
+        XCTAssertEqual(warnings, ["Two's new warning"])
+        fake.answer("Core.Accounts", [Any]())
+        var status = FakeCore.status
+        status["Linked"] = false
+        fake.answer("Core.Status", status)
+        await model.refresh()
+        XCTAssertEqual(model.core.accountID, "")
+        XCTAssertTrue(model.workspaces.isEmpty)
+        await model.link(server: "https://drive.example.com", name: "computer")
+        XCTAssertEqual(fake.params("Core.Link").last?["AccountID"] as? String, "")
+    }
+
     func testWarnsOnNewActivityOnly() async {
         var warnings: [String] = []
         model.onWarning = { warnings.append($0) }

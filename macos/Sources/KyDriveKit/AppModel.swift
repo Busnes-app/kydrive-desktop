@@ -63,12 +63,12 @@ public final class AppModel: ObservableObject {
         startAtLogin = startsAtLogin()
         do {
             let startedWith = core.accountID
-            let list: [DriveAccount] = (try? await core.call("Accounts")) ?? []
+            let list: [DriveAccount]? = try? await core.call("Accounts")
             guard startedWith == core.accountID else { return }
-            accounts = list
-            if !accounts.isEmpty && !accounts.contains(where: { $0.id == core.accountID }) {
-                core.accountID = accounts[0].id
-                workspaces = []; conflicts = []; lastActivity = -1
+            if let list {
+                accounts = list
+                let next = accounts.contains(where: { $0.id == core.accountID }) ? core.accountID : (accounts.first?.id ?? "")
+                if next != core.accountID { resetAccount(next) }
             }
             let client = core
             let s: Status = try await client.call("Status")
@@ -132,8 +132,7 @@ public final class AppModel: ObservableObject {
         linking = true
         do {
             let account: DriveAccount = try await core.call("AddAccount", ["Server": server, "Name": name])
-            core.accountID = account.id
-            workspaces = []; conflicts = []; lastActivity = -1
+            resetAccount(account.id)
             actionError = ""
         } catch { actionError = error.localizedDescription }
         linking = false
@@ -142,10 +141,13 @@ public final class AppModel: ObservableObject {
     }
     func selectAccount(_ id: String) async {
         guard !linking, !refreshing, actions == 0 else { return }
-        core.accountID = id
-        status = Status(); workspaces = []; conflicts = []; lastActivity = -1
+        resetAccount(id)
         await refresh()
         if status.linked { await loadWorkspaces() }
+    }
+    private func resetAccount(_ id: String) {
+        core.accountID = id
+        status = Status(); workspaces = []; conflicts = []; lastActivity = -1
     }
     func signIn() async { await waitForBrowser("SignIn", [:]) }
     func cancelLink() async { await act("CancelLink", [:]) }
