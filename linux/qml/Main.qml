@@ -267,8 +267,8 @@ Kirigami.ApplicationWindow {
                         text: Core.linking ? i18n("Waiting for approval in your browser…") : i18n("Link")
                         enabled: !Core.linking && server.text !== ""
                         onClicked: {
-                            if (Core.accounts.length === 0) Core.link(server.text, deviceName.text)
-                            else Core.addAccount(server.text, deviceName.text)
+                            if (root.addingAccount) Core.addAccount(server.text, deviceName.text)
+                            else Core.link(server.text, deviceName.text)
                         }
                     }
                     KyButton {

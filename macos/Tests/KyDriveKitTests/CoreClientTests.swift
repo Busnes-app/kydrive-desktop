@@ -203,13 +203,33 @@ final class CoreClientTests: XCTestCase {
         fake.answer("Core.AddAccount", two)
         fake.answer("Core.Workspaces", [["ID": "two-workspace", "Name": "Two", "Kind": "group", "Role": "editor", "Chosen": true]])
         fake.answer("Core.Activity", [["ID": 7, "Created": 0, "Level": "warn", "Message": "Baseline"]])
-        await model.link(server: "https://drive.example.com", name: "computer")
+        await model.link(server: "https://drive.example.com", name: "computer", addingAccount: true)
         XCTAssertEqual(model.core.accountID, "two")
         XCTAssertEqual(model.workspaces.map(\.id), ["two-workspace"])
         XCTAssertTrue(warnings.isEmpty)
         fake.answer("Core.Activity", [["ID": 8, "Created": 0, "Level": "warn", "Message": "New account warning"]])
         await model.refresh()
         XCTAssertEqual(warnings, ["New account warning"])
+    }
+
+    func testRevokedLinkRestoresSelectedPrimaryAndAddedAccounts() async {
+        for id in ["legacy", "one"] {
+            fake.answer("Core.Accounts", [["ID": id, "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]])
+            var status = FakeCore.status
+            status["Linked"] = false; status["State"] = "revoked"
+            fake.answer("Core.Status", status)
+            await model.selectAccount(id)
+            let before = fake.params("Core.AddAccount").count
+            await model.link(server: "https://drive.example.com", name: "computer")
+            XCTAssertEqual(fake.params("Core.AddAccount").count, before)
+            XCTAssertEqual(fake.params("Core.Link").last?["AccountID"] as? String, id)
+            XCTAssertEqual(model.core.accountID, id)
+            fake.answer("Core.Accounts", [["ID": id, "Server": "https://drive.example.com", "User": "person", "OrgID": "one"], ["ID": "new", "Server": "https://drive.example.com", "User": "other", "OrgID": "two"]])
+            fake.answer("Core.AddAccount", ["ID": "new", "Server": "https://drive.example.com", "User": "other", "OrgID": "two"])
+            await model.link(server: "https://drive.example.com", name: "computer", addingAccount: true)
+            XCTAssertEqual(fake.params("Core.AddAccount").count, before + 1)
+            XCTAssertEqual(model.core.accountID, "new")
+        }
     }
 
     func testAccountsReadFailureKeepsTheCurrentSelection() async {

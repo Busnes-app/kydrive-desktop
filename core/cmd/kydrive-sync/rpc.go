@@ -162,6 +162,20 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	if err != nil {
 		return err
 	}
+	d.mu.Lock()
+	heldServer := d.db.Get("server")
+	restore := heldServer != "" && (d.state == "revoked" || d.state == "signed_out")
+	d.mu.Unlock()
+	if restore {
+		held, err := serverOrigin(heldServer)
+		if err != nil || held != server {
+			return errors.New("use this account's KyDrive server to restore its link")
+		}
+		return c.SignIn(struct{}{}, &struct{}{})
+	}
+	if d.db.Get("storage_id") != "" {
+		return errors.New("use AddAccount to add an account, or SignIn to restore its link")
+	}
 	ctx, end, err := c.begin(func() error {
 		if d.token != "" {
 			return errors.New("already linked; unlink first")
@@ -239,6 +253,7 @@ func (d *daemon) activate(server, name string, tok api.Token) error {
 		return err
 	}
 	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff, d.credentialUnread = tok.Token, tok.Key, tok.Pin, "idle", "", 0, false
+	d.pins = nil
 	// The committed session is authoritative; cleanup failures retain the retry marker.
 	_ = d.finishCredentialMigrationLocked()
 	d.trigger(true)
@@ -252,7 +267,7 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	server, name := d.db.Get("server"), d.db.Get("device")
 	var pins *api.Pins
 	ctx, end, err := c.begin(func() error {
-		if server == "" || d.state != "signed_out" {
+		if server == "" || (d.state != "signed_out" && d.state != "revoked") {
 			return errors.New("this computer is not signed out")
 		}
 		if d.credentialUnread {

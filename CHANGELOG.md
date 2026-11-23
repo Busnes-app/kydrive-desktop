@@ -2,6 +2,8 @@
 
 ## 0.7.0 — pending
 
+- Restore selected revoked accounts through their existing Link form, preserving folders/workspaces and enforcing the original identity and certificate pin. Explicit Add account stays separate; revoked tokens/signing keys are replaced by pin-only keyring records.
+
 - Treat legacy server hostname case and default ports as the same account, preserving the original keyring migration source, sync folder and storage selector.
 
 - Finish activation once its credential pointer is committed, even if retiring the previous item fails. Retry pending cleanup without restart and reserve the old slot until cleanup completes.

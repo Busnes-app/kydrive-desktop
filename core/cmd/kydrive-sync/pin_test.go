@@ -222,6 +222,19 @@ func TestCredentialFormatWithPin(t *testing.T) {
 	}
 }
 
+func TestRevokedCredentialFormatRetainsOnlyPin(t *testing.T) {
+	keyring.MockInit()
+	for _, pin := range []api.Pin{{}, {Leaf: retiredLeaf, IdentityKey: "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=", Floor: 123}} {
+		if err := storeCredential("revoked", "", nil, pin); err != nil {
+			t.Fatal(err)
+		}
+		token, key, got, err := loadCredential("revoked")
+		if err != nil || token != "" || key != nil || got != pin {
+			t.Fatal("revoked credential format revived a token/key or lost the pin")
+		}
+	}
+}
+
 // A re-link during the fetch belongs to another session: the old one's rollover leaves it alone,
 // even when the new session happens to hold the same pin.
 func TestDaemonRelinkDuringRolloverNotTouched(t *testing.T) {

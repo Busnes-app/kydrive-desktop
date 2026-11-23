@@ -47,6 +47,9 @@ func newAccountLinkFixture(t *testing.T) *accountLinkFixture {
 		who, found := f.tokens.Load(token)
 		if _, revoked := f.revoked.Load(token); !found || revoked {
 			w.WriteHeader(401)
+			if revoked {
+				json.NewEncoder(w).Encode(map[string]any{"error": "device_revoked", "wipe": false})
+			}
 			return
 		}
 		switch r.URL.Path {

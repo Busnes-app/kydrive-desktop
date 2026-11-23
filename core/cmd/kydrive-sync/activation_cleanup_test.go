@@ -194,8 +194,8 @@ func TestPendingCleanupReservesOldAccountSlotUntilUnlinkedRecovery(t *testing.T)
 	previousIdentity := f.identity.Load().(api.Account)
 	source := d.credentialID()
 	before, _ := keyring.Get(keyringService, source)
-	// An owner-only Link may replace a signed-out primary with a different account.
-	d.token, d.state = "", "signed_out"
+	// Model a legacy idle primary awaiting a fresh link, with its old credential still stored.
+	d.token, d.state = "", "idle"
 	next := previousIdentity
 	next.OrgID = "next"
 	f.identity.Store(next)

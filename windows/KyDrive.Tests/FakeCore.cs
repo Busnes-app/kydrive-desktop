@@ -17,6 +17,7 @@ sealed class FakeCore : IDisposable
     public ConcurrentQueue<JsonObject> Requests { get; } = new();
     public string? AccountsError { get; set; }
     public JsonArray Accounts { get; set; } = new();
+    public JsonObject AddedAccount { get; set; } = new() { ["ID"] = "new", ["Server"] = "https://drive.example.com", ["User"] = "person", ["OrgID"] = "new" };
     public JsonNode Status { get; set; } = JsonNode.Parse("""{"Linked":true,"Server":"https://drive.example.com","State":"idle","Workspaces":[{"ID":"w1","Name":"Docs","Dir":"Docs","HeldDeletes":3}]}""")!;
 
     public FakeCore()
@@ -59,8 +60,9 @@ sealed class FakeCore : IDisposable
                     for (var i = Accounts.Count - 1; i >= 0; i--)
                         if ((string?)Accounts[i]!["ID"] == selected) Accounts.RemoveAt(i);
                     result = new JsonObject(); break;
+                case "Core.AddAccount": result = AddedAccount.DeepClone(); break;
                 case "Core.Link":
-                    if (!string.IsNullOrEmpty((string?)req["params"]![0]!["AccountID"])) error = "use AddAccount to add an account, or SignIn to restore its link";
+                    if (!string.IsNullOrEmpty((string?)req["params"]![0]!["AccountID"]) && (string?)Status["State"] != "revoked") error = "use AddAccount to add an account, or SignIn to restore its link";
                     else { await release.Task; result = new JsonObject(); }
                     break;
                 case "Core.Choose": error = "workspace not found"; break;

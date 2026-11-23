@@ -20,6 +20,7 @@ The Linux shell: a Qt6/Kirigami tray app (`kydrive-desktop`, app id `com.kysecur
 - Settings keys: `appearance/pair`, `appearance/mode` and (Flatpak only) `autostart/enabled` in the app's QSettings. A legacy `theme` value migrates once: Busnes Light/Dark keep that half forced; anything removed becomes Busnes following the system.
 - Flatpak: `~/KyDrive` and `~/KyDrive Accounts` only, plus `org.freedesktop.secrets` for go-keyring (it needs the Secret Service itself, not the Secret portal). The Go module is built with network access, so a Flathub build needs vendored modules.
 
+- Link submissions restore the selected retained revoked account; only the existing explicit Add account control submits `AddAccount`. Keep selectors on each request and preserve the UI shape.
 - Account controls list identity/server/organization, add via browser approval, and remove only the selected account. Each client request carries its own `AccountID`; adding, selecting, removing and automatic fallback use `selectAccount`, clearing status, workspace choices, conflicts and the notification cursor together. An empty account list returns to the primary selector.
 
 ## Work Guidance

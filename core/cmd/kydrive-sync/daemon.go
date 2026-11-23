@@ -49,7 +49,7 @@ type daemon struct {
 	key              *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
 	pin              api.Pin           // token's TLS pin, kept with it in the keyring
 	pins             *api.Pins         // enforces pin for token's session
-	credentialUnread bool              // failed startup read: an unknown pin is not an absent pin
+	credentialUnread bool              // saved credential/pin unavailable: recover before reauthentication
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -96,6 +96,9 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 			d.state, d.lastErr, d.credentialUnread = "signed_out", errCredentialUnread.Error(), true
 		} else {
 			d.token, d.key, d.pin, d.state = tok, key, pin, "idle"
+			if tok == "" {
+				d.state = "revoked"
+			}
 		}
 	}
 	return d, nil
@@ -302,7 +305,9 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	switch {
 	case errors.Is(err, engine.ErrRevoked):
 		d.state, d.lastErr = "revoked", err.Error()
-		d.forget()
+		if err := d.retireRevokedCredential(); err != nil {
+			d.lastErr = errCredentialUnread.Error()
+		}
 	case errors.Is(err, engine.ErrSignedOut), errors.Is(err, errKeyringUnavailable):
 		d.state, d.lastErr = "signed_out", err.Error()
 		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
@@ -331,6 +336,11 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 // holds d.work.
 func (d *daemon) retry() bool {
 	d.mu.Lock()
+	if d.state == "revoked" && d.credentialUnread {
+		if err := d.retireRevokedCredential(); err == nil {
+			d.lastErr = engine.ErrRevoked.Error()
+		}
+	}
 	if d.state != "signed_out" { // a known session (or explicit unlink) can finish cleanup independently
 		_ = d.finishCredentialMigrationLocked()
 	}
@@ -366,12 +376,15 @@ func (d *daemon) retry() bool {
 		return false
 	}
 	d.token, d.key, d.pin, d.state, d.credentialUnread = tok, key, pin, "syncing", false
+	if tok == "" {
+		d.state = "revoked"
+	}
 	return true
 }
 
 // session is the pin enforcer for d.token, new for each credential. The caller holds d.mu.
 func (d *daemon) session() *api.Pins {
-	if d.token == "" {
+	if d.token == "" && d.state != "revoked" {
 		return nil
 	}
 	if d.pins == nil || d.pins.Store.(*sessionPins).token != d.token {
@@ -392,7 +405,7 @@ var errSessionEnded = errors.New("this computer's KyDrive session has ended")
 func (s *sessionPins) Current() (api.Pin, error) {
 	s.d.mu.Lock()
 	defer s.d.mu.Unlock()
-	if s.d.token != s.token {
+	if s.d.pins == nil || s.d.pins.Store != s || s.d.token != s.token || (s.token == "" && s.d.state != "revoked") {
 		return api.Pin{}, errSessionEnded
 	}
 	return s.d.pin, nil
@@ -402,7 +415,7 @@ func (s *sessionPins) Replace(old, new api.Pin) bool {
 	d := s.d
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.token != s.token || d.pin != old {
+	if d.pins == nil || d.pins.Store != s || d.token != s.token || d.pin != old || (s.token == "" && d.state != "revoked") {
 		return false
 	}
 	if err := storeCredential(d.credentialID(), d.token, d.key, new); err != nil {
@@ -411,6 +424,15 @@ func (s *sessionPins) Replace(old, new api.Pin) bool {
 	}
 	d.pin = new
 	return true
+}
+
+// Revocation destroys the token and signing key, retaining only the pin for owner-bound
+// reauthentication. Caller holds d.mu; a failed write is retried before reauthentication.
+func (d *daemon) retireRevokedCredential() error {
+	d.token, d.key, d.pins = "", nil, nil
+	err := storeCredential(d.credentialID(), "", nil, d.pin)
+	d.credentialUnread = err != nil
+	return err
 }
 
 // forget deletes the credential and its signing key from the keyring. The caller holds d.mu.

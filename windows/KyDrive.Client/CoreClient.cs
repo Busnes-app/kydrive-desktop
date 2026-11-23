@@ -79,6 +79,11 @@ public sealed class CoreClient(string socketPath, string accountID = "")
         catch (CoreException e) when (e.Message == "rpc: can't find method Core.Accounts") { return []; }
     }
     public Task<DriveAccount> AddAccount(string server, string name, CancellationToken ct = default) => Call<DriveAccount>("AddAccount", new {Server = server, Name = name}, ct);
+    public async Task<CoreClient> SubmitLink(string server, string name, bool addAccount, CancellationToken ct = default)
+    {
+        if (!addAccount) { await Link(server, name, ct); return this; }
+        return ForAccount((await AddAccount(server, name, ct)).ID);
+    }
     public Task<Status> Status(CancellationToken ct = default) => Call<Status>("Status", null, ct);
     public async Task<Choice[]> Workspaces(CancellationToken ct = default) => await Call<Choice[]?>("Workspaces", null, ct) ?? [];
     public async Task<Issue[]> Conflicts(CancellationToken ct = default) => await Call<Issue[]?>("Conflicts", null, ct) ?? [];

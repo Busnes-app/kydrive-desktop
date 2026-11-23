@@ -86,7 +86,7 @@ ctl Pause '{"Paused":false}' >/dev/null
 waitfor 'ctl Status | grep -q "\"State\": \"revoked\""' && ok "revoke reaches the core" || bad "not revoked: \$(ctl Status)"
 [ ! -e "$HOME/KyDrive/Docs/local.txt" ] && ok "wipe removed the synced copy" || bad "synced copy kept"
 [ "\$(cat "$HOME/KyDrive/Unsynced/Docs/hello.txt" 2>/dev/null)" = "unuploaded edit" ] && ok "unuploaded edit kept in Unsynced/" || bad "edit lost: \$(find "$HOME/KyDrive")"
-[ -z "\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null)" ] && ok "keyring item deleted" || bad "keyring item survived"
+[ "\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null)" = "-" ] && ok "revocation removed token/key and retained known unpinned state" || bad "revocation credential marker"
 ctl Link '{"Server":"$BASE","Name":"smoke laptop"}' >/dev/null && ok "Link again after a revoke" || bad "relink"
 ITEM2=\$(secret-tool lookup service KyDrive username "$ACCOUNT_KEY" 2>/dev/null || :)
 [ "\$(curl -s -b "$W/cookies" "$BASE/api/devices" | jq length)" = 1 ] && ok "server lists the new device" || bad "device list"

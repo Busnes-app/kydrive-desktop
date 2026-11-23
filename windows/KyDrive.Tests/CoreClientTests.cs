@@ -54,6 +54,26 @@ public class CoreClientTests
         Assert.Equal("two", selected.AccountID);
     }
 
+    [Theory]
+    [InlineData("legacy", false)]
+    [InlineData("one", false)]
+    [InlineData("legacy", true)]
+    [InlineData("one", true)]
+    public async Task RevokedLinkUsesSelectionAndExplicitAddIntent(string id, bool adding)
+    {
+        using var core = new FakeCore();
+        core.Status["Linked"] = false; core.Status["State"] = "revoked";
+        core.Accounts.Add(new System.Text.Json.Nodes.JsonObject { ["ID"] = id, ["Server"] = "https://drive.example.com", ["User"] = "person", ["OrgID"] = id });
+        core.Release();
+        var client = new CoreClient(core.Path).ForAccount(id);
+        var selected = await client.SubmitLink("https://drive.example.com", "computer", adding);
+        Assert.Equal(adding ? "new" : id, selected.AccountID);
+        var request = Assert.Single(core.Requests);
+        Assert.Equal(adding ? "Core.AddAccount" : "Core.Link", (string?)request["method"]);
+        if (adding) Assert.Null(request["params"]![0]!["AccountID"]);
+        else Assert.Equal(id, (string?)request["params"]![0]!["AccountID"]);
+    }
+
     // Q8: the process answering on the socket is known, as SO_PEERCRED gives on Linux.
     [Fact]
     public async Task PeerProcessIsTheAnsweringOne()

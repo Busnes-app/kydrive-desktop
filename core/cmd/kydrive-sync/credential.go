@@ -23,6 +23,12 @@ var errCredentialUnread = errors.New("the saved KyDrive credential is unavailabl
 var errDamaged = errors.New("the keyring's KyDrive credential is damaged; sign in again")
 
 func storeCredential(server, token string, key *ecdsa.PrivateKey, pin api.Pin) error {
+	if token == "" {
+		if key != nil {
+			return errDamaged
+		}
+		token = "-" // revoked: retain only the held pin (or known legacy absence of one)
+	}
 	v := token
 	if key != nil || pin.Leaf != "" {
 		enc := "-"
@@ -49,7 +55,8 @@ func dash(s string) string {
 }
 
 // loadCredential returns a nil key for a computer linked before signing and a zero pin for one
-// that has not pinned a leaf yet.
+// that has not pinned a leaf yet. A token field of "-" is a revoked, pin-only
+// record: it returns no token or key, including for known unpinned legacy links.
 func loadCredential(server string) (string, *ecdsa.PrivateKey, api.Pin, error) {
 	v, err := keyring.Get(keyringService, server)
 	if err != nil {
@@ -81,6 +88,12 @@ func loadCredential(server string) (string, *ecdsa.PrivateKey, api.Pin, error) {
 		if f[3] != "-" {
 			pin.IdentityKey = f[3]
 		}
+	}
+	if f[0] == "-" {
+		if key != nil {
+			return "", nil, api.Pin{}, errDamaged
+		}
+		return "", nil, pin, nil
 	}
 	return f[0], key, pin, nil
 }

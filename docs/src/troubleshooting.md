@@ -9,3 +9,5 @@
 - **A large delete waits:** inspect the pending delete confirmation and the local cause before approving it.
 
 When reporting a problem, include the product version, platform, failed task and a redacted error. Exclude pairing links, device secrets, recovery codes, custodian shares and private content.
+
+- **A computer link was revoked:** select that account and use its existing Link form. Approve the same identity on the saved server; its certificate must still match the saved pin or a signed successor. The core deletes the revoked token/signing key but keeps a pin-only keyring record. If the keyring is unavailable, unlock it and wait for recovery before retrying. Explicit Unlink removes the pin too and requires choosing workspaces afresh.

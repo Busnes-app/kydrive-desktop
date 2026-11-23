@@ -127,8 +127,8 @@ public final class AppModel: ObservableObject {
 
     /// Link and SignIn return once the user approves in the browser, after the core's
     /// ten-minute timeout, or on CancelLink.
-    func link(server: String, name: String) async {
-        if accounts.isEmpty { await waitForBrowser("Link", ["Server": server, "Name": name]); return }
+    func link(server: String, name: String, addingAccount: Bool = false) async {
+        if !addingAccount { await waitForBrowser("Link", ["Server": server, "Name": name]); return }
         linking = true
         do {
             let account: DriveAccount = try await core.call("AddAccount", ["Server": server, "Name": name])

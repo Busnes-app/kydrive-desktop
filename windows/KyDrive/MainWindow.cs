@@ -78,8 +78,11 @@ sealed class MainWindow : Window
         };
 
         server.TextChanged += (_, _) => Render();
-        linkButton.Click += (_, _) => WaitForBrowser(async c => { if (await c.Accounts() is {Length:0}) await c.Link(server.Text,deviceName.Text);
-            else {var account = await c.AddAccount(server.Text, deviceName.Text); core = c.ForAccount(account.ID); } addingAccount = false; ResetAccount(); });
+        linkButton.Click += (_, _) => WaitForBrowser(async c => {
+            var add = addingAccount;
+            core = await c.SubmitLink(server.Text, deviceName.Text, add); addingAccount = false;
+            if (add) ResetAccount();
+        });
         cancelLink = Act("Cancel", () => Run(c => c.CancelLink()));
         linkForm.Children.Add(server);
         linkForm.Children.Add(deviceName);

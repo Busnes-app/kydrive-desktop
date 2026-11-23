@@ -421,9 +421,6 @@ func (c *AccountsCore) Link(in struct{ AccountID, Server, Name string }, out *st
 		return err
 	}
 
-	if core.d != c.m.primary {
-		return errors.New("use AddAccount to add an account, or SignIn to restore its link")
-	}
 	return core.Link(LinkArgs{Server: in.Server, Name: in.Name}, out)
 }
 func (c *AccountsCore) CancelLink(in AccountArgs, out *struct{}) error {

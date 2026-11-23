@@ -67,7 +67,8 @@ public struct MenuContent: View {
                     .disabled(model.linking)
                 HStack {
                     Button(model.linking ? "Waiting for approval in your browser…" : "Link") {
-                        Task { await model.link(server: server, name: name); if model.actionError.isEmpty { addingAccount = false } }
+                        let add = addingAccount
+                        Task { await model.link(server: server, name: name, addingAccount: add); if model.actionError.isEmpty { addingAccount = false } }
                     }
                     .buttonStyle(KyButtonStyle(kind: .primary))
                     .disabled(model.linking || server.isEmpty)
