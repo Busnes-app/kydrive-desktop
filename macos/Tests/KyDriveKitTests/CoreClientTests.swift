@@ -66,6 +66,16 @@ final class CoreClientTests: XCTestCase {
         XCTAssertThrowsError(try unixAddress("/" + String(repeating: "a", count: 103)))
     }
 
+    func testRequestsKeepTheirAccount() async throws {
+        var one = CoreClient(socketPath: fake.path)
+        one.accountID = "one"
+        var two = one
+        two.accountID = "two"
+        let _: Empty = try await one.call("Pause", ["Paused": true])
+        let _: Empty = try await two.call("Pause", ["Paused": false])
+        XCTAssertEqual(fake.params("Core.Pause").compactMap { $0["AccountID"] as? String }, ["one", "two"])
+    }
+
     func testRefreshFillsStatusAndConflicts() async {
         fake.answer("Core.Conflicts", [["ID": 1, "Workspace": "w", "Path": "a (conflict).txt", "Kind": "conflict", "Detail": "kept both", "Created": 0]])
         await model.refresh()
@@ -73,7 +83,7 @@ final class CoreClientTests: XCTestCase {
         XCTAssertTrue(model.status.linked)
         XCTAssertEqual(model.status.state, "idle")
         XCTAssertEqual(model.conflicts.map(\.path), ["a (conflict).txt"])
-        XCTAssertEqual(fake.methods.prefix(3), ["Core.Status", "Core.Conflicts", "Core.Activity"])
+        XCTAssertEqual(fake.methods.prefix(4), ["Core.Accounts", "Core.Status", "Core.Conflicts", "Core.Activity"])
     }
 
     func testActionsSendTheCoresParams() async {
@@ -85,7 +95,7 @@ final class CoreClientTests: XCTestCase {
         XCTAssertEqual(fake.params("Core.Pause").first?["Paused"] as? Bool, true)
         XCTAssertEqual(fake.params("Core.ConfirmDeletes").first?["Workspace"] as? String, "w")
         XCTAssertEqual(fake.params("Core.ConfirmDeletes").first?["Allow"] as? Bool, true)
-        XCTAssertEqual(fake.params("Core.Unlink").first?["RemoveFiles"] as? Bool, true)
+        XCTAssertEqual(fake.params("Core.RemoveAccount").first?["RemoveFiles"] as? Bool, true)
     }
 
     // A failed action's error stays up through the refresh that follows it.
@@ -180,6 +190,91 @@ final class CoreClientTests: XCTestCase {
     }
 
     // The first activity read only sets the baseline; later warnings are announced once.
+    func testAddingAccountResetsWorkspaceAndNotificationState() async {
+        let one: [String: Any] = ["ID": "one", "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]
+        let two: [String: Any] = ["ID": "two", "Server": "https://drive.example.com", "User": "person", "OrgID": "two"]
+        fake.answer("Core.Accounts", [one])
+        fake.answer("Core.Workspaces", [["ID": "one-workspace", "Name": "One", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 100, "Created": 0, "Level": "warn", "Message": "Old warning"]])
+        await model.selectAccount("one")
+        var warnings: [String] = []
+        model.onWarning = { warnings.append($0) }
+        fake.answer("Core.Accounts", [one, two])
+        fake.answer("Core.AddAccount", two)
+        fake.answer("Core.Workspaces", [["ID": "two-workspace", "Name": "Two", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 7, "Created": 0, "Level": "warn", "Message": "Baseline"]])
+        await model.link(server: "https://drive.example.com", name: "computer", addingAccount: true)
+        XCTAssertEqual(model.core.accountID, "two")
+        XCTAssertEqual(model.workspaces.map(\.id), ["two-workspace"])
+        XCTAssertTrue(warnings.isEmpty)
+        fake.answer("Core.Activity", [["ID": 8, "Created": 0, "Level": "warn", "Message": "New account warning"]])
+        await model.refresh()
+        XCTAssertEqual(warnings, ["New account warning"])
+    }
+
+    func testRevokedLinkRestoresSelectedPrimaryAndAddedAccounts() async {
+        for id in ["legacy", "one"] {
+            fake.answer("Core.Accounts", [["ID": id, "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]])
+            var status = FakeCore.status
+            status["Linked"] = false; status["State"] = "revoked"
+            fake.answer("Core.Status", status)
+            await model.selectAccount(id)
+            let before = fake.params("Core.AddAccount").count
+            await model.link(server: "https://drive.example.com", name: "computer")
+            XCTAssertEqual(fake.params("Core.AddAccount").count, before)
+            XCTAssertEqual(fake.params("Core.Link").last?["AccountID"] as? String, id)
+            XCTAssertEqual(model.core.accountID, id)
+            fake.answer("Core.Accounts", [["ID": id, "Server": "https://drive.example.com", "User": "person", "OrgID": "one"], ["ID": "new", "Server": "https://drive.example.com", "User": "other", "OrgID": "two"]])
+            fake.answer("Core.AddAccount", ["ID": "new", "Server": "https://drive.example.com", "User": "other", "OrgID": "two"])
+            await model.link(server: "https://drive.example.com", name: "computer", addingAccount: true)
+            XCTAssertEqual(fake.params("Core.AddAccount").count, before + 1)
+            XCTAssertEqual(model.core.accountID, "new")
+        }
+    }
+
+    func testAccountsReadFailureKeepsTheCurrentSelection() async {
+        fake.answer("Core.Accounts", [["ID": "one", "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]])
+        fake.answer("Core.Workspaces", [["ID": "one-workspace", "Name": "One", "Kind": "group", "Role": "editor", "Chosen": true]])
+        await model.selectAccount("one")
+        fake.fail("Core.Accounts", "temporarily unavailable")
+        await model.refresh()
+        XCTAssertEqual(model.core.accountID, "one")
+        XCTAssertEqual(model.accounts.map(\.id), ["one"])
+        XCTAssertEqual(model.workspaces.map(\.id), ["one-workspace"])
+    }
+
+    func testExternalRemovalLoadsFallbackWorkspacesAndResetsNotifications() async {
+        let one: [String: Any] = ["ID": "one", "Server": "https://drive.example.com", "User": "person", "OrgID": "one"]
+        let two: [String: Any] = ["ID": "two", "Server": "https://drive.example.com", "User": "person", "OrgID": "two"]
+        fake.answer("Core.Accounts", [one, two])
+        fake.answer("Core.Workspaces", [["ID": "one-workspace", "Name": "One", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 100, "Created": 0, "Level": "warn", "Message": "Old account warning"]])
+        var warnings: [String] = []
+        model.onWarning = { warnings.append($0) }
+        await model.selectAccount("one")
+        XCTAssertEqual(model.workspaces.map(\.id), ["one-workspace"])
+        fake.answer("Core.Accounts", [two]) // removal by ctl/another shell
+        fake.answer("Core.Workspaces", [["ID": "two-workspace", "Name": "Two", "Kind": "group", "Role": "editor", "Chosen": true]])
+        fake.answer("Core.Activity", [["ID": 7, "Created": 0, "Level": "warn", "Message": "Baseline"]])
+        await model.refresh()
+        XCTAssertEqual(model.core.accountID, "two")
+        XCTAssertEqual(model.workspaces.map(\.id), ["two-workspace"])
+        XCTAssertEqual(fake.params("Core.Workspaces").last?["AccountID"] as? String, "two")
+        XCTAssertTrue(warnings.isEmpty)
+        fake.answer("Core.Activity", [["ID": 8, "Created": 0, "Level": "warn", "Message": "Two's new warning"]])
+        await model.refresh()
+        XCTAssertEqual(warnings, ["Two's new warning"])
+        fake.answer("Core.Accounts", [Any]())
+        var status = FakeCore.status
+        status["Linked"] = false
+        fake.answer("Core.Status", status)
+        await model.refresh()
+        XCTAssertEqual(model.core.accountID, "")
+        XCTAssertTrue(model.workspaces.isEmpty)
+        await model.link(server: "https://drive.example.com", name: "computer")
+        XCTAssertEqual(fake.params("Core.Link").last?["AccountID"] as? String, "")
+    }
+
     func testWarnsOnNewActivityOnly() async {
         var warnings: [String] = []
         model.onWarning = { warnings.append($0) }

@@ -35,7 +35,7 @@ func (d *daemon) watch(ctx context.Context) {
 					return filepath.SkipDir
 				}
 				if err := w.Add(p); err != nil {
-					log.Printf("watch %s: %v", p, err)
+					log.Print("watch: an account folder cannot be watched; relying on periodic scans")
 				}
 			}
 			return nil
@@ -61,8 +61,8 @@ func (d *daemon) watch(ctx context.Context) {
 				}
 			}
 			quiet.Reset(settle + time.Second)
-		case err := <-w.Errors:
-			log.Printf("watch: %v", err)
+		case <-w.Errors:
+			log.Print("watch: filesystem notification failed; relying on periodic scans")
 		case <-quiet.C:
 			d.trigger(true)
 		case <-time.After(5 * time.Second):

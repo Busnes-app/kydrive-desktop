@@ -18,9 +18,17 @@ import (
 // (Unix seconds). One item, so all of it is stored and deleted together. A software key the
 // keyring guards; a platform key that cannot be exported (TPM, Secure Enclave) would be stronger.
 
+var errCredentialUnread = errors.New("the saved KyDrive credential is unavailable; unlock or restore the OS keyring and wait for recovery before signing in again, or unlink and link again")
+
 var errDamaged = errors.New("the keyring's KyDrive credential is damaged; sign in again")
 
 func storeCredential(server, token string, key *ecdsa.PrivateKey, pin api.Pin) error {
+	if token == "" {
+		if key != nil {
+			return errDamaged
+		}
+		token = "-" // revoked: retain only the held pin (or known legacy absence of one)
+	}
 	v := token
 	if key != nil || pin.Leaf != "" {
 		enc := "-"
@@ -36,7 +44,7 @@ func storeCredential(server, token string, key *ecdsa.PrivateKey, pin api.Pin) e
 	if pin.Leaf != "" {
 		v += " " + pin.Leaf + " " + dash(pin.IdentityKey) + " " + strconv.FormatInt(pin.Floor, 10)
 	}
-	return keyring.Set(keyringService, server, v)
+	return migrationSet(keyringService, server, v)
 }
 
 func dash(s string) string {
@@ -47,7 +55,8 @@ func dash(s string) string {
 }
 
 // loadCredential returns a nil key for a computer linked before signing and a zero pin for one
-// that has not pinned a leaf yet.
+// that has not pinned a leaf yet. A token field of "-" is a revoked, pin-only
+// record: it returns no token or key, including for known unpinned legacy links.
 func loadCredential(server string) (string, *ecdsa.PrivateKey, api.Pin, error) {
 	v, err := keyring.Get(keyringService, server)
 	if err != nil {
@@ -79,6 +88,12 @@ func loadCredential(server string) (string, *ecdsa.PrivateKey, api.Pin, error) {
 		if f[3] != "-" {
 			pin.IdentityKey = f[3]
 		}
+	}
+	if f[0] == "-" {
+		if key != nil {
+			return "", nil, api.Pin{}, errDamaged
+		}
+		return "", nil, pin, nil
 	}
 	return f[0], key, pin, nil
 }

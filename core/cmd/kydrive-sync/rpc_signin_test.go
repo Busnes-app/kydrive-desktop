@@ -127,8 +127,8 @@ func TestSignedOutRetriesFromKeyring(t *testing.T) {
 	srv := server(t)
 	d, ctl := start(t, srv)
 	signedOut(t, d, ctl, srv.URL)
-	item, _ := keyring.Get(keyringService, srv.URL)
-	if err := keyring.Delete(keyringService, srv.URL); err != nil {
+	item, _ := keyring.Get(keyringService, d.credentialID())
+	if err := keyring.Delete(keyringService, d.credentialID()); err != nil {
 		t.Fatal(err)
 	}
 	d.pass(t.Context(), false)
@@ -138,7 +138,7 @@ func TestSignedOutRetriesFromKeyring(t *testing.T) {
 	}
 	d.retryAt = time.Time{} // the backoff has passed
 	d.mu.Unlock()
-	keyring.Set(keyringService, srv.URL, item) // the keyring unlocked
+	keyring.Set(keyringService, d.credentialID(), item) // the keyring unlocked
 	d.pass(t.Context(), false)
 	d.mu.Lock()
 	defer d.mu.Unlock()

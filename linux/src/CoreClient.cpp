@@ -63,9 +63,15 @@ QString CoreClient::defaultSocketPath()
 void CoreClient::call(const QString& method, const QVariantMap& params, Reply done)
 {
     const qint64 id = m_nextId++;
-    m_pending.insert(id, std::move(done));
+    const QString selected = m_accountID;
+    m_pending.insert(id, [this, selected, method, done](const QJsonValue& result, const QString& error) {
+        if (done && (selected == m_accountID || method == QStringLiteral("AddAccount"))) done(result,error);
+    });
+    QVariantMap scoped = params;
+    if (method != QStringLiteral("Accounts") && method != QStringLiteral("AddAccount"))
+        scoped.insert(QStringLiteral("AccountID"), m_accountID);
     const QJsonObject req{{QStringLiteral("method"), QStringLiteral("Core.") + method},
-                          {QStringLiteral("params"), QJsonArray{QJsonObject::fromVariantMap(params)}},
+                          {QStringLiteral("params"), QJsonArray{QJsonObject::fromVariantMap(scoped)}},
                           {QStringLiteral("id"), id}};
     m_outbox << QJsonDocument(req).toJson(QJsonDocument::Compact) + '\n';
     if (m_socket.state() == QLocalSocket::UnconnectedState)
@@ -123,6 +129,19 @@ CoreClient::Reply CoreClient::reportErrors(Reply done)
 
 void CoreClient::refresh()
 {
+    call(QStringLiteral("Accounts"), {}, [this](const QJsonValue& result, const QString& error) {
+        if (!error.isEmpty()) return;
+        m_accounts = result.toArray().toVariantList();
+        emit accountsChanged();
+        if (!m_linking) {
+            bool found = false;
+            for (const auto& account : m_accounts) if (account.toMap().value(QStringLiteral("ID")).toString() == m_accountID) found = true;
+            if (!found) {
+                const QString next = m_accounts.isEmpty() ? QString() : m_accounts.first().toMap().value(QStringLiteral("ID")).toString();
+                if (next != m_accountID) selectAccount(next);
+            }
+        }
+    });
     call(QStringLiteral("Status"), {}, [this](const QJsonValue& result, const QString& error) {
         if (!error.isEmpty())
             return setError(error);
@@ -243,10 +262,14 @@ void CoreClient::waitForBrowser(const QString& method, const QVariantMap& params
 {
     m_linking = true;
     emit linkingChanged();
-    call(method, params, [this](const QJsonValue&, const QString& error) {
+    call(method, params, [this, method](const QJsonValue& result, const QString& error) {
+        setError(error);
         m_linking = false;
         emit linkingChanged();
-        setError(error);
+        if (error.isEmpty() && method == QStringLiteral("AddAccount")) {
+            selectAccount(result.toObject().value(QStringLiteral("ID")).toString());
+            return;
+        }
         if (error.isEmpty())
             loadWorkspaces();
         refresh();
@@ -260,7 +283,7 @@ void CoreClient::cancelLink()
 
 void CoreClient::unlink(bool removeFiles)
 {
-    call(QStringLiteral("Unlink"), {{QStringLiteral("RemoveFiles"), removeFiles}}, reportErrors());
+    call(QStringLiteral("RemoveAccount"), {{QStringLiteral("RemoveFiles"), removeFiles}}, reportErrors([this](const QJsonValue&, const QString&) { selectAccount(QString()); }));
 }
 
 void CoreClient::choose(const QStringList& ids)
@@ -288,4 +311,20 @@ void CoreClient::openInBrowser()
     const QUrl url(m_status.value(QStringLiteral("Server")).toString());
     if (url.scheme() == QStringLiteral("https") || url.scheme() == QStringLiteral("http"))
         QDesktopServices::openUrl(url);
+}
+
+void CoreClient::selectAccount(const QString& id)
+{
+    if (m_linking) return;
+    m_accountID = id;
+    m_workspaces.clear(); m_conflicts.clear(); m_status.clear();
+    m_lastActivity = -1;
+    emit workspacesChanged(); emit conflictsChanged(); emit statusChanged(); emit accountsChanged();
+    refresh();
+    if (!id.isEmpty()) loadWorkspaces();
+}
+
+void CoreClient::addAccount(const QString& server, const QString& name)
+{
+    waitForBrowser(QStringLiteral("AddAccount"), {{QStringLiteral("Server"), server}, {QStringLiteral("Name"), name}});
 }

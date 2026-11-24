@@ -24,7 +24,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-// keyringService names the OS keyring item; its user is the server origin.
+// keyringService names the OS keyring item; its user is the owned account credential slot (origin only until legacy migration).
 const keyringService = "KyDrive"
 
 const (
@@ -34,19 +34,22 @@ const (
 )
 
 type daemon struct {
+	manager         *accountManager
+	prepareAccount  func(string, api.Token) error
 	dir, root, sock string
 	db              *engine.DB
 	http            *http.Client
 	open            func(url string) error
 	exit            func(code int) // os.Exit; Quit calls it
 
-	lock   *os.File          // held for the daemon's life: one core per state directory
-	memory *engine.Memory    // retry backoff and announced failures, across passes
-	work   sync.Mutex        // one engine operation at a time
-	mu     sync.Mutex        // guards the fields below
-	key    *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
-	pin    api.Pin           // token's TLS pin, kept with it in the keyring
-	pins   *api.Pins         // enforces pin for token's session
+	lock             *os.File          // held for the daemon's life: one core per state directory
+	memory           *engine.Memory    // retry backoff and announced failures, across passes
+	work             sync.Mutex        // one engine operation at a time
+	mu               sync.Mutex        // guards the fields below
+	key              *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
+	pin              api.Pin           // token's TLS pin, kept with it in the keyring
+	pins             *api.Pins         // enforces pin for token's session
+	credentialUnread bool              // saved credential/pin unavailable: recover before reauthentication
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -69,6 +72,10 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := db.Set("identity_checked", ""); err != nil {
+		db.Close()
+		return nil, err
+	}
 	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, exit: os.Exit, kick: make(chan bool, 1), state: "unlinked", memory: engine.NewMemory(),
 		http: &http.Client{
 			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute},
@@ -76,11 +83,22 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
 	if server := db.Get("server"); server != "" {
-		tok, key, pin, err := loadCredential(server)
+		if err := d.migrateCredential(); err != nil {
+			if errors.Is(err, errKeyringUnavailable) {
+				d.state, d.lastErr, d.credentialUnread = "signed_out", err.Error(), true
+				return d, nil
+			}
+			db.Close()
+			return nil, err
+		}
+		tok, key, pin, err := loadCredential(d.credentialID())
 		if err != nil {
-			d.state, d.lastErr = "signed_out", "the keyring holds no KyDrive credential; sign in again"
+			d.state, d.lastErr, d.credentialUnread = "signed_out", errCredentialUnread.Error(), true
 		} else {
 			d.token, d.key, d.pin, d.state = tok, key, pin, "idle"
+			if tok == "" {
+				d.state = "revoked"
+			}
 		}
 	}
 	return d, nil
@@ -121,7 +139,11 @@ func (d *daemon) listen() (net.Listener, error) {
 
 func (d *daemon) serve(ctx context.Context, ln net.Listener) {
 	srv := rpc.NewServer()
-	srv.RegisterName("Core", &Core{d: d, ctx: ctx})
+	if d.manager != nil {
+		srv.RegisterName("Core", &AccountsCore{m: d.manager})
+	} else {
+		srv.RegisterName("Core", &Core{d: d, ctx: ctx})
+	}
 	var delay time.Duration
 	for {
 		c, err := ln.Accept()
@@ -252,7 +274,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 	e.Context = ctx
 	// A wipe the server asked for continues even after the credential is gone.
 	if err := e.ResumeWipe(); err != nil {
-		log.Printf("wipe: %v", err)
+		log.Print("wipe unfinished; see account status")
 	}
 	retried := d.retry()
 	d.mu.Lock()
@@ -275,13 +297,18 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		time.AfterFunc(settle+time.Second, func() { d.trigger(true) })
 	}
 
+	if err == nil {
+		err = d.migrateCredential()
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	switch {
 	case errors.Is(err, engine.ErrRevoked):
 		d.state, d.lastErr = "revoked", err.Error()
-		d.forget()
-	case errors.Is(err, engine.ErrSignedOut):
+		if err := d.retireRevokedCredential(); err != nil {
+			d.lastErr = errCredentialUnread.Error()
+		}
+	case errors.Is(err, engine.ErrSignedOut), errors.Is(err, errKeyringUnavailable):
 		d.state, d.lastErr = "signed_out", err.Error()
 		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
 		d.retryAt = time.Now().Add(d.backoff)
@@ -289,6 +316,8 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 			msg := "KyDrive refused this computer's credentials; syncing stopped until you sign in again"
 			if errors.Is(err, api.ErrPinChanged) {
 				msg = api.ErrPinChanged.Error()
+			} else if errors.Is(err, errKeyringUnavailable) {
+				msg = errKeyringUnavailable.Error()
 			}
 			d.db.Log("warn", msg)
 		}
@@ -296,7 +325,7 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 		d.state, d.lastErr = "idle", ""
 	case err != nil:
 		d.state, d.lastErr = "error", err.Error()
-		log.Printf("sync: %v", err)
+		log.Print("sync failed; see account status")
 	default:
 		d.state, d.lastErr, d.lastSync, d.backoff = "idle", "", time.Now().Unix(), 0
 	}
@@ -307,29 +336,55 @@ func (d *daemon) pass(ctx context.Context, local bool) {
 // holds d.work.
 func (d *daemon) retry() bool {
 	d.mu.Lock()
+	if d.state == "revoked" && d.credentialUnread {
+		if err := d.retireRevokedCredential(); err == nil {
+			d.lastErr = engine.ErrRevoked.Error()
+		}
+	}
+	if d.state != "signed_out" { // a known session (or explicit unlink) can finish cleanup independently
+		_ = d.finishCredentialMigrationLocked()
+	}
 	due := d.state == "signed_out" && d.linking == nil && d.db.Get("paused") == "" && !time.Now().Before(d.retryAt)
 	d.mu.Unlock()
 	if !due {
 		return false
 	}
-	tok, key, pin, err := loadCredential(d.db.Get("server"))
+	// Complete migration before recovering a token, including unfinished cleanup.
+	migrationErr := d.migrateCredential()
+	var tok string
+	var key *ecdsa.PrivateKey
+	var pin api.Pin
+	err := migrationErr
+	if err == nil {
+		tok, key, pin, err = loadCredential(d.credentialID())
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.state != "signed_out" {
 		return false
 	}
 	if err != nil {
+		if migrationErr != nil {
+			d.lastErr = migrationErr.Error()
+			if !errors.Is(migrationErr, errKeyringUnavailable) {
+				d.state = "error" // identity/credential conflicts never fall back to the old item
+				return false
+			}
+		}
 		d.backoff = min(max(2*d.backoff, pollEvery), 30*time.Minute)
 		d.retryAt = time.Now().Add(d.backoff)
 		return false
 	}
-	d.token, d.key, d.pin, d.state = tok, key, pin, "syncing"
+	d.token, d.key, d.pin, d.state, d.credentialUnread = tok, key, pin, "syncing", false
+	if tok == "" {
+		d.state = "revoked"
+	}
 	return true
 }
 
 // session is the pin enforcer for d.token, new for each credential. The caller holds d.mu.
 func (d *daemon) session() *api.Pins {
-	if d.token == "" {
+	if d.token == "" && d.state != "revoked" {
 		return nil
 	}
 	if d.pins == nil || d.pins.Store.(*sessionPins).token != d.token {
@@ -350,7 +405,7 @@ var errSessionEnded = errors.New("this computer's KyDrive session has ended")
 func (s *sessionPins) Current() (api.Pin, error) {
 	s.d.mu.Lock()
 	defer s.d.mu.Unlock()
-	if s.d.token != s.token {
+	if s.d.pins == nil || s.d.pins.Store != s || s.d.token != s.token || (s.token == "" && s.d.state != "revoked") {
 		return api.Pin{}, errSessionEnded
 	}
 	return s.d.pin, nil
@@ -360,10 +415,10 @@ func (s *sessionPins) Replace(old, new api.Pin) bool {
 	d := s.d
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.token != s.token || d.pin != old {
+	if d.pins == nil || d.pins.Store != s || d.token != s.token || d.pin != old || (s.token == "" && d.state != "revoked") {
 		return false
 	}
-	if err := storeCredential(d.db.Get("server"), d.token, d.key, new); err != nil {
+	if err := storeCredential(d.credentialID(), d.token, d.key, new); err != nil {
 		log.Printf("keyring: %v", err)
 		return false
 	}
@@ -371,12 +426,23 @@ func (s *sessionPins) Replace(old, new api.Pin) bool {
 	return true
 }
 
+// Revocation destroys the token and signing key, retaining only the pin for owner-bound
+// reauthentication. Caller holds d.mu; a failed write is retried before reauthentication.
+func (d *daemon) retireRevokedCredential() error {
+	d.token, d.key, d.pins = "", nil, nil
+	err := storeCredential(d.credentialID(), "", nil, d.pin)
+	d.credentialUnread = err != nil
+	return err
+}
+
 // forget deletes the credential and its signing key from the keyring. The caller holds d.mu.
 func (d *daemon) forget() {
-	if err := keyring.Delete(keyringService, d.db.Get("server")); err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		log.Printf("keyring: %v", err)
+	if id := d.credentialID(); id != "" {
+		if err := keyring.Delete(keyringService, id); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+			log.Printf("keyring: %v", err)
+		}
 	}
-	d.token, d.key, d.pin, d.pins = "", nil, api.Pin{}, nil
+	d.token, d.key, d.pin, d.pins, d.credentialUnread = "", nil, api.Pin{}, nil, false
 }
 
 func openBrowser(url string) error {

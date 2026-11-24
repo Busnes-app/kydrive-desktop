@@ -3,6 +3,8 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -28,16 +30,17 @@ type Core struct {
 }
 
 type Status struct {
-	Version    string // this core's release, for a shell that bundles a newer one (Quit)
-	Linked     bool
-	Server     string
-	DevicesURL string // the account page where this computer can be revoked
-	Root       string
-	State      string
-	Error      string
-	Paused     bool
-	LastSync   int64
-	Workspaces []WorkspaceStatus
+	AccountID, User, OrgID string
+	Version                string // this core's release, for a shell that bundles a newer one (Quit)
+	Linked                 bool
+	Server                 string
+	DevicesURL             string // the account page where this computer can be revoked
+	Root                   string
+	State                  string
+	Error                  string
+	Paused                 bool
+	LastSync               int64
+	Workspaces             []WorkspaceStatus
 }
 
 type WorkspaceStatus struct {
@@ -48,7 +51,7 @@ type WorkspaceStatus struct {
 func (c *Core) Status(_ struct{}, out *Status) error {
 	d := c.d
 	d.mu.Lock()
-	*out = Status{Version: version, Linked: d.token != "", Server: d.db.Get("server"), DevicesURL: d.db.Get("devices_url"), Root: d.root,
+	*out = Status{AccountID: d.db.Get("account_id"), User: d.db.Get("user"), OrgID: d.db.Get("org_id"), Version: version, Linked: d.token != "", Server: d.db.Get("server"), DevicesURL: d.db.Get("devices_url"), Root: d.root,
 		State: d.state, Error: d.lastErr, Paused: d.db.Get("paused") != "", LastSync: d.lastSync}
 	d.mu.Unlock()
 	ws, err := d.db.Workspaces()
@@ -63,14 +66,24 @@ type LinkArgs struct{ Server, Name string }
 // serverOrigin accepts https, or http only on a loopback host for development.
 func serverOrigin(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
+	if err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return "", errors.New("enter the KyDrive address, e.g. https://drive.example.com")
 	}
 	ip := net.ParseIP(u.Hostname())
 	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || (ip != nil && ip.IsLoopback()))) {
 		return "", errors.New("KyDrive must be reached over https")
 	}
-	return u.Scheme + "://" + u.Host, nil
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return u.Scheme + "://" + host, nil
 }
 
 // platform is the server's name for this OS.
@@ -149,6 +162,20 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	if err != nil {
 		return err
 	}
+	d.mu.Lock()
+	heldServer := d.db.Get("server")
+	restore := heldServer != "" && (d.state == "revoked" || d.state == "signed_out")
+	d.mu.Unlock()
+	if restore {
+		held, err := serverOrigin(heldServer)
+		if err != nil || held != server {
+			return errors.New("use this account's KyDrive server to restore its link")
+		}
+		return c.SignIn(struct{}{}, &struct{}{})
+	}
+	if d.db.Get("storage_id") != "" {
+		return errors.New("use AddAccount to add an account, or SignIn to restore its link")
+	}
 	ctx, end, err := c.begin(func() error {
 		if d.token != "" {
 			return errors.New("already linked; unlink first")
@@ -175,6 +202,12 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	if err := d.stillWanted(ctx, server, tok); err != nil {
 		return err
 	}
+	if d.prepareAccount != nil {
+		if err := d.prepareAccount(server, tok); err != nil {
+			d.revoke(server, tok)
+			return err
+		}
+	}
 	previous, err := d.db.Workspaces()
 	if err != nil {
 		return err
@@ -187,22 +220,57 @@ func (c *Core) Link(in LinkArgs, _ *struct{}) error {
 	return d.activate(server, name, tok)
 }
 
-// activate stores an approved credential and starts syncing with it. The caller holds d.work.
+// activate stores a prepared approval and starts syncing. The caller holds d.work;
+// manager callers also hold m.add and have checked identity ownership before mutation.
 func (d *daemon) activate(server, name string, tok api.Token) error {
-	if err := storeCredential(server, tok.Token, tok.Key, tok.Pin); err != nil {
-		return errors.New("could not store the credential in the OS keyring: " + err.Error())
-	}
-	for k, v := range map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User, "user_id": tok.UserID} {
-		if err := d.db.Set(k, v); err != nil {
-			return err
+	committed := false
+	defer func() {
+		if !committed {
+			d.revoke(server, tok)
 		}
-	}
-	if err := os.MkdirAll(d.root, 0o700); err != nil {
+	}()
+	id := accountID(server, tokenAccount(tok))
+	slot := make([]byte, 32)
+	if _, err := rand.Read(slot); err != nil {
 		return err
 	}
 	d.mu.Lock()
-	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff = tok.Token, tok.Key, tok.Pin, "idle", "", 0
-	d.mu.Unlock()
+	defer d.mu.Unlock()
+	// A replacement must not overwrite an earlier cleanup marker.
+	if err := d.finishCredentialMigrationLocked(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(d.root, 0700); err != nil {
+		return errors.New("could not create account sync folder")
+	}
+	old := d.credentialID()
+	credential := "pending:" + hex.EncodeToString(slot)
+	if id != "" {
+		credential = "account:" + id
+		if old != "" {
+			credential += ":" + hex.EncodeToString(slot)
+		}
+	}
+	// Before commit this marker owns the abandoned stage; afterward it owns the old item.
+	if err := d.db.Set("credential_migration", credential); err != nil {
+		return err
+	}
+	defer func() {
+		if !committed {
+			_ = d.finishCredentialMigrationLocked()
+		}
+	}()
+	if err := storeCredential(credential, tok.Token, tok.Key, tok.Pin); err != nil {
+		return errors.New("could not store the credential in the OS keyring: " + err.Error())
+	}
+	if err := d.db.SetConfig(map[string]string{"server": server, "device": name, "devices_url": tok.DevicesURL, "user": tok.User, "user_id": tok.UserID, "issuer": tok.Issuer, "sub": tok.Sub, "org_id": tok.OrgID, "account_id": id, "credential_slot": credential, "credential_migration": old, "identity_checked": ""}); err != nil {
+		return err
+	}
+	committed = true
+	d.token, d.key, d.pin, d.state, d.lastErr, d.backoff, d.credentialUnread = tok.Token, tok.Key, tok.Pin, "idle", "", 0, false
+	d.pins = nil
+	// The committed session is authoritative; cleanup failures retain the retry marker.
+	_ = d.finishCredentialMigrationLocked()
 	d.trigger(true)
 	return nil
 }
@@ -214,8 +282,11 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	server, name := d.db.Get("server"), d.db.Get("device")
 	var pins *api.Pins
 	ctx, end, err := c.begin(func() error {
-		if server == "" || d.state != "signed_out" {
+		if server == "" || (d.state != "signed_out" && d.state != "revoked") {
 			return errors.New("this computer is not signed out")
+		}
+		if d.credentialUnread {
+			return errCredentialUnread
 		}
 		if d.pin.Leaf != "" { // with no pin yet (linked before pinning), trust on first use
 			pins = d.session()
@@ -250,12 +321,24 @@ func (c *Core) SignIn(_ struct{}, _ *struct{}) error {
 	if err := d.stillWanted(ctx, server, tok); err != nil {
 		return err
 	}
+	if d.prepareAccount != nil {
+		if err := d.prepareAccount(server, tok); err != nil {
+			d.revoke(server, tok)
+			return err
+		}
+	}
 	return d.activate(server, name, tok)
 }
 
 // sameAccount refuses a sign-in as any account but the one recorded at link. An install
 // with no immutable ID uses the legacy username check; with neither identity it is refused.
 func (d *daemon) sameAccount(tok api.Token) error {
+	if d.db.Get("issuer") != "" || d.db.Get("sub") != "" || d.db.Get("org_id") != "" {
+		if accountID(d.db.Get("server"), tokenAccount(tok)) != accountID(d.db.Get("server"), d.account()) {
+			return errors.New("sign in with the original KyIdentity account and organization")
+		}
+		return nil
+	}
 	if id := d.db.Get("user_id"); id != "" {
 		if tok.UserID == id {
 			return nil
@@ -384,9 +467,13 @@ func (c *Core) Unlink(in struct{ RemoveFiles bool }, _ *struct{}) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.forget()
+	identity := d.db.Get("account_id")
+	if id := accountID(d.db.Get("server"), d.account()); id != "" {
+		identity = id
+	}
+	d.forget() // delete through the original pointer before retaining the canonical identity
 	d.state, d.lastErr = "unlinked", ""
-	return errors.Join(wiped, d.db.Set("server", ""), d.db.Set("devices_url", ""), d.db.Set("user", ""))
+	return errors.Join(wiped, d.db.SetConfig(map[string]string{"server": "", "devices_url": "", "user": "", "account_id": identity}))
 }
 
 type Choice struct {

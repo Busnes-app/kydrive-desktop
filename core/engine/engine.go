@@ -83,11 +83,20 @@ func (e *Engine) abs(w Workspace, rel string) (string, error) {
 	return filepath.Join(root, r), nil
 }
 
-func (e *Engine) warn(format string, a ...any) { e.DB.Log("warn", fmt.Sprintf(format, a...)) }
+func (e *Engine) warn(format string, a ...any) {
+	message := strings.ReplaceAll(fmt.Sprintf(format, a...), e.Root, "<sync root>")
+	if home, err := os.UserHomeDir(); err == nil {
+		message = strings.ReplaceAll(message, home, "~")
+	}
+	e.DB.Log("warn", message)
+}
 
 // Choose sets the synced workspaces. A newly chosen one gets a folder named after it; one no
 // longer chosen is evicted.
 func (e *Engine) Choose(ctx context.Context, ids []string) error {
+	if err := e.checkRoot(); err != nil {
+		return err
+	}
 	e.Context = ctx
 	list, err := e.API.Workspaces(ctx)
 	if err != nil {
@@ -197,6 +206,9 @@ func (e *Engine) Sync(ctx context.Context) error { return e.fail(e.sync(ctx, tru
 func (e *Engine) Poll(ctx context.Context) error { return e.fail(e.sync(ctx, false)) }
 
 func (e *Engine) sync(ctx context.Context, local bool) error {
+	if err := e.checkRoot(); err != nil {
+		return err
+	}
 	e.Context = ctx
 	list, err := e.API.Workspaces(ctx)
 	if err != nil {
@@ -204,18 +216,26 @@ func (e *Engine) sync(ctx context.Context, local bool) error {
 	}
 	// Upgrade a previously linked computer using its existing device credential. Keep
 	// the old refusal when an older server has no account route; other errors fail closed.
-	if e.DB.Get("user_id") == "" {
+	if e.DB.Get("identity_checked") == "" {
 		account, err := e.API.DeviceAccount(ctx)
+
 		if err == nil {
-			if err := e.DB.Set("user_id", account.UserID); err != nil {
-				return err
+			// Complete hosted claims are authoritative; local IDs belong to legacy servers.
+			if held := e.DB.Get("user_id"); account.Issuer == "" && held != "" && held != account.UserID {
+				return errors.New("KyDrive returned a different account identity")
 			}
-			if err := e.DB.Set("user", account.User); err != nil {
+			if held := e.DB.Get("issuer"); held != "" && (held != account.Issuer || e.DB.Get("sub") != account.Sub || e.DB.Get("org_id") != account.OrgID) {
+				return errors.New("KyDrive returned a different KyIdentity account")
+			}
+			if err := e.DB.SetConfig(map[string]string{"user_id": account.UserID, "user": account.User, "issuer": account.Issuer, "sub": account.Sub, "org_id": account.OrgID, "identity_checked": "1"}); err != nil {
 				return err
 			}
 		} else if api.Status(err) != 404 {
 			return err
+		} else if err := e.DB.Set("identity_checked", "1"); err != nil {
+			return err
 		}
+
 	} else {
 		e.API.LearnIdentity(ctx)
 	}
@@ -411,6 +431,9 @@ func (e *Engine) fail(err error) error {
 
 // Wipe evicts every workspace: unuploaded edits move to Unsynced/, the rest is deleted.
 func (e *Engine) Wipe() error {
+	if err := e.checkRoot(); err != nil {
+		return err
+	}
 	ws, err := e.DB.Workspaces()
 	if err != nil {
 		return err
@@ -716,4 +739,16 @@ func windowsName(name string) bool {
 		return false
 	}
 	return true
+}
+
+// A relocated account root must not redirect sync or a wipe into another account.
+func (e *Engine) checkRoot() error {
+	if fi, err := os.Lstat(e.Root); err == nil {
+		if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return errLinked
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return errors.New("cannot inspect account sync folder")
+	}
+	return nil
 }

@@ -10,10 +10,15 @@ Kirigami.ApplicationWindow {
     title: "KyDrive"
     width: Kirigami.Units.gridUnit * 30
     height: Kirigami.Units.gridUnit * 36
+    property bool addingAccount: false
     readonly property bool linked: Core.status.Linked === true
     // KyDrive stopped accepting this computer's credential: sign in again to the same account.
     readonly property bool signedOut: Core.status.State === "signed_out" && !!Core.status.Server
 
+    Connections {
+        target: Core
+        function onLinkingChanged() { if (!Core.linking && Core.error === "") root.addingAccount = false }
+    }
     onLinkedChanged: if (linked) Core.loadWorkspaces()
     function showAppearance() {
         appearanceDialog.open()
@@ -117,6 +122,24 @@ Kirigami.ApplicationWindow {
         ColumnLayout {
             spacing: Kirigami.Units.gridUnit * 1.5
 
+            Controls.Label { text: i18n("Accounts"); font.pixelSize: theme.typeSection; color: theme.inkStrong }
+            Repeater {
+                model: Core.accounts
+                delegate: KyButton {
+                    required property var modelData
+                    theme: root.ky
+                    Layout.fillWidth: true
+                    text: modelData.User + " — " + modelData.Server + (modelData.OrgID ? " — " + modelData.OrgID : "") + (Core.status.AccountID === modelData.ID ? i18n(" (selected)") : "")
+                    enabled: !Core.linking
+                    onClicked: { root.addingAccount = false; Core.selectAccount(modelData.ID) }
+                }
+            }
+            KyButton {
+                theme: root.ky
+                text: root.addingAccount ? i18n("Cancel adding account") : i18n("Add account")
+                enabled: !Core.linking
+                onClicked: root.addingAccount = !root.addingAccount
+            }
             // The page head: the linked server (or the link step) and the connection state.
             ColumnLayout {
                 Layout.fillWidth: true
@@ -215,7 +238,7 @@ Kirigami.ApplicationWindow {
             // Not linked: the browser does the sign-in and approval.
             Card {
                 theme: root.ky
-                visible: !root.linked && !root.signedOut
+                visible: root.addingAccount || (!root.linked && !root.signedOut)
                 // Each label sits above its full-width field.
                 FieldLabel { theme: root.ky; text: i18n("KyDrive address") }
                 KyField {
@@ -243,7 +266,10 @@ Kirigami.ApplicationWindow {
                         kind: "primary"
                         text: Core.linking ? i18n("Waiting for approval in your browser…") : i18n("Link")
                         enabled: !Core.linking && server.text !== ""
-                        onClicked: Core.link(server.text, deviceName.text)
+                        onClicked: {
+                            if (root.addingAccount) Core.addAccount(server.text, deviceName.text)
+                            else Core.link(server.text, deviceName.text)
+                        }
                     }
                     KyButton {
                         theme: root.ky

@@ -15,8 +15,8 @@ namespace KyDrive;
 // deletes, see conflicts and unlink. Everything shown comes from the core, as plain text.
 sealed class MainWindow : Window
 {
-    readonly CoreClient core = new(Paths.SocketPath());
-    readonly Warnings warnings = new();
+    CoreClient core = new(Paths.SocketPath());
+    Warnings warnings = new();
     readonly DispatcherQueue ui;
     readonly DispatcherQueueTimer poll;
     readonly TaskbarIcon tray;
@@ -32,6 +32,10 @@ sealed class MainWindow : Window
     bool olderRunning; // an unversioned core could not be ended
 
     readonly InfoBar errorBar = new() { Severity = InfoBarSeverity.Error, IsClosable = false };
+    readonly StackPanel accountsPanel = new() { Spacing = 8 };
+    bool addingAccount;
+    int actions;
+    string accountsKey = "";
     readonly StackPanel linkForm = new() { Spacing = 12 };
     readonly TextBox server = new() { Header = "KyDrive address", PlaceholderText = "https://drive.example.com" };
     readonly TextBox deviceName = new() { Header = "Computer name", PlaceholderText = "This computer's name" };
@@ -74,7 +78,11 @@ sealed class MainWindow : Window
         };
 
         server.TextChanged += (_, _) => Render();
-        linkButton.Click += (_, _) => WaitForBrowser(c => c.Link(server.Text, deviceName.Text));
+        linkButton.Click += (_, _) => WaitForBrowser(async c => {
+            var add = addingAccount;
+            core = await c.SubmitLink(server.Text, deviceName.Text, add); addingAccount = false;
+            if (add) ResetAccount();
+        });
         cancelLink = Act("Cancel", () => Run(c => c.CancelLink()));
         linkForm.Children.Add(server);
         linkForm.Children.Add(deviceName);
@@ -100,6 +108,7 @@ sealed class MainWindow : Window
 
         var page = new StackPanel { Spacing = 16, Padding = new Thickness(24) };
         page.Children.Add(errorBar);
+        page.Children.Add(accountsPanel);
         page.Children.Add(signInPanel);
         page.Children.Add(linkForm);
         page.Children.Add(linked);
@@ -148,7 +157,15 @@ sealed class MainWindow : Window
         busy = true;
         try
         {
-            status = await core.Status();
+            var accounts = await core.Accounts();
+            var next = core.ForAccounts(accounts);
+            if (!ReferenceEquals(next, core) && !linking) {
+                core = next; ResetAccount();
+            }
+            var selected = core;
+            status = await selected.Status();
+            if (!ReferenceEquals(selected,core)) return;
+            RenderAccounts(accounts);
             coreError = "";
             var quitNow = false;
             // An older core (from before an upgrade) is asked to quit, at most once a minute; it
@@ -191,8 +208,11 @@ sealed class MainWindow : Window
             // still running (unzipped elsewhere): only the user can quit that one.
             if (!quitNow && status.Version == quitVersion && Upgrade.Older(status.Version, typeof(MainWindow).Assembly.GetName().Version!))
                 coreError = $"An older KyDrive ({status.Version}) is still running. Quit it from its tray icon to finish the upgrade.";
-            RenderConflicts(await core.Conflicts());
-            foreach (var message in warnings.Next(await core.Activity(warnings.After)))
+            var issues = await selected.Conflicts();
+            var activity = await selected.Activity(warnings.After);
+            if (!ReferenceEquals(selected,core)) return;
+            RenderConflicts(issues);
+            foreach (var message in warnings.Next(activity))
                 Notify(message);
             if (status.Linked != wasLinked)
             {
@@ -232,6 +252,29 @@ sealed class MainWindow : Window
         }
     }
 
+
+    void ResetAccount()
+    {
+        warnings = new Warnings(); wasLinked = false;
+        choices.Children.Clear(); conflicts.Children.Clear(); held.Children.Clear();
+        heldKey = conflictKey = "";
+    }
+
+    void RenderAccounts(DriveAccount[] accounts)
+    {
+        var key = (status?.AccountID ?? "") + string.Join("|", accounts.Select(a => a.ID + a.Label));
+        if (key == accountsKey) return;
+        accountsKey = key; accountsPanel.Children.Clear();
+        if (accounts.Length == 0) return;
+        accountsPanel.Children.Add(Heading("Accounts"));
+        foreach (var account in accounts)
+            accountsPanel.Children.Add(Act(account.Label + (status?.AccountID == account.ID ? " (selected)" : ""), () => {
+                if (linking || busy || actions > 0) return;
+                core = core.ForAccount(account.ID); addingAccount = false; ResetAccount(); _ = Refresh();
+            }));
+        accountsPanel.Children.Add(Act("Add account", () => { if (!linking) { addingAccount = !addingAccount; Render(); } }));
+    }
+
     void Render()
     {
         var s = status;
@@ -245,7 +288,7 @@ sealed class MainWindow : Window
         signInButton.Content = linking ? "Waiting for approval in your browser…" : "Sign in again";
         signInButton.IsEnabled = !linking;
         signInUnlink.Visibility = Show(!isLinked);
-        linkForm.Visibility = Show(s != null && !isLinked && !signedOut);
+        linkForm.Visibility = Show(addingAccount || (s != null && !isLinked && !signedOut));
         server.IsEnabled = deviceName.IsEnabled = !linking;
         linkButton.Content = linking ? "Waiting for approval in your browser…" : "Link";
         linkButton.IsEnabled = !linking && server.Text.Trim() != "";
@@ -300,9 +343,11 @@ sealed class MainWindow : Window
 
     async void LoadWorkspaces()
     {
+        var selected = core;
         try
         {
-            var list = await core.Workspaces();
+            var list = await selected.Workspaces();
+            if (!ReferenceEquals(selected, core)) return;
             actionError = "";
             choices.Children.Clear();
             // The name sits in its own TextBlock: plain text whatever it contains.
@@ -321,6 +366,7 @@ sealed class MainWindow : Window
 
     async void Run(Func<CoreClient, Task> call, bool reload = false)
     {
+        actions++;
         try
         {
             await call(core);
@@ -331,6 +377,7 @@ sealed class MainWindow : Window
             actionError = e.Message;
         }
         // After a failure the list keeps the user's choice and the error stays up.
+        actions--;
         if (reload && actionError == "")
             LoadWorkspaces();
         await Refresh();

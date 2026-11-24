@@ -20,6 +20,90 @@ class TestCoreClient : public QObject
 {
     Q_OBJECT
 private slots:
+    void addingAccountResetsNotificationCursor()
+    {
+        QTemporaryDir dir;
+        FakeCore core(dir.filePath(QStringLiteral("sync.sock")));
+        core.accounts = QJsonArray{QJsonObject{{QStringLiteral("ID"), QStringLiteral("old")}}};
+        core.activityId = 100;
+        core.workspaces = QJsonArray{QJsonObject{{QStringLiteral("ID"), QStringLiteral("old-workspace")}}};
+        CoreClient client(dir.filePath(QStringLiteral("sync.sock")), QString());
+        QSignalSpy warnings(&client, &CoreClient::warning);
+        client.selectAccount(QStringLiteral("old"));
+        QTRY_COMPARE(client.workspaces().size(), 1);
+        client.refresh();
+        QTRY_VERIFY([&] {
+            for (const auto& request : core.requests)
+                if (request.value(QStringLiteral("method")).toString() == QStringLiteral("Core.Activity")
+                    && request.value(QStringLiteral("params")).toArray().first().toObject().value(QStringLiteral("After")).toInteger() == 100)
+                    return true;
+            return false;
+        }());
+        core.addedAccount = QJsonObject{{QStringLiteral("ID"), QStringLiteral("new")}};
+        core.accounts.append(core.addedAccount);
+        core.activityId = 7;
+        core.workspaces = QJsonArray{QJsonObject{{QStringLiteral("ID"), QStringLiteral("new-workspace")}}};
+        core.conflicts = QJsonArray{};
+        client.addAccount(QStringLiteral("https://drive.example.com"), QStringLiteral("computer"));
+        QTRY_COMPARE(client.accountID(), QStringLiteral("new"));
+        QTRY_COMPARE(client.workspaces().size(), 1);
+        QTRY_COMPARE(client.workspaces().first().toMap().value(QStringLiteral("ID")).toString(), QStringLiteral("new-workspace"));
+        QTRY_VERIFY(client.conflicts().isEmpty());
+        // The first read is a baseline; the next warning has a lower ID than old's cursor.
+        // Responses share one ordered socket: this reply follows the initial Activity
+        // response, so its callback has run before we publish the next warning.
+        bool baselineRead = false;
+        client.call(QStringLiteral("Status"), {}, [&](const QJsonValue&, const QString& error) { baselineRead = error.isEmpty(); });
+        QTRY_VERIFY(baselineRead);
+        QCOMPARE(warnings.count(), 0);
+        core.activityId = 8;
+        core.activityMessage = QStringLiteral("New account warning");
+        client.refresh();
+        QTRY_COMPARE(warnings.count(), 1);
+        QCOMPARE(warnings.first().first().toString(), QStringLiteral("New account warning"));
+    }
+
+    void externalRemovalResetsFallbackAndPrimaryState()
+    {
+        QTemporaryDir dir;
+        FakeCore core(dir.filePath(QStringLiteral("sync.sock")));
+        core.accounts = QJsonArray{QJsonObject{{QStringLiteral("ID"), QStringLiteral("one")}}, QJsonObject{{QStringLiteral("ID"), QStringLiteral("two")}}};
+        core.workspaces = QJsonArray{QJsonObject{{QStringLiteral("ID"), QStringLiteral("one-workspace")}}};
+        CoreClient client(dir.filePath(QStringLiteral("sync.sock")), QString());
+        client.selectAccount(QStringLiteral("one"));
+        QTRY_COMPARE(client.workspaces().size(), 1);
+        core.accounts.removeAt(0);
+        core.conflicts = QJsonArray{};
+        core.workspaces = QJsonArray{QJsonObject{{QStringLiteral("ID"), QStringLiteral("two-workspace")}}};
+        client.refresh();
+        QTRY_COMPARE(client.accountID(), QStringLiteral("two"));
+        QTRY_COMPARE(client.workspaces().size(), 1);
+        QTRY_COMPARE(client.workspaces().first().toMap().value(QStringLiteral("ID")).toString(), QStringLiteral("two-workspace"));
+        core.accounts = QJsonArray{};
+        core.status[QStringLiteral("Linked")] = false;
+        client.refresh();
+        QTRY_VERIFY(client.accountID().isEmpty());
+        QVERIFY(client.workspaces().isEmpty());
+        QVERIFY(client.conflicts().isEmpty());
+    }
+
+    void requestsKeepTheirAccount()
+    {
+        QTemporaryDir dir;
+        FakeCore core(dir.filePath(QStringLiteral("sync.sock")));
+        CoreClient client(dir.filePath(QStringLiteral("sync.sock")), QString());
+        client.selectAccount(QStringLiteral("one"));
+        client.pause(true);
+        client.selectAccount(QStringLiteral("two"));
+        client.pause(false);
+        QTRY_VERIFY(core.methods.count(QStringLiteral("Core.Pause")) == 2);
+        QStringList ids;
+        for (const auto& req : core.requests)
+            if (req.value(QStringLiteral("method")).toString() == QStringLiteral("Core.Pause"))
+                ids << req.value(QStringLiteral("params")).toArray().first().toObject().value(QStringLiteral("AccountID")).toString();
+        QCOMPARE(ids, QStringList({QStringLiteral("one"),QStringLiteral("two")}));
+    }
+
     void refreshFillsStatusAndConflicts()
     {
         QTemporaryDir dir;

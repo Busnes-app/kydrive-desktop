@@ -69,6 +69,9 @@ type Snapshot struct {
 }
 
 type Token struct {
+	Issuer     string `json:"issuer"`
+	Sub        string `json:"sub"`
+	OrgID      string `json:"org_id"`
 	Token      string `json:"token"`
 	UserID     string `json:"user_id"` // immutable account identity; absent on older servers
 	User       string `json:"user"`    // the account that approved the link
@@ -178,8 +181,29 @@ func (c *Client) call(ctx context.Context, method, path string, in, out any) err
 
 // Account is the account a device credential belongs to. User is its current username.
 type Account struct {
+	Issuer string `json:"issuer"`
+	Sub    string `json:"sub"`
+	OrgID  string `json:"org_id"`
 	UserID string `json:"user_id"`
 	User   string `json:"user"`
+}
+
+// validateAccount accepts the old local-account wire shape, or a complete
+// KyIdentity pair. Partial hosted identity must never downgrade to a local ID.
+func validateAccount(a Account) error {
+	if a.Issuer == "" && a.Sub == "" && a.OrgID == "" {
+		return nil
+	}
+	u, err := url.Parse(a.Issuer)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" || a.Sub == "" {
+		return errors.New("KyDrive returned an incomplete account identity")
+	}
+	for _, v := range []string{a.Issuer, a.Sub, a.OrgID, a.UserID} {
+		if len(v) > 2048 || strings.TrimSpace(v) != v || strings.ContainsAny(v, "\x00\r\n") {
+			return errors.New("KyDrive returned an invalid account identity")
+		}
+	}
+	return nil
 }
 
 // DeviceAccount is unavailable (404) on older servers. A malformed success is not an old server.
@@ -199,8 +223,11 @@ func (c *Client) DeviceAccount(ctx context.Context) (Account, error) {
 	if c.Pins != nil {
 		c.Pins.learn(res, out.IdentityKey)
 	}
-	if out.UserID == "" || out.User == "" {
+	if (out.UserID == "" && out.Sub == "") || out.User == "" {
 		return out.Account, errors.New("KyDrive did not confirm this computer's account identity")
+	}
+	if err := validateAccount(out.Account); err != nil {
+		return out.Account, err
 	}
 	return out.Account, nil
 }
@@ -366,8 +393,11 @@ func (c *Client) Redeem(ctx context.Context, code, verifier string, key *ecdsa.P
 		Token
 		IdentityKey string `json:"identity_key"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&t); err != nil || !strings.HasPrefix(t.Token.Token, "kyd_") {
+	if err := json.NewDecoder(io.LimitReader(res.Body, 16384)).Decode(&t); err != nil || !strings.HasPrefix(t.Token.Token, "kyd_") {
 		return Token{}, fmt.Errorf("token exchange returned no device token")
+	}
+	if err := validateAccount(Account{Issuer: t.Issuer, Sub: t.Sub, OrgID: t.OrgID, UserID: t.UserID, User: t.User}); err != nil {
+		return Token{}, err
 	}
 	t.Key = key
 	// Trust on first use: the leaf this redemption met, from now on.

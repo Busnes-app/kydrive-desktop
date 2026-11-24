@@ -122,7 +122,7 @@ func TestDaemonSavesRolledPin(t *testing.T) {
 	if d.state != "idle" {
 		t.Fatalf("state %q: %s", d.state, d.lastErr)
 	}
-	tok, _, pin, err := loadCredential(f.srv.URL)
+	tok, _, pin, err := loadCredential(d.credentialID())
 	if err != nil || tok != "kyd_PINNED" || pin.Leaf != f.leaf || pin.IdentityKey != f.idKey() || pin != d.pin {
 		t.Fatalf("keyring: %q %+v %v; daemon %+v", tok, pin, err, d.pin)
 	}
@@ -148,7 +148,7 @@ func TestDaemonPinChangeWithoutIdentitySignsOut(t *testing.T) {
 	if log, _ := d.db.Activity(0); len(log) == 0 || !strings.Contains(log[0].Message, "certificate changed") {
 		t.Fatalf("activity %v", log)
 	}
-	tok, _, kept, err := loadCredential(f.srv.URL)
+	tok, _, kept, err := loadCredential(d.credentialID())
 	ws, _ := d.db.Workspaces()
 	if err != nil || tok != "kyd_PINNED" || kept != pin || len(ws) != 1 || ws[0] != binding {
 		t.Fatalf("credential %q %+v %v, bindings %v", tok, kept, err, ws)
@@ -196,7 +196,7 @@ func TestLinkStoresPinAndIdentityKey(t *testing.T) {
 	if err := ctl("Link", map[string]string{"Server": f.srv.URL, "Name": "laptop"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	tok, key, pin, err := loadCredential(f.srv.URL)
+	tok, key, pin, err := loadCredential(d.credentialID())
 	if err != nil || tok != "kyd_PINNED" || key == nil || pin.Leaf != f.leaf || pin.IdentityKey != f.idKey() || pin.Floor < before {
 		t.Fatalf("keyring: %q key=%v %+v %v", tok, key != nil, pin, err)
 	}
@@ -222,6 +222,19 @@ func TestCredentialFormatWithPin(t *testing.T) {
 	}
 }
 
+func TestRevokedCredentialFormatRetainsOnlyPin(t *testing.T) {
+	keyring.MockInit()
+	for _, pin := range []api.Pin{{}, {Leaf: retiredLeaf, IdentityKey: "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=", Floor: 123}} {
+		if err := storeCredential("revoked", "", nil, pin); err != nil {
+			t.Fatal(err)
+		}
+		token, key, got, err := loadCredential("revoked")
+		if err != nil || token != "" || key != nil || got != pin {
+			t.Fatal("revoked credential format revived a token/key or lost the pin")
+		}
+	}
+}
+
 // A re-link during the fetch belongs to another session: the old one's rollover leaves it alone,
 // even when the new session happens to hold the same pin.
 func TestDaemonRelinkDuringRolloverNotTouched(t *testing.T) {
@@ -238,7 +251,7 @@ func TestDaemonRelinkDuringRolloverNotTouched(t *testing.T) {
 	if _, err := d.engine().API.Workspaces(context.Background()); !errors.Is(err, api.ErrPinChanged) {
 		t.Fatalf("err = %v", err)
 	}
-	tok, _, got, err := loadCredential(f.srv.URL)
+	tok, _, got, err := loadCredential(d.credentialID())
 	if err != nil || tok != "kyd_NEW" || got != pin || d.pin != pin {
 		t.Fatalf("new session changed: %q %+v %v", tok, got, err)
 	}
@@ -270,7 +283,7 @@ func TestSignInKeepsIdentityKey(t *testing.T) {
 	if err := ctl("SignIn", struct{}{}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, pin, err := loadCredential(f.srv.URL); err != nil || pin.IdentityKey != f.idKey() || pin.Leaf != f.leaf {
+	if _, _, pin, err := loadCredential(d.credentialID()); err != nil || pin.IdentityKey != f.idKey() || pin.Leaf != f.leaf {
 		t.Fatalf("after sign-in %+v %v", pin, err)
 	}
 }
@@ -294,7 +307,7 @@ func pinnedSignedOut(t *testing.T, f *pinFixture, pin api.Pin) (*daemon, func(st
 	d.open = func(raw string) error { *opened++; return approve(raw) }
 	d.mu.Lock()
 	d.state, d.pin = "signed_out", pin
-	storeCredential(f.srv.URL, d.token, d.key, pin)
+	storeCredential(d.credentialID(), d.token, d.key, pin)
 	d.mu.Unlock()
 	f.mu.Lock()
 	f.paths, f.creds = nil, nil
@@ -311,7 +324,7 @@ func TestSignInOverStoredLeaf(t *testing.T) {
 	if err := ctl("SignIn", struct{}{}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, got, err := loadCredential(f.srv.URL); err != nil || got != pin || d.pin != pin {
+	if _, _, got, err := loadCredential(d.credentialID()); err != nil || got != pin || d.pin != pin {
 		t.Fatalf("pin %+v %v", got, err)
 	}
 }
@@ -324,7 +337,7 @@ func TestSignInOverSignedRenewal(t *testing.T) {
 	if err := ctl("SignIn", struct{}{}, &out); err != nil {
 		t.Fatal(err)
 	}
-	tok, _, got, err := loadCredential(f.srv.URL)
+	tok, _, got, err := loadCredential(d.credentialID())
 	if err != nil || tok != "kyd_PINNED" || got.Leaf != f.leaf || got.IdentityKey != f.idKey() || got.Floor <= 7 || d.state == "signed_out" {
 		t.Fatalf("keyring %q %+v %v, state %q", tok, got, err, d.state)
 	}
@@ -364,7 +377,7 @@ func TestSignInOverUnvouchedLeafRefused(t *testing.T) {
 			if *opened != 0 {
 				t.Fatal("the browser was opened")
 			}
-			if _, _, got, err := loadCredential(f.srv.URL); err != nil || got != pin || d.state != "signed_out" {
+			if _, _, got, err := loadCredential(d.credentialID()); err != nil || got != pin || d.state != "signed_out" {
 				t.Fatalf("pin %+v %v, state %q", got, err, d.state)
 			}
 		})
@@ -382,7 +395,7 @@ func TestLinkAfterUnlinkTrustsOnFirstUse(t *testing.T) {
 	if err := ctl("Link", map[string]string{"Server": f.srv.URL, "Name": "laptop"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, got, err := loadCredential(f.srv.URL); err != nil || got.Leaf != f.leaf || got.IdentityKey != f.idKey() || d.pin != got {
+	if _, _, got, err := loadCredential(d.credentialID()); err != nil || got.Leaf != f.leaf || got.IdentityKey != f.idKey() || d.pin != got {
 		t.Fatalf("pin %+v %v", got, err)
 	}
 }

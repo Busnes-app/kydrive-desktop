@@ -19,6 +19,9 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
 - **URLs:** only `http`/`https` with a host are opened (`webURL`). The sync root is revealed with `selectFile(_:inFileViewerRootedAtPath:)`, which never launches anything.
 - **Core lifecycle:** Start at login (the menu's toggle) is the bundled core as a per-user launch agent with `SMAppService.agent` (`RunAtLoad`, restarted after a crash). A fresh install starts with it off; an install that registered it earlier keeps it; the toggle shows the agent's real status. Only when the agent is not enabled and nothing answers does the app start the core itself, at most once a minute; never both, as two cores would contend for one socket: turning it on stops the core the app started first. With the agent on and nothing answering, the app asks launchd to start it (`launchctl kickstart`), at most once a minute: launchd does not restart a core that exited cleanly. A core reporting an older `Version` than the app's `CFBundleShortVersionString` is asked to `Quit`, at most once a minute, so the app's own core replaces it. A core reporting no version (the released 0.6.0, which always ran as the agent and has no `Quit`) is restarted once while not syncing with `launchctl kickstart -k`; if that fails, or one still answers a minute later, the menu says "An older KyDrive is still running. Log out and back in to finish the upgrade."
 
+- Link submissions restore the selected retained revoked account; only the existing explicit Add account control submits `AddAccount`. Keep selectors on each request and preserve the UI shape.
+- Account controls list identity/server/organization, add via browser approval, and remove only the selected account. Each client request carries its own `AccountID`; adding, selecting and fallback all call `resetAccount`, clearing linked status, workspace choices, conflicts and the notification cursor together. Successful empty lists return to the primary selector; an unavailable Accounts RPC retains the current selection.
+
 ## Work Guidance
 - Builds and tests need macOS and Xcode; on Linux, push and read the `macos-shell` CI job.
 - Sparkle auto-update is not done yet.
@@ -30,6 +33,7 @@ The macOS shell: a SwiftUI `MenuBarExtra` app (`KyDrive.app`, bundle id `com.kys
   - `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID` — that key's ID and issuer ID.
 
 ## Verification
+- `CoreClientTests` covers linked-to-linked fallback after external removal, per-account workspace reload and lower activity IDs after add/fallback; removing the last account returns to primary Link without restart.
 - `swift test` in `macos/`; set `KYDRIVE_SHOT_DIR` to save menu and Settings screenshots; set `KYDRIVE_SYNC_BIN` to a built `kydrive-sync` to also check the real core listens on the shell's path with 0700/0600 modes.
 - `scripts/bundle.sh`, then open `build/KyDrive.app`.
 - CI `macos-shell` runs both, checks the bundle (plists, both architectures, signature), launches the app until its core answers `ctl Status`, and uploads `KyDrive-macos-unsigned.zip`.

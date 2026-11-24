@@ -493,8 +493,20 @@ func TestPinThroughHTTPSProxy(t *testing.T) {
 			return
 		}
 		w.WriteHeader(200)
-		down, _, _ := http.NewResponseController(w).Hijack()
-		go func() { io.Copy(up, down); up.Close() }()
+		down, buffered, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			up.Close()
+			t.Errorf("hijack CONNECT: %v", err)
+			return
+		}
+		// Force the ClientHello into the reader, as net/http may do before Hijack returns.
+		if _, err := buffered.Peek(1); err != nil {
+			up.Close()
+			down.Close()
+			t.Errorf("buffer tunneled handshake: %v", err)
+			return
+		}
+		go func() { io.Copy(up, buffered); up.Close() }()
 		io.Copy(down, up)
 		down.Close()
 	}))
@@ -504,14 +516,27 @@ func TestPinThroughHTTPSProxy(t *testing.T) {
 	t.Cleanup(proxy.Close)
 	proxyURL, _ := url.Parse(strings.Replace(proxy.URL, "127.0.0.1", "localhost", 1))
 	for _, leaf := range []*tls.Certificate{a, p.leaf()} {
-		c := p.client(NewMemoryPins(Pin{Leaf: pinOf(leaf), Floor: 1}))
+		held := Pin{Leaf: pinOf(leaf), Floor: 1}
+		store := NewMemoryPins(held)
+		c := p.client(store)
 		c.HTTP.Transport.(*http.Transport).Proxy = http.ProxyURL(proxyURL)
+		c.HTTP.Timeout = 10 * time.Second // bound a broken tunnel instead of hanging the suite
 		_, err := c.Workspaces(ctx)
 		if leaf == a && err != nil {
 			t.Fatalf("pinned server through the proxy: %v", err)
 		}
 		if leaf != a && !errors.Is(err, ErrPinChanged) {
 			t.Fatalf("wrong leaf through the proxy: %v", err)
+		}
+		if got, err := store.Current(); err != nil || got != held {
+			t.Fatal("proxy changed the held pin", err)
+		}
+		var want []string
+		if leaf == a {
+			want = []string{"/api/drive/workspaces"}
+		}
+		if got := p.paths(); !eq(got, want) {
+			t.Fatalf("requests through the proxy: %v, want %v", got, want)
 		}
 	}
 	if tunnels.Load() != 2 {

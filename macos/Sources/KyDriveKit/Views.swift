@@ -8,6 +8,7 @@ import SwiftUI
 /// conflicts and unlink.
 public struct MenuContent: View {
     @ObservedObject var model: AppModel
+    @State private var addingAccount = false
     @State private var server = ""
     @State private var name = ""
     @State private var picked: [String: Bool] = [:]
@@ -19,6 +20,16 @@ public struct MenuContent: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             BrandRow()
+            if !model.accounts.isEmpty {
+                Text("Accounts").font(KyType.section)
+                ForEach(model.accounts) { account in
+                    Button { picked = [:]; unlinking = false; addingAccount = false; Task { await model.selectAccount(account.id) } } label: {
+                        Text(verbatim: account.label + (model.status.accountID == account.id ? " (selected)" : "")).fixedSize(horizontal: false, vertical: true)
+                    }.buttonStyle(KyButtonStyle()).disabled(model.linking)
+                }
+                Button(addingAccount ? "Cancel adding account" : "Add account") { addingAccount.toggle() }
+                    .buttonStyle(KyButtonStyle()).disabled(model.linking)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 if model.status.linked || model.signedOut {
                     Text(verbatim: model.status.server).font(KyType.title).fixedSize(horizontal: false, vertical: true)
@@ -29,7 +40,7 @@ public struct MenuContent: View {
             }
             if let error = model.shownError { ErrorBanner(text: error, fill: true) }
             if model.signedOut { signInForm }
-            if model.status.linked { linked } else if !model.signedOut { linkForm }
+            if addingAccount { linkForm } else if model.status.linked { linked } else if !model.signedOut { linkForm }
             Toggle("Start at login", isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) }))
             Hairline()
             HStack {
@@ -56,7 +67,8 @@ public struct MenuContent: View {
                     .disabled(model.linking)
                 HStack {
                     Button(model.linking ? "Waiting for approval in your browser…" : "Link") {
-                        Task { await model.link(server: server, name: name) }
+                        let add = addingAccount
+                        Task { await model.link(server: server, name: name, addingAccount: add); if model.actionError.isEmpty { addingAccount = false } }
                     }
                     .buttonStyle(KyButtonStyle(kind: .primary))
                     .disabled(model.linking || server.isEmpty)

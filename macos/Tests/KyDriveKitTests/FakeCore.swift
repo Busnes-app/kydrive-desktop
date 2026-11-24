@@ -27,6 +27,7 @@ final class FakeCore: @unchecked Sendable {
             throw CoreError.message("fake core: " + String(cString: strerror(errno)))
         }
         answer("Core.Status", FakeCore.status)
+        answer("Core.Accounts", [Any]())
         answer("Core.Conflicts", [Any]())
         answer("Core.Activity", [Any]())
         answer("Core.Workspaces", [Any]())
