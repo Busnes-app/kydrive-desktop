@@ -1,4 +1,4 @@
-# kydrive-desktop
+# KyDrive Desktop
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15938/badge)](https://www.bestpractices.dev/projects/15938)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Busnes-app/kydrive-desktop/badge)](https://scorecard.dev/viewer/?uri=github.com/Busnes-app/kydrive-desktop)
@@ -39,7 +39,8 @@ companion, not a standalone file server. The server must run KyDrive Server 0.4.
 older versions lack the linked-computer and change-feed APIs.
 
 Download a package from [GitHub Releases](https://github.com/Busnes-app/kydrive-desktop/releases)
-(see [Releases](docs/RELEASING.md#releases)), or build one with the platform steps [below](docs/BUILDING.md#linux-app). Linux needs a working Secret
+(see [Releases](docs/RELEASING.md#releases)), or build one from source using the
+[building guide](docs/BUILDING.md#linux-app). Linux needs a working Secret
 Service keyring; macOS uses Keychain and Windows uses Credential Manager.
 
 - **Linux:** `flatpak install --user KyDrive-linux.flatpak`; the KDE runtime comes from Flathub.
@@ -55,19 +56,24 @@ Service keyring; macOS uses Keychain and Windows uses Credential Manager.
 Check a download against the release's `SHA256SUMS` (`sha256sum -c SHA256SUMS --ignore-missing`;
 `shasum -a 256 -c` on macOS) and its build provenance with
 `gh attestation verify <file> -R Busnes-app/kydrive-desktop`.
-[docs/VERIFYING-RELEASES.md](docs/VERIFYING-RELEASES.md) has the full check, including that the
+[Verifying releases](docs/VERIFYING-RELEASES.md) has the full check, including that the
 attestation names the tagged commit, and how to rebuild the core and compare hashes.
+
+### First-run verification
 
 1. Start the native app and link it to your own HTTPS drive origin.
 2. Complete sign-in in the browser and approve the computer. Choose workspaces to sync.
 3. Create a disposable file locally and confirm it appears on the server; edit it on the server and confirm the local update. Test offline/reconnect and a deliberate conflict before relying on synchronization.
 4. Review conflicts and `~/KyDrive/Unsynced/`. It preserves pending uploads in the handled revocation/access-loss paths, but it is not an independent backup or protection from disk loss.
 
+### Sync behavior and account lifecycle
+
 Preserve your profile/state, chosen local folders and OS keyring during upgrades. Revoking
 a computer or unlinking has deliberate local-copy behavior; review pending edits first.
 Files kept when unlinking stay separate: newly selected workspaces use fresh folders, adding
 ` (2)` or another number when a name is already on disk. Retained files are never automatically
 uploaded to the newly linked account.
+
 **Sign in again** keeps the chosen workspaces after an expired credential, including when the account was renamed on an updated server. After upgrading, leave an existing linked app connected for one successful sync so it can record the server’s immutable account identity. Older servers without that account route still refuse Sign in again for links made before the client recorded an account; unlinking instead keeps local files and requires choosing fresh workspace folders as described above.
 
 On macOS, local changes upload at startup and on the scan every 10 minutes. Server changes
@@ -79,6 +85,8 @@ link to delete files elsewhere. Unuploaded edits in a restored folder still go t
 
 On an updated server, a colleague’s file change arriving while a local folder deletion is being sent makes the server refuse that deletion. The next sync pulls the change before deciding again. Older servers keep the earlier feed check and its small final request window; upgrade the server for the atomic protection.
 
+### Real-server integration tests
+
 The real-server script `scripts/smoke.sh` requires an actual compatible test server and
 disposable account/data. Unit tests and fake-core shell tests are separate from this gate.
 CI runs the full engine suite and the built-daemon smoke test against a pinned public
@@ -89,7 +97,7 @@ directories avoid Unix setup-socket path limits.
 
 ## Licence
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE.txt](LICENSE.txt).
 
 [![OctoCounts](https://api.octocounts.com/badge/Busnes-app/kydrive-desktop/branch/main)](https://octocounts.com/github/Busnes-app/kydrive-desktop/tree/main)
 
@@ -97,7 +105,7 @@ MIT. See `LICENSE`.
 
 - [Building](docs/BUILDING.md) — the repository layout, running the sync core, and building the Linux, macOS and Windows apps. <a id="layout"></a><a id="build-and-run-the-core"></a><a id="linux-app"></a><a id="macos-app"></a><a id="windows-app"></a>
 - [TLS key policy](docs/TLS-KEY-POLICY.md) — the core's TLS key floors, redirect refusal and what to check before upgrading. <a id="tls-key-policy-and-upgrading"></a>
-- [Releasing](docs/RELEASING.md) — what a `v*` tag publishes and the four version fields to bump first. <a id="releases"></a>
+- [Releasing](docs/RELEASING.md) — what a `v*` tag publishes and the six version fields to bump first. <a id="releases"></a>
 - [Dependencies](docs/DEPENDENCIES.md) — every Go and NuGet dependency, its licence and why it is used. <a id="dependencies"></a>
 - [Contributing](CONTRIBUTING.md) — how changes land, the test policy and the coding standard.
 - [Verifying releases](docs/VERIFYING-RELEASES.md) — check a download's checksum and provenance, and rebuild the core to the same bytes.

@@ -7,7 +7,8 @@
 - **Files vanish after access changes:** check workspace grants and `~/KyDrive/Unsynced/` for edits that had not uploaded.
 - **Browser approval has no effect:** confirm that the intended core is running and linked to the same server origin.
 - **A large delete waits:** inspect the pending delete confirmation and the local cause before approving it.
+- **A computer link was revoked:** select that account and use its existing Link form. Approve the same identity on the saved server; its certificate must still match the saved pin or a signed successor. The core deletes the revoked token/signing key but keeps a pin-only keyring record. If the keyring is unavailable, unlock it and wait for recovery before retrying. Explicit Unlink removes the pin too and requires choosing workspaces afresh.
+
+## Reporting a problem
 
 When reporting a problem, include the product version, platform, failed task and a redacted error. Exclude pairing links, device secrets, recovery codes, custodian shares and private content.
-
-- **A computer link was revoked:** select that account and use its existing Link form. Approve the same identity on the saved server; its certificate must still match the saved pin or a signed successor. The core deletes the revoked token/signing key but keeps a pin-only keyring record. If the keyring is unavailable, unlock it and wait for recovery before retrying. Explicit Unlink removes the pin too and requires choosing workspaces afresh.

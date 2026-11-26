@@ -1,4 +1,4 @@
-# Building kydrive-desktop
+# Building KyDrive Desktop
 
 [Product overview](../README.md)
 
