@@ -1,6 +1,6 @@
 module github.com/Busnes-app/kydrive-desktop/core
 
-go 1.27.3
+go 1.27.4
 
 godebug fips140=on
 
