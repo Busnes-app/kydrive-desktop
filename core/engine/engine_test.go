@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"io"
@@ -26,7 +25,7 @@ import (
 type remote interface {
 	URL() string
 	Token() string
-	Key() *ecdsa.PrivateKey // nil: the fake does not check signatures
+	Key() *api.SigningKey // nil: the fake does not check signatures
 	NewWorkspace(t *testing.T, name string) string
 	Put(t *testing.T, ws, path string, data []byte) // create or add a version, making folders
 	Read(t *testing.T, ws, path string) ([]byte, bool)

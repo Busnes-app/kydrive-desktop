@@ -4,8 +4,6 @@ package link
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -41,7 +39,8 @@ func random() string {
 
 // Link opens the approval page and waits up to ten minutes for the browser to come back to
 // the loopback listener with a code, which it exchanges for a device token bound to a new
-// signing key.
+// ML-DSA-65+Ed25519 hybrid signing key (falling back to P-256 when linking against an older
+// server that only accepts P-256 device keys).
 func Link(ctx context.Context, r Request) (api.Token, error) {
 	c := &api.Client{Base: r.Server, HTTP: r.HTTP, Pins: r.Pins}
 	// Credential-free, before the browser: a held pin refuses an unvouched leaf up front.
@@ -50,7 +49,7 @@ func Link(ctx context.Context, r Request) (api.Token, error) {
 			return api.Token{}, err
 		}
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := api.GenerateSigningKey()
 	if err != nil {
 		return api.Token{}, err
 	}
@@ -87,7 +86,17 @@ func Link(ctx context.Context, r Request) (api.Token, error) {
 	defer cancel()
 	select {
 	case code := <-codes:
-		return c.Redeem(ctx, code, verifier, key)
+		tok, err := c.Redeem(ctx, code, verifier, key)
+		if err != nil && api.Status(err) == http.StatusBadRequest {
+			// Pre-Wave-2 KyDrive servers reject non-P-256 publicKey with 400 before spending
+			// the one-time code, so fall back once to a P-256 key.
+			p256Key, kerr := api.GenerateP256SigningKey()
+			if kerr != nil {
+				return api.Token{}, kerr
+			}
+			return c.Redeem(ctx, code, verifier, p256Key)
+		}
+		return tok, err
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return api.Token{}, errors.New("linking timed out; start it again")

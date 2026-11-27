@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"log"
@@ -42,14 +41,14 @@ type daemon struct {
 	open            func(url string) error
 	exit            func(code int) // os.Exit; Quit calls it
 
-	lock             *os.File          // held for the daemon's life: one core per state directory
-	memory           *engine.Memory    // retry backoff and announced failures, across passes
-	work             sync.Mutex        // one engine operation at a time
-	mu               sync.Mutex        // guards the fields below
-	key              *ecdsa.PrivateKey // signs token's requests; nil for a computer linked before signing
-	pin              api.Pin           // token's TLS pin, kept with it in the keyring
-	pins             *api.Pins         // enforces pin for token's session
-	credentialUnread bool              // saved credential/pin unavailable: recover before reauthentication
+	lock             *os.File        // held for the daemon's life: one core per state directory
+	memory           *engine.Memory  // retry backoff and announced failures, across passes
+	work             sync.Mutex      // one engine operation at a time
+	mu               sync.Mutex      // guards the fields below
+	key              *api.SigningKey // signs token's requests; nil for a computer linked before signing
+	pin              api.Pin         // token's TLS pin, kept with it in the keyring
+	pins             *api.Pins       // enforces pin for token's session
+	credentialUnread bool            // saved credential/pin unavailable: recover before reauthentication
 	token,
 	state, // unlinked, idle, syncing, revoked, signed_out or error
 	lastErr string
@@ -78,7 +77,7 @@ func newDaemon(dir, root, sock string) (*daemon, error) {
 	}
 	d := &daemon{dir: dir, root: root, sock: sock, db: db, open: openBrowser, exit: os.Exit, kick: make(chan bool, 1), state: "unlinked", memory: engine.NewMemory(),
 		http: &http.Client{
-			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute},
+			Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: time.Minute, WriteBufferSize: 16 * 1024},
 			// Never send a token or link verifier to a redirected origin or HTTP downgrade.
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
@@ -352,7 +351,7 @@ func (d *daemon) retry() bool {
 	// Complete migration before recovering a token, including unfinished cleanup.
 	migrationErr := d.migrateCredential()
 	var tok string
-	var key *ecdsa.PrivateKey
+	var key *api.SigningKey
 	var pin api.Pin
 	err := migrationErr
 	if err == nil {

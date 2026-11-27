@@ -1,9 +1,6 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/x509"
-	"encoding/base64"
 	"errors"
 	"strconv"
 	"strings"
@@ -13,16 +10,17 @@ import (
 )
 
 // The keyring item is space-separated: the device token; then, for a computer linked with a
-// signing key, the key as std base64 PKCS#8 DER ("-" for none); then, once a TLS leaf is
-// pinned, the pin, the server's identity key ("-" until learned) and the pin's freshness floor
-// (Unix seconds). One item, so all of it is stored and deleted together. A software key the
-// keyring guards; a platform key that cannot be exported (TPM, Secure Enclave) would be stronger.
+// signing key, either the ML-DSA-65+Ed25519 hybrid seed entry ("mldsa65+ed25519:<b64>") or a
+// legacy P-256 key as std base64 PKCS#8 DER ("-" for none); then, once a TLS leaf is pinned,
+// the pin, the server's identity key ("-" until learned) and the pin's freshness floor (Unix
+// seconds). One item, so all of it is stored and deleted together. A software key the keyring
+// guards; a platform key that cannot be exported (TPM, Secure Enclave) would be stronger.
 
 var errCredentialUnread = errors.New("the saved KyDrive credential is unavailable; unlock or restore the OS keyring and wait for recovery before signing in again, or unlink and link again")
 
 var errDamaged = errors.New("the keyring's KyDrive credential is damaged; sign in again")
 
-func storeCredential(server, token string, key *ecdsa.PrivateKey, pin api.Pin) error {
+func storeCredential(server, token string, key *api.SigningKey, pin api.Pin) error {
 	if token == "" {
 		if key != nil {
 			return errDamaged
@@ -33,11 +31,11 @@ func storeCredential(server, token string, key *ecdsa.PrivateKey, pin api.Pin) e
 	if key != nil || pin.Leaf != "" {
 		enc := "-"
 		if key != nil {
-			der, err := x509.MarshalPKCS8PrivateKey(key)
+			var err error
+			enc, err = key.MarshalKeyring()
 			if err != nil {
 				return err
 			}
-			enc = base64.StdEncoding.EncodeToString(der)
 		}
 		v += " " + enc
 	}
@@ -57,7 +55,7 @@ func dash(s string) string {
 // loadCredential returns a nil key for a computer linked before signing and a zero pin for one
 // that has not pinned a leaf yet. A token field of "-" is a revoked, pin-only
 // record: it returns no token or key, including for known unpinned legacy links.
-func loadCredential(server string) (string, *ecdsa.PrivateKey, api.Pin, error) {
+func loadCredential(server string) (string, *api.SigningKey, api.Pin, error) {
 	v, err := keyring.Get(keyringService, server)
 	if err != nil {
 		return "", nil, api.Pin{}, err
@@ -66,15 +64,10 @@ func loadCredential(server string) (string, *ecdsa.PrivateKey, api.Pin, error) {
 	if len(f) != 1 && len(f) != 2 && len(f) != 5 || f[0] == "" {
 		return "", nil, api.Pin{}, errDamaged
 	}
-	var key *ecdsa.PrivateKey
+	var key *api.SigningKey
 	if len(f) > 1 && f[1] != "-" {
-		der, err := base64.StdEncoding.DecodeString(f[1])
+		key, err = api.ParseKeyringSigningKey(f[1])
 		if err != nil {
-			return "", nil, api.Pin{}, errDamaged
-		}
-		k, err := x509.ParsePKCS8PrivateKey(der)
-		var ok bool
-		if key, ok = k.(*ecdsa.PrivateKey); err != nil || !ok {
 			return "", nil, api.Pin{}, errDamaged
 		}
 	}

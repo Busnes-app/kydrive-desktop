@@ -171,7 +171,7 @@ func (p *pinServer) paths() []string {
 }
 
 func (p *pinServer) client(store PinStore) *Client {
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := GenerateSigningKey()
 	base := &http.Client{
 		Transport:     &http.Transport{TLSClientConfig: &tls.Config{RootCAs: p.roots}},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -449,7 +449,7 @@ func TestRedeemPinsTheLeaf(t *testing.T) {
 	})
 	c := p.client(nil)
 	c.Token, c.Pins = "", nil
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := GenerateSigningKey()
 	before := time.Now().Unix()
 	tok, err := c.Redeem(ctx, "code", "verifier", key)
 	if err != nil {

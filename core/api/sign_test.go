@@ -152,7 +152,7 @@ func TestSignedRequests(t *testing.T) {
 			w.WriteHeader(204)
 		}
 	})
-	c.Key = key
+	c.Key = SigningKeyFromP256(key)
 	ctx := context.Background()
 	if _, err := c.Workspaces(ctx); err != nil {
 		t.Fatal(err)
@@ -170,6 +170,121 @@ func TestSignedRequests(t *testing.T) {
 		"PUT /api/drive/upload-sessions/s 1 bytes 3-4/5", "POST /api/drive/upload-sessions/s 1/complete ", "DELETE /api/devices/self "}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("requests:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestSignedRequestsHybrid(t *testing.T) {
+	key, err := GenerateSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	var got []string
+	var c *Client
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		date, nonce, digest := r.Header.Get("KyDrive-Date"), r.Header.Get("KyDrive-Nonce"), r.Header.Get("KyDrive-Content-SHA256")
+		ms, _ := strconv.ParseInt(date, 10, 64)
+		n, _ := base64.RawURLEncoding.DecodeString(nonce)
+		sig, _ := base64.StdEncoding.DecodeString(r.Header.Get("KyDrive-Signature"))
+		msg, err := message(canonicalOrigin(c.Base), r.Method, r.RequestURI, date, nonce, r.Header, digest)
+		mu.Lock()
+		replay := seen[nonce]
+		seen[nonce] = true
+		got = append(got, r.Method+" "+r.URL.Path+" "+r.Header.Get("Content-Range"))
+		mu.Unlock()
+		switch {
+		case err != nil, len(n) != 16, replay, time.Since(time.UnixMilli(ms)).Abs() > time.Minute,
+			digest != hexSum(body), key.Hybrid.Public().Verify(deviceSigLabel, []byte(msg), sig) != nil:
+			t.Errorf("%s %s: bad hybrid signature (%v)", r.Method, r.RequestURI, err)
+			http.Error(w, `{"error":"bad signature"}`, 401)
+			return
+		}
+		switch {
+		case r.Method == "GET":
+			io.WriteString(w, `[]`)
+		case strings.HasSuffix(r.URL.Path, "/upload-sessions"):
+			io.WriteString(w, `{"id":"s 1"}`)
+		case strings.HasSuffix(r.URL.Path, "/complete"):
+			io.WriteString(w, `{"id":"f1","revision":1}`)
+		case r.Method == "DELETE":
+			w.WriteHeader(204)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c = &Client{Base: srv.URL, Token: "kyd_secret", Key: key, HTTP: srv.Client()}
+
+	ctx := context.Background()
+	if _, err := c.Workspaces(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func(n int64) { chunkSize = n }(chunkSize)
+	chunkSize = 3
+	if _, err := c.Upload(ctx, "w 1", Upload{Name: "a.txt", Size: 5, Mtime: time.Now()}, bytes.NewReader([]byte("hello"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RevokeSelf(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /api/drive/workspaces ", "POST /api/drive/workspaces/w 1/upload-sessions ", "PUT /api/drive/upload-sessions/s 1 bytes 0-2/5",
+		"PUT /api/drive/upload-sessions/s 1 bytes 3-4/5", "POST /api/drive/upload-sessions/s 1/complete ", "DELETE /api/devices/self "}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestSigningKeyKeyringRoundTrip(t *testing.T) {
+	hybrid, err := GenerateSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p256, err := GenerateP256SigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		key  *SigningKey
+	}{
+		{"hybrid", hybrid},
+		{"p256", p256},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			enc, err := tc.key.MarshalKeyring()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(enc, " ") {
+				t.Fatalf("keyring encoding must not contain spaces: %q", enc)
+			}
+			got, err := ParseKeyringSigningKey(enc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Equal(tc.key) {
+				t.Fatal("round-tripped signing key does not match original")
+			}
+			// Verify round-tripped key produces valid signatures.
+			sig, err := got.Sign([]byte("test-message"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.key.Hybrid != nil {
+				if err := tc.key.Hybrid.Public().Verify(deviceSigLabel, []byte("test-message"), sig); err != nil {
+					t.Fatalf("round-tripped hybrid signature failed verification: %v", err)
+				}
+			} else {
+				sum := sha256.Sum256([]byte("test-message"))
+				if !ecdsa.VerifyASN1(&tc.key.P256.PublicKey, sum[:], sig) {
+					t.Fatal("round-tripped P-256 signature failed verification")
+				}
+			}
+		})
+	}
+	// Corrupt hybrid prefix rejected.
+	if _, err := ParseKeyringSigningKey(keyringHybridPrefix + "not-valid-base64!"); err == nil {
+		t.Fatal("expected error for corrupt hybrid keyring entry")
 	}
 }
 
