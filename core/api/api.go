@@ -5,9 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -77,7 +75,7 @@ type Token struct {
 	User       string `json:"user"`    // the account that approved the link
 	DevicesURL string `json:"devices_url"`
 	// Key is the signing key enrolled at link; the server issued Token bound to it.
-	Key *ecdsa.PrivateKey `json:"-"`
+	Key *SigningKey `json:"-"`
 	// Pin is the leaf the redemption met and the server's identity key; zero without TLS.
 	Pin Pin `json:"-"`
 }
@@ -106,7 +104,7 @@ func Status(err error) int {
 type Client struct {
 	Base  string // server origin, e.g. https://drive.example
 	Token string
-	Key   *ecdsa.PrivateKey // signs every request Token makes; nil for a device linked before signing
+	Key   *SigningKey // signs every request Token makes; nil for a device linked before signing
 	HTTP  *http.Client
 	Pins  *Pins // the session's TLS pin; nil sends over system trust alone (linking)
 }
@@ -377,12 +375,12 @@ func (c *Client) RevokeSelf(ctx context.Context) error {
 }
 
 // Redeem exchanges a link code and its PKCE verifier for a device token bound to key.
-func (c *Client) Redeem(ctx context.Context, code, verifier string, key *ecdsa.PrivateKey) (Token, error) {
-	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+func (c *Client) Redeem(ctx context.Context, code, verifier string, key *SigningKey) (Token, error) {
+	pub, err := key.PublicKeyBytes()
 	if err != nil {
 		return Token{}, err
 	}
-	form := url.Values{"code": {code}, "verifier": {verifier}, "publicKey": {base64.StdEncoding.EncodeToString(spki)}}
+	form := url.Values{"code": {code}, "verifier": {verifier}, "publicKey": {base64.StdEncoding.EncodeToString(pub)}}
 	h := http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}
 	res, err := c.do(ctx, "POST", "/api/devices/token", strings.NewReader(form.Encode()), h)
 	if err != nil {

@@ -36,10 +36,11 @@ func TestActivationCommitsSessionBeforeCleanup(t *testing.T) {
 						})
 					}
 					old := f.server.URL // pre-account installation's origin-keyed credential
-					oldKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+					oldP256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 					if err != nil {
 						t.Fatal(err)
 					}
+					oldKey := api.SigningKeyFromP256(oldP256)
 					oldPin := api.Pin{Leaf: "sha256/previous", Floor: 1}
 					if err := storeCredential(old, "kyd_previous", oldKey, oldPin); err != nil {
 						t.Fatal(err)

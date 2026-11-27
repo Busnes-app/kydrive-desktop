@@ -43,10 +43,11 @@ func TestMigrationKeyringUnavailableKeepsRPCAndRecovers(t *testing.T) {
 				t.Fatal(err)
 			}
 			db.Close()
-			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			p256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
 				t.Fatal(err)
 			}
+			key := api.SigningKeyFromP256(p256)
 			pin := api.Pin{Leaf: "sha256/kept", IdentityKey: "kept", Floor: 123}
 			if err := storeCredential(srv.URL, "kyd_preserved", key, pin); err != nil {
 				t.Fatal(err)

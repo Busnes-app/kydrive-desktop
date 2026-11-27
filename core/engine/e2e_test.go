@@ -3,7 +3,6 @@ package engine
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,7 +33,7 @@ func init() {
 
 type real struct {
 	base, group, token string
-	key                *ecdsa.PrivateKey
+	key                *api.SigningKey
 	pin                api.Pin      // the leaf the link met; zero over plain HTTP
 	web                *http.Client // the admin's browser session
 }
@@ -207,9 +206,9 @@ func (r *real) must(t *testing.T, method, path string, in, out any) {
 	}
 }
 
-func (r *real) URL() string            { return r.base }
-func (r *real) Token() string          { return r.token }
-func (r *real) Key() *ecdsa.PrivateKey { return r.key }
+func (r *real) URL() string          { return r.base }
+func (r *real) Token() string        { return r.token }
+func (r *real) Key() *api.SigningKey { return r.key }
 
 func (r *real) NewWorkspace(t *testing.T, name string) string {
 	var w struct{ ID string }

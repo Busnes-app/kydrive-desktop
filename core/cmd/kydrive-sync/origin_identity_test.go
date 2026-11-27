@@ -131,8 +131,9 @@ func TestPersistedOriginKeepsAccountOwnership(t *testing.T) {
 					f.primary.db.Close()
 				}
 				pin := api.Pin{Leaf: api.SPKIPin(leaf), Floor: 1}
+				signingKey := api.SigningKeyFromP256(key)
 				for _, slot := range []string{source, stored} {
-					if err := storeCredential(slot, "kyd_preserved", key, pin); err != nil {
+					if err := storeCredential(slot, "kyd_preserved", signingKey, pin); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -203,7 +204,7 @@ func TestPersistedOriginKeepsAccountOwnership(t *testing.T) {
 				}
 				locked = false
 				d.pass(t.Context(), false)
-				if d.state != "idle" || d.lastSync == 0 || d.credentialID() != newSlot || d.token != "kyd_preserved" || !d.key.Equal(key) || d.pin != pin || copies != 1 {
+				if d.state != "idle" || d.lastSync == 0 || d.credentialID() != newSlot || d.token != "kyd_preserved" || !d.key.Equal(signingKey) || d.pin != pin || copies != 1 {
 					t.Fatal("origin migration did not recover the exact credential and sync")
 				}
 				if err := d.migrateCredential(); err != nil {
@@ -238,7 +239,7 @@ func TestPersistedOriginKeepsAccountOwnership(t *testing.T) {
 					d = m.accounts[selector]
 					d.http, d.open = client, open
 				}
-				if kept, _ := keyring.Get(keyringService, newSlot); kept != before || d.token != "kyd_preserved" || !d.key.Equal(key) || d.pin != pin || copies != 1 {
+				if kept, _ := keyring.Get(keyringService, newSlot); kept != before || d.token != "kyd_preserved" || !d.key.Equal(signingKey) || d.pin != pin || copies != 1 {
 					t.Fatal("restart changed the migrated credential or selected another account")
 				}
 				d.pass(t.Context(), false)

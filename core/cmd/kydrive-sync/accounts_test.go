@@ -42,10 +42,11 @@ func TestOriginCredentialMigrationIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.SetConfig(map[string]string{"server": "https://drive.example", "issuer": "https://identity.example", "sub": "person", "org_id": "one", "user_id": "local"})
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	p256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+	key := api.SigningKeyFromP256(p256)
 	pin := api.Pin{Leaf: "sha256/old", IdentityKey: "identity", Floor: 123}
 	if err := storeCredential("https://drive.example", "kyd_original", key, pin); err != nil {
 		t.Fatal(err)

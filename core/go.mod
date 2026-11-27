@@ -1,10 +1,11 @@
 module github.com/Busnes-app/kydrive-desktop/core
 
-go 1.26.11
+go 1.27.4
 
 godebug fips140=on
 
 require (
+	github.com/Busnes-app/ky-primitives v0.12.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/zalando/go-keyring v0.2.8
 	modernc.org/sqlite v1.62.0

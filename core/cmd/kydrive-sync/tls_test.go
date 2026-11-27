@@ -172,7 +172,7 @@ func TestDaemonRejectsUndersizedTLSKeys(t *testing.T) {
 			defer srv.Close()
 			d := tlsDaemon(t, roots)
 			c := &api.Client{Base: srv.URL, Token: "kyd_synthetic", HTTP: d.http}
-			key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			key, _ := api.GenerateSigningKey()
 			operations := []struct {
 				name string
 				run  func() error

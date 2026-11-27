@@ -136,8 +136,22 @@ func TestTokenOnlyInKeyring(t *testing.T) {
 	if err != nil || tok != "kyd_SECRETTOKEN" || key == nil {
 		t.Fatalf("keyring holds %q, key %v, %v", tok, key != nil, err)
 	}
-	der, _ := x509.MarshalPKCS8PrivateKey(key)
-	secrets := [][]byte{[]byte("SECRETTOKEN"), []byte(base64.StdEncoding.EncodeToString(der)), der}
+	enc, err := key.MarshalKeyring()
+	if err != nil || enc == "" {
+		t.Fatalf("MarshalKeyring: %q, %v", enc, err)
+	}
+	secrets := [][]byte{[]byte("SECRETTOKEN"), []byte(enc)}
+	if key.Hybrid != nil {
+		mldsaSeed, edSeed := key.Hybrid.Seeds()
+		secrets = append(secrets, mldsaSeed, edSeed)
+	}
+	if key.P256 != nil {
+		der, err := x509.MarshalPKCS8PrivateKey(key.P256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secrets = append(secrets, []byte(base64.StdEncoding.EncodeToString(der)), der)
+	}
 	var st Status
 	if err := ctl("Status", struct{}{}, &st); err != nil || !st.Linked || st.Server != srv.URL {
 		t.Fatalf("status %+v, %v", st, err)
