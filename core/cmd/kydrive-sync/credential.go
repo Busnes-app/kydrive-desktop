@@ -41,6 +41,9 @@ func storeCredential(server, token string, key *api.SigningKey, pin api.Pin) err
 	}
 	if pin.Leaf != "" {
 		v += " " + pin.Leaf + " " + dash(pin.IdentityKey) + " " + strconv.FormatInt(pin.Floor, 10)
+		if pin.IdentityKeyHybridID != "" {
+			v += " " + pin.IdentityKeyHybridID
+		}
 	}
 	return migrationSet(keyringService, server, v)
 }
@@ -61,7 +64,7 @@ func loadCredential(server string) (string, *api.SigningKey, api.Pin, error) {
 		return "", nil, api.Pin{}, err
 	}
 	f := strings.Split(v, " ")
-	if len(f) != 1 && len(f) != 2 && len(f) != 5 || f[0] == "" {
+	if len(f) != 1 && len(f) != 2 && len(f) != 5 && len(f) != 6 || f[0] == "" {
 		return "", nil, api.Pin{}, errDamaged
 	}
 	var key *api.SigningKey
@@ -72,7 +75,7 @@ func loadCredential(server string) (string, *api.SigningKey, api.Pin, error) {
 		}
 	}
 	var pin api.Pin
-	if len(f) == 5 {
+	if len(f) == 5 || len(f) == 6 {
 		floor, err := strconv.ParseInt(f[4], 10, 64)
 		if err != nil || !strings.HasPrefix(f[2], "sha256/") {
 			return "", nil, api.Pin{}, errDamaged
@@ -80,6 +83,12 @@ func loadCredential(server string) (string, *api.SigningKey, api.Pin, error) {
 		pin = api.Pin{Leaf: f[2], Floor: floor}
 		if f[3] != "-" {
 			pin.IdentityKey = f[3]
+		}
+		if len(f) == 6 {
+			if !api.ValidHybridKeyID(f[5]) {
+				return "", nil, api.Pin{}, errDamaged
+			}
+			pin.IdentityKeyHybridID = f[5]
 		}
 	}
 	if f[0] == "-" {

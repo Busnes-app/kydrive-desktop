@@ -5,7 +5,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -26,6 +28,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/hybridsig"
 )
 
 func TestTLSPinGoldenVector(t *testing.T) {
@@ -55,7 +59,7 @@ func TestTLSPinGoldenVector(t *testing.T) {
 	}
 	s := tlsPinStatement{Host: v.Host, Pin: v.Pin, IssuedAt: v.IssuedAt, Signature: v.Signature}
 	stored := Pin{Leaf: "sha256/old", IdentityKey: v.IdentityKey, Floor: v.IssuedAt - 1}
-	if next, ok := accept(stored, v.Host, v.Pin, s, v.IssuedAt); !ok || next != (Pin{v.Pin, v.IdentityKey, v.IssuedAt}) {
+	if next, ok := accept(stored, v.Host, v.Pin, s, v.IssuedAt); !ok || next != (Pin{Leaf: v.Pin, IdentityKey: v.IdentityKey, Floor: v.IssuedAt}) {
 		t.Fatalf("golden statement refused: %v %v", next, ok)
 	}
 }
@@ -73,9 +77,24 @@ type pinServer struct {
 	mu       sync.Mutex
 	requests []*http.Request // every request that reached a handler
 	// statement answers GET /api/devices/tls-pin for the leaf being served; nil means 503.
-	statement func(leaf string) any
-	device    string            // identity_key in GET /api/drive/device
-	served    map[string]string // the leaf pin each connection got, by client address
+	statement    func(leaf string) any
+	device       string            // identity_key in GET /api/drive/device
+	deviceHybrid string            // identity_key_hybrid in GET /api/drive/device
+	served       map[string]string // the leaf pin each connection got, by client address
+}
+
+func testHybridKey(t *testing.T, edKey ed25519.PrivateKey) *hybridsig.PrivateKey {
+	t.Helper()
+	edSeed := edKey.Seed()
+	mldsaSeed, err := hkdf.Key(sha256.New, edSeed, nil, "kydrive-identity-mldsa65/1", hybridsig.SeedBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hk, err := hybridsig.FromSeeds(mldsaSeed, edSeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hk
 }
 
 func newPinServer(t *testing.T) *pinServer {
@@ -132,10 +151,22 @@ func (p *pinServer) sign(key ed25519.PrivateKey, host, pin string, at int64) tls
 	return tlsPinStatement{Host: host, Pin: pin, IssuedAt: at, Signature: base64.StdEncoding.EncodeToString(sig)}
 }
 
+func (p *pinServer) signV2(key ed25519.PrivateKey, host, pin string, at int64) tlsPinStatement {
+	s := p.sign(key, host, pin, at)
+	hk := testHybridKey(p.t, key)
+	sigV2, err := hk.Sign(tlsPinContextV2, pinStatementBodyV2(host, pin, at))
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	s.SignatureV2 = base64.StdEncoding.EncodeToString(sigV2)
+	s.IdentityKeyHybrid = base64.StdEncoding.EncodeToString(hk.Public().Bytes())
+	return s
+}
+
 func (p *pinServer) handle(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.requests = append(p.requests, r)
-	statement, device, leaf := p.statement, p.device, p.served[r.RemoteAddr]
+	statement, device, deviceHybrid, leaf := p.statement, p.device, p.deviceHybrid, p.served[r.RemoteAddr]
 	p.mu.Unlock()
 	switch r.URL.Path {
 	case "/api/devices/tls-pin":
@@ -145,7 +176,11 @@ func (p *pinServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(statement(leaf))
 	case "/api/drive/device":
-		json.NewEncoder(w).Encode(map[string]string{"user_id": "u1", "user": "alice", "identity_key": device})
+		resp := map[string]string{"user_id": "u1", "user": "alice", "identity_key": device}
+		if deviceHybrid != "" {
+			resp["identity_key_hybrid"] = deviceHybrid
+		}
+		json.NewEncoder(w).Encode(resp)
 	default:
 		io.WriteString(w, "[]")
 	}
@@ -557,5 +592,87 @@ func TestPinTrailingDotHostStillChecked(t *testing.T) {
 	}
 	if got := p.paths(); len(got) != 0 {
 		t.Fatalf("requests %v", got)
+	}
+}
+
+// A pinned session learns the server's hybrid identity key (bound to its Ed25519 key),
+// rolls over via ?v=2 with a kydrive-tls-pin/2 hybridsig signature, and refuses v1-only
+// downgrade once the hybrid identity key ID is pinned.
+func TestPinHybridLearnRolloverAndNoDowngrade(t *testing.T) {
+	p := newPinServer(t)
+	a, b, cLeaf := p.leaf(), p.leaf(), p.leaf()
+	p.use(a)
+
+	hk := testHybridKey(t, p.identity)
+	hkB64 := base64.StdEncoding.EncodeToString(hk.Public().Bytes())
+	wantHybridID := hk.Public().ID()
+	if !ValidHybridKeyID(wantHybridID) {
+		t.Fatalf("ValidHybridKeyID(%q) = false", wantHybridID)
+	}
+
+	// 1. A hybrid key whose Ed25519 tail does not match the held Ed25519 key is refused.
+	_, otherEd, _ := ed25519.GenerateKey(rand.Reader)
+	otherHK := testHybridKey(t, otherEd)
+	p.device = p.idKey()
+	p.deviceHybrid = base64.StdEncoding.EncodeToString(otherHK.Public().Bytes())
+	store := NewMemoryPins(Pin{Leaf: pinOf(a), IdentityKey: p.idKey(), Floor: 1})
+	if _, err := p.client(store).DeviceAccount(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if pin, _ := store.Current(); pin.IdentityKeyHybridID != "" {
+		t.Fatalf("learned mismatched hybrid key: %+v", pin)
+	}
+
+	// 2. A matching hybrid key is learned once over the pinned leaf and never replaced.
+	p.deviceHybrid = hkB64
+	if _, err := p.client(store).DeviceAccount(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pin, _ := store.Current()
+	if pin.IdentityKeyHybridID != wantHybridID {
+		t.Fatalf("IdentityKeyHybridID = %q, want %q", pin.IdentityKeyHybridID, wantHybridID)
+	}
+	p.deviceHybrid = base64.StdEncoding.EncodeToString(otherHK.Public().Bytes())
+	if _, err := p.client(store).DeviceAccount(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := store.Current(); after.IdentityKeyHybridID != wantHybridID {
+		t.Fatalf("hybrid identity key was overwritten: %+v", after)
+	}
+
+	// 3. Downgrade refusal: when hybrid is pinned, a valid v1-only statement (no signature_v2) is refused.
+	p.use(b)
+	p.statement = func(leaf string) any { return p.sign(p.identity, "127.0.0.1", leaf, time.Now().Unix()) }
+	if _, err := p.client(store).Workspaces(ctx); !errors.Is(err, ErrPinChanged) {
+		t.Fatalf("v1-only rollover succeeded under hybrid pin: err = %v", err)
+	}
+	p.mu.Lock()
+	var sawV2Query bool
+	for _, req := range p.requests {
+		if req.URL.Path == "/api/devices/tls-pin" && req.URL.Query().Get("v") == "2" {
+			sawV2Query = true
+		}
+	}
+	p.requests = nil
+	p.mu.Unlock()
+	if !sawV2Query {
+		t.Fatal("client did not request /api/devices/tls-pin?v=2")
+	}
+
+	// 4. Valid kydrive-tls-pin/2 hybridsig rollover succeeds and preserves IdentityKeyHybridID.
+	p.statement = func(leaf string) any { return p.signV2(p.identity, "127.0.0.1", leaf, time.Now().Unix()) }
+	if _, err := p.client(store).Workspaces(ctx); err != nil {
+		t.Fatalf("v2 hybridsig rollover failed: %v", err)
+	}
+	rolled, _ := store.Current()
+	if rolled.Leaf != pinOf(b) || rolled.IdentityKeyHybridID != wantHybridID {
+		t.Fatalf("rolled pin = %+v", rolled)
+	}
+
+	// 5. A valid v2 signature from a different hybrid key is refused.
+	p.use(cLeaf)
+	p.statement = func(leaf string) any { return p.signV2(otherEd, "127.0.0.1", leaf, time.Now().Unix()+1) }
+	if _, err := p.client(store).Workspaces(ctx); !errors.Is(err, ErrPinChanged) {
+		t.Fatalf("wrong hybrid key rollover succeeded: err = %v", err)
 	}
 }

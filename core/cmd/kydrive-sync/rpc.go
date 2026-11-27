@@ -369,10 +369,15 @@ func (d *daemon) keepPin(tok *api.Token) error {
 		return errSignInPin
 	case tok.Pin.IdentityKey != "" && held.IdentityKey != "" && tok.Pin.IdentityKey != held.IdentityKey:
 		return errors.New("the server answered with a different identity key than the one this computer trusts; something may be intercepting the connection. Sign in from a network you trust, or unlink and link again")
+	case tok.Pin.IdentityKeyHybridID != "" && held.IdentityKeyHybridID != "" && tok.Pin.IdentityKeyHybridID != held.IdentityKeyHybridID:
+		return errors.New("the server answered with a different identity key than the one this computer trusts; something may be intercepting the connection. Sign in from a network you trust, or unlink and link again")
 	}
 	tok.Pin.Floor = held.Floor
 	if held.IdentityKey != "" {
 		tok.Pin.IdentityKey = held.IdentityKey
+	}
+	if held.IdentityKeyHybridID != "" {
+		tok.Pin.IdentityKeyHybridID = held.IdentityKeyHybridID
 	}
 	return nil
 }

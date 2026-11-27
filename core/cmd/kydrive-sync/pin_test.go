@@ -399,3 +399,35 @@ func TestLinkAfterUnlinkTrustsOnFirstUse(t *testing.T) {
 		t.Fatalf("pin %+v %v", got, err)
 	}
 }
+
+func TestCredentialHybridIdentityKeyIDRoundTrip(t *testing.T) {
+	keyring.MockInit()
+	hybridID := "mldsa65+ed25519:" + strings.Repeat("ab", 32)
+	want := api.Pin{
+		Leaf:                "sha256/leaf123",
+		IdentityKey:         "idkey",
+		IdentityKeyHybridID: hybridID,
+		Floor:               42,
+	}
+	if err := storeCredential("acct-hybrid", "kyd_tok", nil, want); err != nil {
+		t.Fatalf("storeCredential: %v", err)
+	}
+	raw, err := keyring.Get(keyringService, "acct-hybrid")
+	if err != nil {
+		t.Fatalf("keyring.Get: %v", err)
+	}
+	if len(raw) >= 1024 {
+		t.Fatalf("keyring payload is %d bytes; must stay compact for OS keyrings", len(raw))
+	}
+	tok, key, got, err := loadCredential("acct-hybrid")
+	if err != nil || tok != "kyd_tok" || key != nil || got != want {
+		t.Fatalf("loadCredential = (%q, %v, %+v, %v), want %+v", tok, key, got, err, want)
+	}
+	// Malformed 6th field must be rejected as damaged.
+	if err := keyring.Set(keyringService, "acct-bad", "kyd_tok - sha256/leaf123 idkey 42 bad-hybrid-id"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := loadCredential("acct-bad"); !errors.Is(err, errDamaged) {
+		t.Fatalf("malformed hybrid ID error = %v, want errDamaged", err)
+	}
+}
