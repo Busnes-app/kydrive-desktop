@@ -399,3 +399,59 @@ func TestLinkAfterUnlinkTrustsOnFirstUse(t *testing.T) {
 		t.Fatalf("pin %+v %v", got, err)
 	}
 }
+
+func TestCredentialHybridIdentityKeyIDRoundTrip(t *testing.T) {
+	keyring.MockInit()
+	hybridID := "mldsa65+ed25519:" + strings.Repeat("ab", 32)
+	want := api.Pin{
+		Leaf:                "sha256/leaf123",
+		IdentityKey:         "idkey",
+		IdentityKeyHybridID: hybridID,
+		Floor:               42,
+	}
+	if err := storeCredential("acct-hybrid", "kyd_tok", nil, want); err != nil {
+		t.Fatalf("storeCredential: %v", err)
+	}
+	raw, err := keyring.Get(keyringService, "acct-hybrid")
+	if err != nil {
+		t.Fatalf("keyring.Get: %v", err)
+	}
+	if len(raw) >= 1024 {
+		t.Fatalf("keyring payload is %d bytes; must stay compact for OS keyrings", len(raw))
+	}
+	tok, key, got, err := loadCredential("acct-hybrid")
+	if err != nil || tok != "kyd_tok" || key != nil || got != want {
+		t.Fatalf("loadCredential = (%q, %v, %+v, %v), want %+v", tok, key, got, err, want)
+	}
+	// Malformed 6th field must be rejected as damaged.
+	if err := keyring.Set(keyringService, "acct-bad", "kyd_tok - sha256/leaf123 idkey 42 bad-hybrid-id"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := loadCredential("acct-bad"); !errors.Is(err, errDamaged) {
+		t.Fatalf("malformed hybrid key ID returned %v, want errDamaged", err)
+	}
+}
+
+func TestKeepPinRejectsUnboundHybridUpgrade(t *testing.T) {
+	hybridID := "mldsa65+ed25519:" + strings.Repeat("ab", 32)
+	d := &daemon{pin: api.Pin{Leaf: "sha256/leaf1", IdentityKey: "held-ed", Floor: 10}}
+
+	// Without a matching Ed25519 identity key proving the binding signature, keepPin must
+	// not attach a hybrid key ID onto the held Ed25519 pin.
+	tok := api.Token{Pin: api.Pin{Leaf: "sha256/leaf1", IdentityKeyHybridID: hybridID, Floor: 99}}
+	if err := d.keepPin(&tok); err != nil {
+		t.Fatalf("keepPin: %v", err)
+	}
+	if tok.Pin.IdentityKey != "held-ed" || tok.Pin.IdentityKeyHybridID != "" || tok.Pin.Floor != 10 {
+		t.Fatalf("keepPin adopted unbound hybrid ID: %+v", tok.Pin)
+	}
+
+	// When token redemption proved the same Ed25519 identity key, the authenticated hybrid ID is kept.
+	tok2 := api.Token{Pin: api.Pin{Leaf: "sha256/leaf1", IdentityKey: "held-ed", IdentityKeyHybridID: hybridID, Floor: 99}}
+	if err := d.keepPin(&tok2); err != nil {
+		t.Fatalf("keepPin authenticated upgrade: %v", err)
+	}
+	if tok2.Pin.IdentityKey != "held-ed" || tok2.Pin.IdentityKeyHybridID != hybridID || tok2.Pin.Floor != 10 {
+		t.Fatalf("keepPin dropped authenticated hybrid ID: %+v", tok2.Pin)
+	}
+}

@@ -1,12 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,17 +20,21 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Busnes-app/ky-primitives/hybridsig"
 )
 
 // TLS leaf pinning with signed rollover, KyDrive-server internal/api/tls_pin.go: a session
-// trusts one leaf key; after a renewal it repins only to a leaf the server's Ed25519 identity
-// key signed for this host.
+// trusts one leaf key; after a renewal it repins only to a leaf the server's identity key
+// signed for this host. Sessions that learned a hybrid identity key (ML-DSA-65+Ed25519)
+// require a kydrive-tls-pin/2 hybridsig signature and never downgrade to v1 Ed25519.
 
-// Pin is a session's pinned leaf, the identity key that may sign its successor (std base64,
-// "" when unknown) and the floor a successor's statement must be newer than (Unix seconds).
+// Pin is a session's pinned leaf, the Ed25519 identity key (std base64, "" when unknown),
+// the optional hybridsig public key ID ("mldsa65+ed25519:<64hex>", "" when unknown), and
+// the floor a successor's statement must be newer than (Unix seconds).
 type Pin struct {
-	Leaf, IdentityKey string
-	Floor             int64
+	Leaf, IdentityKey, IdentityKeyHybridID string
+	Floor                                  int64
 }
 
 // PinStore keeps a session's pin. Current errors once the session has ended (unlinked,
@@ -77,7 +84,11 @@ var ErrPinChanged = errors.New("KyDrive's certificate changed and the server did
 
 var errPinMismatch = errors.New("TLS leaf does not match the pin")
 
-const maxSkew = 24 * 60 * 60
+const (
+	maxSkew                   = 24 * 60 * 60
+	tlsPinContextV2           = "kydrive-tls-pin/2"
+	identityHybridBindContext = "kydrive-identity-hybrid-bind/1"
+)
 
 // SPKIPin is sha256/ plus std base64 of the SHA-256 of cert's SubjectPublicKeyInfo DER.
 func SPKIPin(cert *x509.Certificate) string {
@@ -89,6 +100,14 @@ func pinStatement(host, pin string, issuedAt int64) []byte {
 	return []byte("kydrive-tls-pin/1\n" + host + "\n" + pin + "\n" + strconv.FormatInt(issuedAt, 10))
 }
 
+func pinStatementBodyV2(host, pin string, issuedAt int64) []byte {
+	return []byte(host + "\n" + pin + "\n" + strconv.FormatInt(issuedAt, 10))
+}
+
+func identityHybridBindStatement(hybridID string) []byte {
+	return []byte(identityHybridBindContext + "\n" + hybridID)
+}
+
 // identityKey decodes a std-base64 raw Ed25519 public key, or nil.
 func identityKey(s string) ed25519.PublicKey {
 	b, err := base64.StdEncoding.DecodeString(s)
@@ -98,22 +117,105 @@ func identityKey(s string) ed25519.PublicKey {
 	return b
 }
 
+// parseHybridIdentityKey decodes a std-base64 hybridsig public key. When wantEd is non-nil,
+// the embedded Ed25519 tail must match wantEd so a server's hybrid key stays bound to its v1 key.
+func parseHybridIdentityKey(s string, wantEd ed25519.PublicKey) (*hybridsig.PublicKey, error) {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, err
+	}
+	pub, err := hybridsig.ParsePublicKey(b)
+	if err != nil {
+		return nil, err
+	}
+	if wantEd != nil && !bytes.Equal(b[len(b)-ed25519.PublicKeySize:], wantEd) {
+		return nil, errors.New("hybrid identity key does not match Ed25519 identity key")
+	}
+	return pub, nil
+}
+
+// verifiedHybridIdentityKeyID returns the canonical hybridsig public key ID
+// ("mldsa65+ed25519:<64hex>") for hybridKey only when wantEd is present, matches the
+// hybrid key's embedded Ed25519 half, and sigB64 is a valid Ed25519 signature by wantEd
+// over identityHybridBindStatement(pub.ID()). This prevents a compromised pinned TLS
+// terminator without the identity private key from poisoning hybrid-key enrollment.
+func verifiedHybridIdentityKeyID(hybridKey, sigB64 string, wantEd ed25519.PublicKey) string {
+	if wantEd == nil || hybridKey == "" || sigB64 == "" {
+		return ""
+	}
+	pub, err := parseHybridIdentityKey(hybridKey, wantEd)
+	if err != nil {
+		return ""
+	}
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return ""
+	}
+	id := pub.ID()
+	if !ed25519.Verify(wantEd, identityHybridBindStatement(id), sig) {
+		return ""
+	}
+	return id
+}
+
+// ValidHybridKeyID reports whether id has the canonical "mldsa65+ed25519:<64 lowercase hex>" shape.
+func ValidHybridKeyID(id string) bool {
+	prefix := hybridsig.Alg + ":"
+	if !strings.HasPrefix(id, prefix) {
+		return false
+	}
+	h := id[len(prefix):]
+	if len(h) != 64 || strings.ToLower(h) != h {
+		return false
+	}
+	_, err := hex.DecodeString(h)
+	return err == nil
+}
+
 type tlsPinStatement struct {
-	Host      string `json:"host"`
-	Pin       string `json:"pin"`
-	IssuedAt  int64  `json:"issued_at"`
-	Signature string `json:"signature"`
+	Host              string `json:"host"`
+	Pin               string `json:"pin"`
+	IssuedAt          int64  `json:"issued_at"`
+	Signature         string `json:"signature"`
+	SignatureV2       string `json:"signature_v2"`
+	IdentityKeyHybrid string `json:"identity_key_hybrid"`
 }
 
 // accept is the pin s installs in place of stored, or false. All must hold: it names the
 // observed leaf, for host, within a day of now, newer than stored's floor, for a leaf not
-// already pinned, signed by stored's identity key.
+// already pinned, signed by stored's identity key. When stored.IdentityKeyHybridID is set,
+// a valid kydrive-tls-pin/2 hybridsig signature is required (never downgraded to v1 Ed25519).
 func accept(stored Pin, host, observed string, s tlsPinStatement, now int64) (Pin, bool) {
+	if s.Pin != observed || s.Host != host || observed == stored.Leaf ||
+		s.IssuedAt <= stored.Floor || now-s.IssuedAt > maxSkew || s.IssuedAt-now > maxSkew {
+		return Pin{}, false
+	}
+	if stored.IdentityKeyHybridID != "" {
+		wantEd := identityKey(stored.IdentityKey)
+		pub, err := parseHybridIdentityKey(s.IdentityKeyHybrid, wantEd)
+		if err != nil {
+			return Pin{}, false
+		}
+		if subtle.ConstantTimeCompare([]byte(pub.ID()), []byte(stored.IdentityKeyHybridID)) != 1 {
+			return Pin{}, false
+		}
+		sigV2, err := base64.StdEncoding.DecodeString(s.SignatureV2)
+		if err != nil {
+			return Pin{}, false
+		}
+		if err := pub.Verify(tlsPinContextV2, pinStatementBodyV2(host, s.Pin, s.IssuedAt), sigV2); err != nil {
+			return Pin{}, false
+		}
+		return Pin{
+			Leaf:                observed,
+			IdentityKey:         stored.IdentityKey,
+			IdentityKeyHybridID: stored.IdentityKeyHybridID,
+			Floor:               s.IssuedAt,
+		}, true
+	}
 	key := identityKey(stored.IdentityKey)
 	sig, err := base64.StdEncoding.DecodeString(s.Signature)
-	if key == nil || err != nil || s.Pin != observed || s.Host != host || observed == stored.Leaf ||
-		s.IssuedAt <= stored.Floor || now-s.IssuedAt > maxSkew || s.IssuedAt-now > maxSkew ||
-		!ed25519.Verify(key, pinStatement(host, s.Pin, s.IssuedAt), sig) {
+	if key == nil || err != nil || !ed25519.Verify(key, pinStatement(host, s.Pin, s.IssuedAt), sig) {
 		return Pin{}, false
 	}
 	return Pin{Leaf: observed, IdentityKey: stored.IdentityKey, Floor: s.IssuedAt}, true
@@ -225,27 +327,39 @@ func (p *Pins) drop(leaf string) {
 	}
 }
 
-// wantIdentity is true once for a session pinned without an identity key.
+// wantIdentity is true once for a session pinned without its identity key(s).
 func (p *Pins) wantIdentity() bool {
 	pin, err := p.Store.Current()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.asked || err != nil || pin.Leaf == "" || pin.IdentityKey != "" {
+	if p.asked || err != nil || pin.Leaf == "" || (pin.IdentityKey != "" && pin.IdentityKeyHybridID != "") {
 		return false
 	}
 	p.asked = true
 	return true
 }
 
-// learn stores key as the identity key when res came over the pinned leaf and none is stored.
-// Write-once: whoever holds a leaf's private key (a TLS proxy) must not gain later rollovers.
-func (p *Pins) learn(res *http.Response, key string) {
+// learn stores key and hybridKey as the session's identity keys when res came over the pinned
+// leaf and they are not yet stored. Write-once: whoever holds a leaf's private key (a TLS proxy)
+// must not replace an existing identity key. A hybrid key is accepted only when authenticated
+// by a valid Ed25519 binding signature (hybridSig) under the held Ed25519 identity key.
+func (p *Pins) learn(res *http.Response, key, hybridKey, hybridSig string) {
 	stored, err := p.Store.Current()
-	if err != nil || stored.Leaf == "" || stored.Leaf != leafPin(res) || stored.IdentityKey != "" || identityKey(key) == nil {
+	if err != nil || stored.Leaf == "" || stored.Leaf != leafPin(res) {
 		return
 	}
 	next := stored
-	next.IdentityKey = key
+	if next.IdentityKey == "" && identityKey(key) != nil {
+		next.IdentityKey = key
+	}
+	if next.IdentityKeyHybridID == "" && hybridKey != "" {
+		if id := verifiedHybridIdentityKeyID(hybridKey, hybridSig, identityKey(next.IdentityKey)); id != "" {
+			next.IdentityKeyHybridID = id
+		}
+	}
+	if next == stored {
+		return
+	}
 	p.Store.Replace(stored, next)
 }
 
@@ -308,10 +422,14 @@ func (c *Client) roll(ctx context.Context, failed Pin) (bool, error) {
 	if stored.Leaf != failed.Leaf {
 		return stored.Leaf != "", nil
 	}
-	if stored.IdentityKey == "" {
+	if stored.IdentityKey == "" && stored.IdentityKeyHybridID == "" {
 		return false, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(c.Base, "/")+"/api/devices/tls-pin", nil)
+	endpoint := strings.TrimRight(c.Base, "/") + "/api/devices/tls-pin"
+	if stored.IdentityKeyHybridID != "" {
+		endpoint += "?v=2"
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return false, err
 	}
@@ -326,7 +444,7 @@ func (c *Client) roll(ctx context.Context, failed Pin) (bool, error) {
 		return false, nil
 	}
 	var s tlsPinStatement
-	if err := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&s); err != nil {
+	if err := json.NewDecoder(io.LimitReader(res.Body, 16384)).Decode(&s); err != nil {
 		return false, nil
 	}
 	next, ok := accept(stored, pinHost(c.Base), observed, s, p.now())
