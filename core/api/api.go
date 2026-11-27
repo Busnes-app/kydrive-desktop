@@ -208,8 +208,9 @@ func validateAccount(a Account) error {
 func (c *Client) DeviceAccount(ctx context.Context) (Account, error) {
 	var out struct {
 		Account
-		IdentityKey       string `json:"identity_key"`
-		IdentityKeyHybrid string `json:"identity_key_hybrid"`
+		IdentityKey          string `json:"identity_key"`
+		IdentityKeyHybrid    string `json:"identity_key_hybrid"`
+		IdentityKeyHybridSig string `json:"identity_key_hybrid_sig"`
 	}
 	res, err := c.do(ctx, "GET", "/api/drive/device", nil, nil)
 	if err != nil {
@@ -220,7 +221,7 @@ func (c *Client) DeviceAccount(ctx context.Context) (Account, error) {
 		return out.Account, err
 	}
 	if c.Pins != nil {
-		c.Pins.learn(res, out.IdentityKey, out.IdentityKeyHybrid)
+		c.Pins.learn(res, out.IdentityKey, out.IdentityKeyHybrid, out.IdentityKeyHybridSig)
 	}
 	if (out.UserID == "" && out.Sub == "") || out.User == "" {
 		return out.Account, errors.New("KyDrive did not confirm this computer's account identity")
@@ -390,8 +391,9 @@ func (c *Client) Redeem(ctx context.Context, code, verifier string, key *Signing
 	defer res.Body.Close()
 	var t struct {
 		Token
-		IdentityKey       string `json:"identity_key"`
-		IdentityKeyHybrid string `json:"identity_key_hybrid"`
+		IdentityKey          string `json:"identity_key"`
+		IdentityKeyHybrid    string `json:"identity_key_hybrid"`
+		IdentityKeyHybridSig string `json:"identity_key_hybrid_sig"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 16384)).Decode(&t); err != nil || !strings.HasPrefix(t.Token.Token, "kyd_") {
 		return Token{}, fmt.Errorf("token exchange returned no device token")
@@ -405,9 +407,9 @@ func (c *Client) Redeem(ctx context.Context, code, verifier string, key *Signing
 		t.Pin = Pin{Leaf: leaf, Floor: time.Now().Unix()}
 		if ed := identityKey(t.IdentityKey); ed != nil {
 			t.Pin.IdentityKey = t.IdentityKey
-		}
-		if id := identityKeyHybridID(t.IdentityKeyHybrid, identityKey(t.Pin.IdentityKey)); id != "" {
-			t.Pin.IdentityKeyHybridID = id
+			if id := verifiedHybridIdentityKeyID(t.IdentityKeyHybrid, t.IdentityKeyHybridSig, ed); id != "" {
+				t.Pin.IdentityKeyHybridID = id
+			}
 		}
 	}
 	return t.Token, nil

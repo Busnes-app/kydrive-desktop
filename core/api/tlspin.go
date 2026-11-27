@@ -85,8 +85,9 @@ var ErrPinChanged = errors.New("KyDrive's certificate changed and the server did
 var errPinMismatch = errors.New("TLS leaf does not match the pin")
 
 const (
-	maxSkew         = 24 * 60 * 60
-	tlsPinContextV2 = "kydrive-tls-pin/2"
+	maxSkew                   = 24 * 60 * 60
+	tlsPinContextV2           = "kydrive-tls-pin/2"
+	identityHybridBindContext = "kydrive-identity-hybrid-bind/1"
 )
 
 // SPKIPin is sha256/ plus std base64 of the SHA-256 of cert's SubjectPublicKeyInfo DER.
@@ -101,6 +102,10 @@ func pinStatement(host, pin string, issuedAt int64) []byte {
 
 func pinStatementBodyV2(host, pin string, issuedAt int64) []byte {
 	return []byte(host + "\n" + pin + "\n" + strconv.FormatInt(issuedAt, 10))
+}
+
+func identityHybridBindStatement(hybridID string) []byte {
+	return []byte(identityHybridBindContext + "\n" + hybridID)
 }
 
 // identityKey decodes a std-base64 raw Ed25519 public key, or nil.
@@ -129,14 +134,28 @@ func parseHybridIdentityKey(s string, wantEd ed25519.PublicKey) (*hybridsig.Publ
 	return pub, nil
 }
 
-// identityKeyHybridID returns the canonical hybridsig public key ID ("mldsa65+ed25519:<64hex>")
-// for s, or "" if malformed or mismatched with wantEd.
-func identityKeyHybridID(s string, wantEd ed25519.PublicKey) string {
-	pub, err := parseHybridIdentityKey(s, wantEd)
+// verifiedHybridIdentityKeyID returns the canonical hybridsig public key ID
+// ("mldsa65+ed25519:<64hex>") for hybridKey only when wantEd is present, matches the
+// hybrid key's embedded Ed25519 half, and sigB64 is a valid Ed25519 signature by wantEd
+// over identityHybridBindStatement(pub.ID()). This prevents a compromised pinned TLS
+// terminator without the identity private key from poisoning hybrid-key enrollment.
+func verifiedHybridIdentityKeyID(hybridKey, sigB64 string, wantEd ed25519.PublicKey) string {
+	if wantEd == nil || hybridKey == "" || sigB64 == "" {
+		return ""
+	}
+	pub, err := parseHybridIdentityKey(hybridKey, wantEd)
 	if err != nil {
 		return ""
 	}
-	return pub.ID()
+	sig, err := base64.StdEncoding.DecodeString(sigB64)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return ""
+	}
+	id := pub.ID()
+	if !ed25519.Verify(wantEd, identityHybridBindStatement(id), sig) {
+		return ""
+	}
+	return id
 }
 
 // ValidHybridKeyID reports whether id has the canonical "mldsa65+ed25519:<64 lowercase hex>" shape.
@@ -322,9 +341,9 @@ func (p *Pins) wantIdentity() bool {
 
 // learn stores key and hybridKey as the session's identity keys when res came over the pinned
 // leaf and they are not yet stored. Write-once: whoever holds a leaf's private key (a TLS proxy)
-// must not replace an existing identity key. When an Ed25519 key is already held, a hybrid key
-// is accepted only if its embedded Ed25519 half matches the held key.
-func (p *Pins) learn(res *http.Response, key, hybridKey string) {
+// must not replace an existing identity key. A hybrid key is accepted only when authenticated
+// by a valid Ed25519 binding signature (hybridSig) under the held Ed25519 identity key.
+func (p *Pins) learn(res *http.Response, key, hybridKey, hybridSig string) {
 	stored, err := p.Store.Current()
 	if err != nil || stored.Leaf == "" || stored.Leaf != leafPin(res) {
 		return
@@ -334,7 +353,7 @@ func (p *Pins) learn(res *http.Response, key, hybridKey string) {
 		next.IdentityKey = key
 	}
 	if next.IdentityKeyHybridID == "" && hybridKey != "" {
-		if id := identityKeyHybridID(hybridKey, identityKey(next.IdentityKey)); id != "" {
+		if id := verifiedHybridIdentityKeyID(hybridKey, hybridSig, identityKey(next.IdentityKey)); id != "" {
 			next.IdentityKeyHybridID = id
 		}
 	}
