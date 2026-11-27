@@ -167,6 +167,13 @@ func (p *Pins) client(base *http.Client, host, leaf string) (*http.Client, error
 		return nil, errors.New("this HTTP client cannot pin TLS")
 	}
 	tr = tr.Clone()
+	// Hybrid ML-DSA-65+Ed25519 request signatures are ~4.5 KiB base64 in KyDrive-Signature,
+	// exceeding net/http's 4 KiB default write buffer. Keeping the full request header block
+	// in a single write preserves net/http's nothingWrittenError/read retry when a server
+	// closes an idle keep-alive connection (e.g. during TLS certificate rollover on Windows).
+	if tr.WriteBufferSize < 16*1024 {
+		tr.WriteBufferSize = 16 * 1024
+	}
 	if tr.TLSClientConfig == nil {
 		tr.TLSClientConfig = &tls.Config{}
 	}
