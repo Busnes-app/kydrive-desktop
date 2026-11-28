@@ -134,6 +134,13 @@ func startServerAt(t *testing.T, bin string, front *tlsFront) *real {
 	res.Body.Close()
 	r.group = g.ID
 
+	tok := r.linkComputer(t, hc, "laptop")
+	r.token, r.key, r.pin = tok.Token, tok.Key, tok.Pin
+	return r
+}
+
+func (r *real) linkComputer(t *testing.T, hc *http.Client, name string) api.Token {
+	t.Helper()
 	// Link a device the way a user would, with this session approving in the "browser".
 	approve := func(raw string) error {
 		u, err := url.Parse(raw)
@@ -148,12 +155,11 @@ func startServerAt(t *testing.T, bin string, front *tlsFront) *real {
 		go http.Get(out.Redirect)
 		return nil
 	}
-	tok, err := link.Link(context.Background(), link.Request{Server: r.base, Name: "laptop", Platform: "linux", Open: approve, HTTP: hc})
+	tok, err := link.Link(context.Background(), link.Request{Server: r.base, Name: name, Platform: "linux", Open: approve, HTTP: hc})
 	if err != nil {
 		t.Fatalf("link: %v", err)
 	}
-	r.token, r.key, r.pin = tok.Token, tok.Key, tok.Pin
-	return r
+	return tok
 }
 
 func (r *real) csrf() string {

@@ -24,7 +24,11 @@ Root owns the repo layout, CI, licence, dependency list and the app icon: `asset
 - **The server is the source of truth for wire shapes:** KyDrive-server `internal/api` (`drive_changes.go`, `drive_uploads.go`, `devices.go`).
 - Shells contain no sync logic: they call the core and render what it reports.
 - Shells keep Apply disabled while the workspace list is empty: an empty list is one that did not load, and choosing nothing evicts every workspace.
-- Go dependencies are limited to `modernc.org/sqlite`, `github.com/zalando/go-keyring`, `github.com/fsnotify/fsnotify`; any addition needs an MIT/BSD/Apache-compatible licence and an entry in docs/DEPENDENCIES.md.
+- Vault keys live in the OS keyring under the authenticated server, org and account tuple.
+  The native vault core provides verified revisions and CryptPad bindings to a private host.
+  See [native vault integration](docs/NATIVE-VAULT.md) for the signed-package boundary and gates.
+- Go dependencies need an MIT/BSD/Apache-compatible licence and a record in
+  `docs/DEPENDENCIES.md`. Reuse the KyDrive vault protocol and suite crypto packages.
 
 ## Work Guidance
 - YAGNI: minimal code, short meaningful comments.

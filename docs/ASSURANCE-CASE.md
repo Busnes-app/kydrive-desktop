@@ -146,3 +146,14 @@ a compromised OS keyring, and loss of the disk. `Unsynced/` is not a backup (REA
 
 A pull request that changes a trust boundary or a security requirement must update this page in
 the same change.
+
+
+## Native vault development
+
+The signed device authenticates without opening an editor website. The native vault client
+validates the independently pinned witness and account scope before exposing a verified
+revision to a local caller. It stores member identity only in the OS keyring and sends
+ciphertext and public protocol data to the server. The local `Vault` RPC carries only
+fingerprints, invitations and generations. CryptPad room capabilities and plaintext stay
+inside the native editor host boundary. The release package and WebView integration still
+need end-to-end verification. See [native vault integration](NATIVE-VAULT.md).

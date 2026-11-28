@@ -112,7 +112,7 @@ func moveState(old, dir string) error {
 
 func ctl(sock string, args []string) int {
 	if len(args) == 0 || len(args) > 2 {
-		fmt.Fprintln(os.Stderr, "usage: kydrive-sync ctl METHOD [JSON-PARAMS]\nmethods: Accounts AddAccount RemoveAccount Status Link SignIn CancelLink Unlink Workspaces Choose Pause Conflicts Activity ConfirmDeletes Quit")
+		fmt.Fprintln(os.Stderr, "usage: kydrive-sync ctl METHOD [JSON-PARAMS]\nmethods: Accounts AddAccount RemoveAccount Status Link SignIn CancelLink Unlink Workspaces Choose Pause Conflicts Activity ConfirmDeletes Vault Quit")
 		return 2
 	}
 	params := "{}"

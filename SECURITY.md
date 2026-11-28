@@ -19,6 +19,11 @@ and disclosure.
 - Same-account sign-in compares the immutable server account ID once recorded. Existing links learn it on their next successful authenticated pass against a server with the account route. Only links without an ID retain the legacy username comparison; a link with neither identity remains refused. A reused username is not proof of identity, so connect to an updated server before the old credential stops working.
 - Folder deletion sends the observed workspace head for an atomic subtree check. Older servers without the account route retain the feed-check compatibility path and its small final request race; this client cannot provide the new atomic guarantee on those servers. A 409 is never retried without its precondition.
 
+- The native vault path stores member credentials only in the OS keyring and verifies
+  the independently pinned witness. Its local RPC exposes public pins and catalogue
+  metadata. The signed app must confine plaintext and relay grants to its packaged editor.
+  See [native vault integration](docs/NATIVE-VAULT.md).
+
 ## Operating requirements
 
 - Store credentials in the platform keystore; do not fall back to plaintext on disk.

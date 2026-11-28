@@ -2,7 +2,8 @@
 The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-sync` runs one per user; `kydrive-sync ctl METHOD [JSON]` calls it for debugging.
 
 ## Ownership
-- `api/` — REST client for the KyDrive server, including device request signing (`sign.go`); no sync decisions.
+- `api/` — REST client for KyDrive, including device signing and vault transport.
+- `vault/` — native vault keyring enrollment, witnessed history, encrypted revisions and editor sessions.
 - `link/` — loopback + PKCE linking.
 - `engine/` — state DB (`db.go`), pull (`pull.go`), push (`push.go`), conflict/evict rules (`engine.go`).
 - `cmd/kydrive-sync/` — `account.go` owns identity hashing/credential migration; `accounts.go` owns the account registry and per-request RPC routing. The daemon owns: keyring, socket, JSON-RPC service `Core`, watcher, poll loop.
@@ -35,6 +36,10 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
 - **Replacement commit:** canonical `account_id` identifies the account; `credential_slot` identifies its physical keyring item and takes precedence over the canonical fallback. Replacements use independently owned `account:<identity>:<random>` slots (identity-less legacy links use fresh `pending:<random>` slots). Before writing, `credential_migration` records the new slot as abandoned-stage cleanup; atomic `SetConfig` switches the pointer and changes that marker to the previous slot. A precommit failure leaves the exact previous credential/session/pin and bindings intact, revokes only the new approval, and retains cleanup on keyring failure. Restart and regular passes finish recorded cleanup; same-identity recovery must not move a committed physical pointer back to the canonical slot. Pending physical source slots reserve their canonical identity until cleanup completes.
 - **Keyring availability:** a keyring availability failure that prevents saved-credential recovery leaves the account `signed_out` while RPC and other accounts remain available. Signed-out backoff retries migration, including pending source cleanup, before loading credentials. Browser activation installs the token, signing key, pin and idle state immediately after its durable pointer commit; retirement/marker failures retain the cleanup marker and do not fail that committed activation. Regular passes retry cleanup for known sessions and explicitly unlinked accounts, even while sync is paused. A replacement must finish an existing cleanup marker before storing another credential, so pending source ownership cannot be lost. Incomplete identity, conflicting target credentials and state-store failures remain errors; retry never activates the old credential after a migration conflict. A startup credential that could not be read has unknown pin state, so `SignIn` waits for recovery to read it successfully; it never treats unread pin state as a known unpinned legacy link.
 - **Server compatibility:** device-token/device-account responses may carry `issuer`, `sub`, `org_id`; issuer/sub must be complete together, and org_id cannot downgrade to local identity. Older servers supply local `user_id`; a server that never supplies an immutable identity supports only the primary Link path. Hosted deployment must supply KyIdentity claims before advertising tenant-qualified desktop sync.
+
+- The native vault path uses the linked device's signed, pinned API client and a separately
+  pinned witness. The `Vault` RPC returns account fingerprints, vault invitations and
+  generations. Keep plaintext, editor grants and decryption keys inside the native host.
 
 ## Work Guidance
 - Engine tests use the `remote` interface: the in-process fake (`fake_test.go`) by default, the real server (`e2e_test.go`) when `KYDRIVE_SERVER_BIN` is set. A new engine test goes through `setup` so it runs on both; use `setupOn(t, newFake(t), …)` only for fake-only controls (corrupt bytes, pruned feed).
@@ -70,4 +75,4 @@ The sync core, module `github.com/Busnes-app/kydrive-desktop/core`. `kydrive-syn
 - The built daemon: `scripts/smoke.sh /path/kydrive-server /path/kydrive-sync` (private D-Bus session and gnome-keyring; needs `curl`, `jq`, `openssl`, `secret-tool`, `dbus-run-session`, `gnome-keyring-daemon`).
 
 ## Child DOX Index
-None.
+- `vault/` owns the native vault client and editor session contract.

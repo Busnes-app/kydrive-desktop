@@ -2,6 +2,9 @@
 
 ## 0.7.0 — pending
 
+- Add the native vault core and developer RPC for identity, creation and verification.
+  The desktop editor window and signed CryptPad package remain release gates.
+
 - Accept complete matching hosted identities without a legacy local user ID, preserving strict issuer/subject/organization checks and account storage through upgrades.
 - Keep the Linux Add account form in add mode after approval fails, so retry cannot accidentally relink the selected account.
 

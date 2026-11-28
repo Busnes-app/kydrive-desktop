@@ -11,6 +11,12 @@ Commands and unlinked file paths below are relative to the repository root.
 | `modernc.org/sqlite` | BSD-3-Clause | CGO-free SQLite for the state database |
 | `github.com/zalando/go-keyring` | MIT | OS keyring |
 | `github.com/fsnotify/fsnotify` | BSD-3-Clause | file system events |
+| `github.com/Busnes-app/kydrive-server/pkg/vaultclient` | MIT | Shared signed vault protocol and native client cryptography |
+| `github.com/Busnes-app/ky-primitives` | MIT | Hybrid device signatures and TLS rollover verification |
+
+The vault client brings `filippo.io/age` (BSD-3-Clause), `filippo.io/hpke` (BSD-3-Clause),
+and Go's `golang.org/x/crypto` (BSD-3-Clause). The pinned server module sets the minimum
+SQLite version.
 
 Indirect: `modernc.org/libc`, `modernc.org/mathutil`, `modernc.org/memory`,
 `golang.org/x/sys`, `github.com/google/uuid`, `github.com/remyoudompheng/bigfft`
